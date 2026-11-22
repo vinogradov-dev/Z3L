@@ -113,11 +113,11 @@ pub enum ToolAction {
         /// Which circle method draws the figure.
         tool: DrawTool,
     },
-    /// Extrudes the selected closed path into a body.
-    ExtrudePath {
-        /// The path object to extrude.
+    /// Turns the selected drawing into bodies: one for a path, one per ring for a contour set.
+    Extrude {
+        /// The drawing object — a closed path or a contour set — that becomes bodies.
         object: Id,
-        /// Height along the path's local Z.
+        /// Height along the drawing's local Z.
         height: Length,
     },
     /// Arms the area pull on the selected drawing: the pointer names an area, a click pulls it (G4).
@@ -284,8 +284,9 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         }
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         (Some(ToolActivity::Void), ToolKind::Void) => true,
-        // The pull owns the pointer and the Extrude cell is the one that armed it (G4).
-        (Some(ToolActivity::AreaPull), ToolKind::Extrude) => true,
+        // The pull owns the pointer and the Extrude cell's second method is the one that armed it
+        // (G4).
+        (Some(ToolActivity::AreaPull), ToolKind::AreaPull) => true,
         (Some(ToolActivity::ContourBoolean(armed)), ToolKind::ContourBoolean(op)) => armed == op,
         (Some(ToolActivity::BodyBoolean(armed)), ToolKind::BodyBoolean(op)) => armed == op,
         _ => false,
@@ -775,7 +776,15 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 // because the two fills are two cells whose methods would otherwise read the same.
                 // A body cell's method says what it builds — «Box: draw its base on the work plane»
                 // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
-                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. } | ToolKind::Body(_))) => {
+                // The two extrude methods name the payload the press takes — «Extrude the selected
+                // path», «Pull an area of the selected drawing» — because the cell's one glyph says
+                // nothing about which drawing it holds (X100).
+                Some(ready)
+                    if matches!(
+                        method.run,
+                        Some(ToolKind::Fill { .. } | ToolKind::Body(_) | ToolKind::Extrude | ToolKind::AreaPull)
+                    ) =>
+                {
                     ready.hint.clone()
                 }
                 // A primitive cell names its shape as well: a sphere and a cone share the sketch's
@@ -1016,7 +1025,7 @@ mod tests {
                     // share the sketch's circle methods, so the method alone would read twice.
                     "Cone: Centre and radius",
                     "Cylinder: draw its base on the work plane",
-                    "Select a closed path first",
+                    "Select a closed path or a drawing first",
                     "Sphere: Centre and radius",
                     "Subtract",
                     "Union",
@@ -1419,7 +1428,7 @@ mod tests {
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (_, labels, _) = draw(&mut state, full_context());
-        assert!(labels.iter().any(|label| label.contains("Select a closed path first")));
+        assert!(labels.iter().any(|label| label.contains("Select a closed path or a drawing first")));
         assert_eq!(state.extrude_height(), Length::from_millimetres(100).expect("height"));
     }
 
@@ -1466,58 +1475,56 @@ mod tests {
     }
 
     #[test]
-    fn a_drawing_arms_the_area_pull_from_the_extrude_cell() {
-        // A drawing of several rings has no one profile to sweep, so the same cell hands the editor
-        // the drawing and the pointer names the area the click takes (G4). A closed path keeps its
-        // one-shot extrusion, so the two payloads are two doors of one cell.
+    fn a_drawing_extrudes_whole_from_the_cell_and_pulls_one_area_from_its_second_method() {
+        // One press turns the whole drawing into bodies — a ring into one, a set into one per ring
+        // (X100) — and the pointer gesture that pulls one area out of a drawing is the same cell's
+        // second method, so a set offers both doors and a closed path offers only the first.
         let state = Toolbars::new();
         let node = Id::new(7).expect("id");
         let cell = tool("model.create.extrude");
         let kind = cell.run.expect("the extrude cell runs a tool");
+        let area = cell
+            .live_methods()
+            .find(|method| matches!(method.run, Some(ToolKind::AreaPull)))
+            .expect("the cell offers the area pull as a method");
+        let area_kind = area.run.expect("the method runs");
 
-        let drawing = ready(
-            kind,
-            cell,
-            &state,
-            RibbonContext { selected: Some(node), selected_drawing: true, ..full_context() },
-            Lang::En,
-        );
-        assert_eq!(drawing.action, Some(ToolAction::AreaPull { object: node }));
-        assert!(drawing.enabled && !drawing.armed, "the cell is live and the pointer is not yet pulled");
-        assert_eq!(drawing.hint, "Pull an area of the selected drawing");
+        let drawing = RibbonContext { selected: Some(node), selected_drawing: true, ..full_context() };
+        let whole = ready(kind, cell, &state, drawing, Lang::En);
+        assert!(whole.enabled, "a drawing of several rings extrudes whole");
+        assert!(matches!(whole.action, Some(ToolAction::Extrude { object, .. }) if object == node));
+        assert_eq!(whole.hint, "Extrude the selected drawing");
 
-        let armed = ready(
-            kind,
-            cell,
-            &state,
-            RibbonContext {
-                selected: Some(node),
-                selected_drawing: true,
-                active: Some(ToolActivity::AreaPull),
-                ..full_context()
-            },
-            Lang::En,
-        );
-        assert!(armed.armed, "the cell draws pressed while the pointer names an area");
+        let pull = ready(area_kind, cell, &state, drawing, Lang::En);
+        assert!(pull.enabled, "the drawing has areas to name");
+        assert_eq!(pull.action, Some(ToolAction::AreaPull { object: node }));
+        assert!(!pull.armed, "the method is not pressed until it arms the pointer");
+        assert_eq!(pull.hint, "Pull an area of the selected drawing");
 
-        let path = ready(
-            kind,
-            cell,
-            &state,
-            RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() },
-            Lang::En,
-        );
-        assert!(matches!(path.action, Some(ToolAction::ExtrudePath { .. })), "a closed path still extrudes");
+        let armed = RibbonContext { active: Some(ToolActivity::AreaPull), ..drawing };
+        assert!(ready(area_kind, cell, &state, armed, Lang::En).armed, "the method draws pressed once armed");
+
+        let path = RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() };
+        assert!(ready(kind, cell, &state, path, Lang::En).enabled, "a closed path still extrudes");
+        let pull = ready(area_kind, cell, &state, path, Lang::En);
+        assert!(!pull.enabled, "one ring has no areas to choose");
+        assert_eq!(pull.hint, "Select a drawing of several rings first");
+        assert_eq!(pull.action, None);
     }
 
     #[test]
     fn the_extrude_hint_names_what_is_missing() {
         let node = Id::new(7).expect("id");
-        assert_eq!(extrude_hint(None, None).text(Lang::En), "Select a closed path first");
-        assert_eq!(extrude_hint(None, Some(true)).text(Lang::En), "Select a closed path first");
-        assert_eq!(extrude_hint(Some(node), None).text(Lang::En), "The selected object is not a path");
-        assert_eq!(extrude_hint(Some(node), Some(false)).text(Lang::En), "The selected path is open; close it first");
-        assert_eq!(extrude_hint(Some(node), Some(true)).text(Lang::En), "Extrude the selected path");
+        let nothing = "Select a closed path or a drawing first";
+        assert_eq!(extrude_hint(None, None, false).text(Lang::En), nothing);
+        assert_eq!(extrude_hint(None, Some(true), false).text(Lang::En), nothing);
+        assert_eq!(extrude_hint(Some(node), None, false).text(Lang::En), "The selected object is not a drawing");
+        assert_eq!(extrude_hint(Some(node), None, true).text(Lang::En), "Extrude the selected drawing");
+        assert_eq!(
+            extrude_hint(Some(node), Some(false), false).text(Lang::En),
+            "The selected path is open; close it first"
+        );
+        assert_eq!(extrude_hint(Some(node), Some(true), false).text(Lang::En), "Extrude the selected path");
     }
 
     #[test]

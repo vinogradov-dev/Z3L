@@ -619,10 +619,7 @@ impl Document {
             measure: self.editor.measure().map(|measure| (measure.stage(), measure.value())),
             // The report row reads the same atom the fill ghost and the part are built from, never a
             // second measurement of the space under the pointer (ADR 0118).
-            area: self
-                .editor
-                .area_pull()
-                .map(|_| self.editor.area_refusal().unwrap_or(Message::ExtrudeSelectedDrawing)),
+            area: self.editor.area_pull().map(|_| self.editor.area_refusal().unwrap_or(Message::ExtrudeSelectedArea)),
             void: self.editor.void_armed().then(|| {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),

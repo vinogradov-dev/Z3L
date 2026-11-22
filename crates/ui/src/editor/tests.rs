@@ -1017,7 +1017,7 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     let height = Length::from_millimetres(18).expect("height");
     let children_before = session.project().root().children().len();
 
-    editor.extrude_path(&mut session, path, height, text::Lang::En).expect("extrude the path");
+    editor.extrude(&mut session, path, height, text::Lang::En).expect("extrude the path");
     assert_eq!(editor.selected_node(), Some(path), "the node becomes the body in place");
     let object = session.project().object(path).expect("object");
     assert_eq!(object.name(), "Drawing", "the node keeps its name");
@@ -1028,10 +1028,52 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     assert!(session.project().object_path(path).is_err(), "the drawing is the body now");
     let revision = session.project().revision();
     assert!(
-        editor.extrude_path(&mut session, path, height, text::Lang::En).is_err(),
+        editor.extrude(&mut session, path, height, text::Lang::En).is_err(),
         "a body is not extruded a second time"
     );
     assert_eq!(session.project().revision(), revision, "the refused extrusion changes nothing");
+}
+
+#[test]
+fn the_extrude_action_turns_a_drawing_of_two_rings_into_two_bodies_in_one_entry() {
+    // The Extrude cell is one press for the whole drawing: a set of two pieces becomes two bodies,
+    // the node the maker selected keeps the first of them, and the sibling lands beside it — one
+    // undo entry for the pair (X100).
+    let mut project = sample_project();
+    let root = project.root().id();
+    let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+    let right = Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+    let set = model::Contours::new(vec![left, right]).expect("a drawing of two rings");
+    let drawing = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(drawing));
+    let height = Length::from_millimetres(18).expect("height");
+
+    editor.extrude(&mut session, drawing, height, text::Lang::En).expect("extrude the drawing");
+
+    assert_eq!(editor.selected_node(), Some(drawing), "the selection stays on the node it was on");
+    let body = session
+        .project()
+        .object(drawing)
+        .and_then(|object| object.geometry().as_constructive())
+        .expect("the first ring is a body");
+    assert_eq!(body.height(), Some(height));
+    let bodies = session
+        .project()
+        .root()
+        .children()
+        .iter()
+        .filter_map(|child| child.as_object())
+        .filter(|object| object.geometry().as_constructive().is_some())
+        .count();
+    assert_eq!(bodies, 2, "one body per ring");
+    session.undo().expect("one entry takes both bodies back");
+    assert_eq!(
+        session.project().object_contours(drawing).map(model::Contours::len),
+        Ok(2),
+        "the drawing is back, whole"
+    );
 }
 
 #[test]
@@ -1041,7 +1083,7 @@ fn a_pulled_height_becomes_the_next_extrusions_default() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(100).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(100).expect("height"), text::Lang::En)
         .expect("extrude the path");
     assert_eq!(
         editor.extrude_height(),
@@ -1068,7 +1110,7 @@ fn one_undo_restores_the_drawing_a_body_came_from() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect("extrude the path");
 
     undo(&mut session, &mut editor);
@@ -1084,7 +1126,7 @@ fn an_open_path_is_refused_with_a_readable_reason() {
     let mut editor = Editor::new();
     let revision = session.project().revision();
     let error = editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect_err("an open chain is no ring");
     assert!(error.contains("open path"), "the message names the problem: {error}");
     assert_eq!(session.project().revision(), revision, "a refused extrusion changes nothing");
@@ -1106,9 +1148,7 @@ fn a_body_keeps_the_paths_placement_and_frame() {
     let params =
         crate::command::json(&engine::NodePlacementSet { node: path, placement, unmeasured: false }).expect("params");
     session.dispatch(engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
-    editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
-        .expect("extrude");
+    editor.extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En).expect("extrude");
     let body = editor.selected_node().expect("the body");
     assert_eq!(session.project().node(body).expect("body node").placement(), placement);
 }

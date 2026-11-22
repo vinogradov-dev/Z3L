@@ -224,6 +224,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0217](0217-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
 | [0218](0218-an-overlays-pair-of-inks-is-the-themes.md) | An overlay's pair of inks is the theme's, and its quiet half is a neutral | Accepted; pays part of the overlay leftover of 0087 `[gizmo]` |
 | [0219](0219-the-base-of-an-armed-boolean-has-an-ink-of-its-own.md) | The base of an armed boolean has an ink of its own | Accepted |
+| [0220](0220-a-drawing-becomes-a-body-per-ring.md) | A drawing becomes a body per ring, and the area pull is the Extrude cell's second method | Accepted; the Extrude cell's gesture of 0205 becomes its second method |
 
 ## Format
 

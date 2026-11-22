@@ -384,6 +384,7 @@ icons!(Primitives, "primitives", Model, primitives {
 
 icons!(Bodies, "bodies", Model, bodies {
     EXTRUDE => "extrude",
+    PULL_AREA => "pull-area",
     REVOLVE => "revolve",
     SWEEP => "sweep",
 });
@@ -1270,7 +1271,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 138);
+        assert_eq!(seen.len(), 139);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use egui::Ui;
 
 use engine::object_cmds::{OBJECT_EXTRUDE_HEIGHT_SET_ID, OBJECT_PATH_EXTRUDE_ID};
 use engine::{EditScope, ObjectExtrudeHeightSet, ObjectPathExtrude, Session};
-use model::{Id, Path};
+use model::{Id, Path, PathError, Project};
 use text::{Lang, Message};
 use units::Length;
 
@@ -179,8 +179,8 @@ impl Editor {
                 ToolAction::CreateCamera => self.create_camera(session, target)?,
                 ToolAction::CreateLight => self.create_light(session, target)?,
                 ToolAction::AreaPull { object } => self.arm_area_pull(object),
-                ToolAction::ExtrudePath { object, height } => {
-                    self.extrude_path(session, object, height, lang)?;
+                ToolAction::Extrude { object, height } => {
+                    self.extrude(session, object, height, lang)?;
                     outcome.extruded = Some((object, height));
                 }
                 ToolAction::CloseDrawing => outcome.close_draft = true,
@@ -212,29 +212,30 @@ impl Editor {
         self.toolbars.polygon_sides()
     }
 
-    /// Extrudes a selected path into the body that owns it, in place.
+    /// Turns a selected drawing into the bodies it encloses.
     ///
-    /// Only a closed path encloses a ring, so an open one is refused with the reason from
-    /// `Path::to_contour` before a command runs. The node becomes the body and keeps its id, name,
+    /// A closed path becomes one body in place; a contour set becomes one body per ring, and the
+    /// node keeps the first of them (X100). An open chain encloses no ring, so it is refused with
+    /// the reason from `Path::to_contour` before a command runs. The node keeps its id, name,
     /// placement and pivot: the drawing is not left behind as a second object, and the selection
     /// stays on the one node the user was editing. A live contour edit of that node ends here: the
     /// node is a body now, and its pull arrow would compete with the corner grips for the pointer.
-    pub(super) fn extrude_path(
+    pub(super) fn extrude(
         &mut self,
         session: &mut Session,
         object: Id,
         height: Length,
         lang: Lang,
     ) -> Result<(), String> {
-        self.extrude_path_in(None, session, object, height, lang)
+        self.extrude_in(None, session, object, height, lang)
     }
 
-    /// Extrudes a drawn profile into its body as one step of an open edit scope (ADR 0138).
+    /// Turns a drawn profile into its body as one step of an open edit scope (ADR 0138).
     ///
     /// The body a cell drew goes through the same command, in the scope its profile was created in,
     /// so the ring and the body are one undo entry. `None` is the ribbon's plain extrusion, which is
     /// its own entry.
-    pub fn extrude_path_in(
+    pub fn extrude_in(
         &mut self,
         scope: Option<EditScope>,
         session: &mut Session,
@@ -242,12 +243,7 @@ impl Editor {
         height: Length,
         lang: Lang,
     ) -> Result<(), String> {
-        session
-            .project()
-            .object_path(object)
-            .map_err(|error| error.to_string())?
-            .to_contour()
-            .map_err(|error| Message::ExtrudeRefused.with(lang, [error]))?;
+        drawing_ready(session.project(), object).map_err(|error| error.with(lang))?;
         let params = json(&ObjectPathExtrude { object, height })?;
         match scope {
             Some(scope) => {
@@ -346,4 +342,42 @@ impl Editor {
         let tool = toolbars::shortcut_method(tool, self.toolbars.pinned_variants());
         self.start_drawing_with(tool, sides);
     }
+}
+
+/// Why a drawing cannot become a body.
+///
+/// The two refusals the press can meet before a command runs: a node that carries no drawing at
+/// all, and a ring that does not close. Both become the sentence the ribbon shows, so the
+/// keyboard, the cell and the shell refuse in one voice (X100).
+enum DrawingRefusal {
+    /// The node is not a path or a contour set.
+    NotADrawing,
+    /// A chain of the drawing does not enclose a ring.
+    Open(PathError),
+}
+
+impl DrawingRefusal {
+    /// The refusal in the user's language.
+    fn with(self, lang: Lang) -> String {
+        match self {
+            Self::NotADrawing => Message::ExtrudeNotPath.text(lang).to_owned(),
+            Self::Open(error) => Message::ExtrudeRefused.with(lang, [error]),
+        }
+    }
+}
+
+/// Checks that a node is a drawing whose every chain closes, without changing the document.
+///
+/// A contour set holds rings by construction, so it is ready as it stands; a path is checked
+/// through the ring rules, which is where an open chain or a self-crossing drawing is refused.
+fn drawing_ready(project: &Project, object: Id) -> Result<(), DrawingRefusal> {
+    let node = project.object(object).ok_or(DrawingRefusal::NotADrawing)?;
+    let geometry = node.geometry();
+    if let Some(path) = geometry.as_path() {
+        return path.to_contour().map(|_| ()).map_err(DrawingRefusal::Open);
+    }
+    if geometry.as_contours().is_some() {
+        return Ok(());
+    }
+    Err(DrawingRefusal::NotADrawing)
 }

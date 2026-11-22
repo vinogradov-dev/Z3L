@@ -688,7 +688,7 @@ messages! {
         "Icons are rasterised at the new pixel size instead of stretched",
         "Значки растрируются в новом размере пикселя, а не растягиваются"
     ],
-    ExtrudeRefused = ["The selected path cannot be extruded: {}", "Выбранный путь нельзя выдавить: {}"],
+    ExtrudeRefused = ["The selected drawing cannot be extruded: {}", "Выбранный контур нельзя выдавить: {}"],
     LockedNode = [
         "{} is locked. Unlock it in the scene tree to change it.",
         "{} заблокирован. Снимите блокировку в дереве сцены, чтобы изменить его."
@@ -1070,11 +1070,15 @@ messages! {
     DraftCloseNeedsTwo = ["A draft needs two segments to close", "Чтобы замкнуть черновик, нужно два сегмента"],
     DraftCancelHint = ["Cancel the draft", "Отменить черновик"],
     DraftNotRunning = ["No draft is running", "Черновик не запущен"],
-    ExtrudeSelectPath = ["Select a closed path first", "Сначала выберите замкнутый путь"],
+    ExtrudeSelectPath = ["Select a closed path or a drawing first", "Сначала выберите замкнутый путь или контур"],
     ExtrudeSelectedPath = ["Extrude the selected path", "Выдавить выбранный путь"],
     ExtrudePathOpen = ["The selected path is open; close it first", "Выбранный путь разомкнут; сначала замкните его"],
-    ExtrudeNotPath = ["The selected object is not a path", "Выбранный объект не является путём"],
-    ExtrudeSelectedDrawing = ["Pull an area of the selected drawing", "Вытянуть область выбранного контура"],
+    ExtrudeNotPath = ["The selected object is not a drawing", "Выбранный объект не является контуром"],
+    ExtrudeSelectedDrawing = ["Extrude the selected drawing", "Выдавить выбранный контур"],
+    ExtrudeSelectedArea = ["Pull an area of the selected drawing", "Вытянуть область выбранного контура"],
+    AreaNeedsDrawing = ["Select a drawing of several rings first", "Сначала выберите контур из нескольких колец"],
+    ExtrudeMethodWhole = ["The whole drawing", "Весь контур"],
+    ExtrudeMethodArea = ["An area under the pointer", "Область под указателем"],
     AreaOutside = ["Point at an area of the drawing", "Укажите область на контуре"],
     AreaHole = [
         "The area under the pointer has a hole, and a body carries one ring yet",
@@ -1424,7 +1428,7 @@ messages! {
     CmdReplacePrimitive = ["Replace primitive parameters", "Заменить параметры примитива"],
     CmdCreateExtrusion = ["Create extrusion", "Создать выдавливание"],
     CmdReplaceContour = ["Replace contour", "Заменить контур"],
-    CmdExtrudePath = ["Extrude path", "Выдавить путь"],
+    CmdExtrudeDrawing = ["Extrude drawing", "Выдавить контур"],
     CmdExtrudeArea = ["Extrude area", "Выдавить область"],
     CmdSetExtrusionHeight = ["Set extrusion height", "Задать высоту выдавливания"],
     CmdCreatePath = ["Create path", "Создать путь"],

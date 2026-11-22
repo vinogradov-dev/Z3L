@@ -42,8 +42,13 @@ pub enum ToolKind {
     CloseDraft,
     /// Drops the running chain; the document never changed.
     CancelDraft,
-    /// Extrudes the selected closed path into a body.
+    /// Turns the selected drawing into bodies: a closed path becomes one body in place, and a
+    /// drawing of several rings becomes one body per ring, in one command and one undo entry
+    /// (X100). The height is the session's typed default.
     Extrude,
+    /// Arms the area pull on the selected drawing: the pointer names one area of it and a click
+    /// stores that area as a body, leaving the drawing where it is (G4, ADR 0205).
+    AreaPull,
     /// Opens the card that creates a product frame.
     Product,
     /// Draws the product frame's reserved box exactly as a body cell draws a solid's profile: the same
@@ -181,6 +186,19 @@ const FILL_WALL_SHAPE: &[VariantSpec] = &[VariantSpec {
     label: Message::FillMethodShape,
     icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+}];
+
+/// The Extrude cell's second method: pull one area of the drawing out as its own body.
+///
+/// A cell is one press. The first press turns the whole drawing into bodies — a path into one, a
+/// drawing of several rings into one per ring — and a maker who wants one face of a drawing the
+/// rings leave chooses this row: the pointer then names the area and the drawing stays put
+/// (G4, ADR 0205, ADR 0220).
+const EXTRUDE_AREA: &[VariantSpec] = &[VariantSpec {
+    id: "model.create.extrude.area",
+    label: Message::ExtrudeMethodArea,
+    icon: Some(icons::bodies::PULL_AREA),
+    run: Some(ToolKind::AreaPull),
 }];
 
 /// One tool: one cell of a group's row.
@@ -838,8 +856,8 @@ const MODEL: [GroupSpec; 5] = [
                 label: Message::ToolExtrude,
                 icon: Some(icons::bodies::EXTRUDE),
                 run: Some(ToolKind::Extrude),
-                method: None,
-                variants: &[],
+                method: Some(Message::ExtrudeMethodWhole),
+                variants: EXTRUDE_AREA,
             },
             planned("model.create.revolve", Message::ToolRevolve),
             planned("model.create.loft", Message::ToolLoft),
@@ -1620,6 +1638,7 @@ mod tests {
             ToolKind::CloseDraft,
             ToolKind::CancelDraft,
             ToolKind::Extrude,
+            ToolKind::AreaPull,
             ToolKind::Product,
             ToolKind::ProductBox(DrawTool::Rectangle),
             ToolKind::ProductContour,

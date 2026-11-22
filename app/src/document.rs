@@ -1444,7 +1444,7 @@ impl Document {
     ) -> Result<(), String> {
         if self.extrude_gizmo.is_growing() {
             let scope = self.extrude_gizmo.scope();
-            self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
+            self.editor.extrude_in(scope, &mut self.session, object, height, lang)?;
         } else if let Some(top) = top {
             // A cone's ✓ writes both of its numbers into the scope the create opened, so the base
             // and the taper are one entry and the ✓ applies once (ADR 0141).

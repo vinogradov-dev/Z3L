@@ -94,31 +94,36 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             hint: Message::PrimitiveDrawRound.with(lang, [tool.label.text(lang)]),
             action: Some(ToolAction::DrawPrimitive { kind: primitive, tool: draw }),
         },
+        // The one press turns the whole drawing into bodies: a closed path becomes one body in
+        // place and a drawing of several rings becomes one body per ring, in one entry (X100). The
+        // button is off for anything else and the hint names what is missing: a selection, a path,
+        // or a closed chain. The height is a typed default, so a valid number is always there.
         ToolKind::Extrude => {
-            // Only a closed path encloses a ring, so the button is off for anything else and the
-            // hint names what is missing: a selection, a path, or a closed chain. A drawing of
-            // several rings is neither: it encloses *areas*, so the cell arms the pull and the
-            // pointer names the area the click takes (G4). The height is a typed default, so a
-            // valid number is always there.
-            if let Some(object) = selected.filter(|_| selected_drawing) {
-                return Ready {
-                    enabled: true,
-                    armed: is_armed(active, kind),
-                    hint: tool_hint(Message::ExtrudeSelectedDrawing.text(lang), tool.key()),
-                    action: Some(ToolAction::AreaPull { object }),
-                };
-            }
-            let action = match (selected, selected_path) {
-                (Some(object), Some(true)) => Some(ToolAction::ExtrudePath { object, height: state.extrude_height() }),
+            let action = match selected {
+                Some(object) if selected_path == Some(true) || selected_drawing => {
+                    Some(ToolAction::Extrude { object, height: state.extrude_height() })
+                }
                 _ => None,
             };
             Ready {
                 enabled: action.is_some(),
                 armed: false,
-                hint: extrude_hint(selected, selected_path).text(lang).to_owned(),
+                hint: extrude_hint(selected, selected_path, selected_drawing).text(lang).to_owned(),
                 action,
             }
         }
+        // The same cell's second method: the pointer names one area of a drawing and the click
+        // stores it, leaving the drawing where it is (G4, ADR 0205). Only a drawing of several
+        // rings has areas to name, so a closed path and an empty selection switch the row off.
+        ToolKind::AreaPull => Ready {
+            enabled: selected_drawing,
+            armed: is_armed(active, kind),
+            hint: tool_hint(
+                if selected_drawing { Message::ExtrudeSelectedArea } else { Message::AreaNeedsDrawing }.text(lang),
+                tool.key(),
+            ),
+            action: selected.filter(|_| selected_drawing).map(|object| ToolAction::AreaPull { object }),
+        },
         ToolKind::Product => Ready {
             enabled: true,
             armed: false,
@@ -329,12 +334,14 @@ pub(super) fn snap_mode_icon(mode: model::SnapMode) -> Icon {
 /// The hint of the extrude button: what the tool does, or why it is off.
 ///
 /// `selected_path` is `None` when the selection is not a path object, so a path that is merely
-/// open gets its own message instead of being called "not a path".
-pub(super) fn extrude_hint(selected: Option<Id>, selected_path: Option<bool>) -> Message {
-    match (selected, selected_path) {
-        (None, _) => Message::ExtrudeSelectPath,
-        (Some(_), Some(true)) => Message::ExtrudeSelectedPath,
-        (Some(_), Some(false)) => Message::ExtrudePathOpen,
-        (Some(_), None) => Message::ExtrudeNotPath,
+/// open gets its own message instead of being called "not a path"; `selected_drawing` is the
+/// other payload the press accepts, a contour set (X100).
+pub(super) fn extrude_hint(selected: Option<Id>, selected_path: Option<bool>, selected_drawing: bool) -> Message {
+    match (selected, selected_path, selected_drawing) {
+        (None, _, _) => Message::ExtrudeSelectPath,
+        (Some(_), Some(true), _) => Message::ExtrudeSelectedPath,
+        (Some(_), Some(false), _) => Message::ExtrudePathOpen,
+        (Some(_), None, true) => Message::ExtrudeSelectedDrawing,
+        (Some(_), None, false) => Message::ExtrudeNotPath,
     }
 }

@@ -218,6 +218,66 @@ impl Project {
         Ok(next_revision)
     }
 
+    /// Turns a contour set into one body per ring, in place, and bumps the revision once.
+    ///
+    /// A set's rings are separate profiles — a boolean that left two pieces has two of them — and a
+    /// body carries one ring, so each ring becomes a body of its own instead of one solid of two
+    /// disconnected pieces (X100). The first ring takes the node it grew from: the id, name,
+    /// placement, pivot and properties stay, exactly as [`Project::extrude_object_path`] keeps them,
+    /// so the selection, the undo entry and a batch's name keep pointing at one node. The other
+    /// rings land beside it in the same container and in the drawing's own frame, named after it
+    /// (`Union`, `Union 2`), with the pivot a new object starts at — zero (ADR 0088).
+    ///
+    /// The answer is every body the call left behind, the node's own id first. Every ring is
+    /// validated by [`Constructive::extrude`] before the document changes, so a ring the document
+    /// cannot hold writes nothing; a node with another payload is
+    /// [`ProjectError::NotAContoursObject`].
+    pub fn extrude_object_contours(&mut self, id: Id, height: Length) -> Result<Vec<Id>, ProjectError> {
+        let next_revision = self.next_revision()?;
+        let Some(object) = self.object(id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        let Some(contours) = object.geometry().as_contours().cloned() else {
+            return Err(ProjectError::NotAContoursObject { id });
+        };
+        let parent = self.parent_of(id).ok_or(ProjectError::NodeNotFound { id })?;
+        let placement = object.placement();
+        let base_name = object.name().to_owned();
+        let mut rings = contours.paths().iter();
+        // A set holds at least one ring, and a ring that cannot become a body is refused before the
+        // tree moves: the first body is the node's own payload and the rest are new objects.
+        let first =
+            Constructive::extrude(rings.next().ok_or(ProjectError::NotAContoursObject { id })?.clone(), height)?;
+        let mut rest = Vec::new();
+        for ring in rings {
+            rest.push(Constructive::extrude(ring.clone(), height)?);
+        }
+        // The ids are reserved before the tree moves: one per further ring, and the allocation
+        // fails here rather than leaving half a set expanded.
+        let count = u64::try_from(rest.len()).map_err(|_| ProjectError::IdSpaceExhausted)?;
+        let ids = self.allocate_ids(count)?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        let Some(object) = node.as_object_mut() else {
+            return Err(ProjectError::NotAContoursObject { id });
+        };
+        *object.geometry_mut() = Geometry::Constructive(first);
+        let mut bodies = vec![id];
+        for (child_id, body) in ids.into_iter().zip(rest) {
+            // The name is read against the children the container holds now, so two rings of one
+            // set never take one name.
+            let name = self.unique_child_name(parent, &base_name);
+            let Some((_depth, children)) = find_container_mut(&mut self.root, parent, 1) else {
+                return Err(ProjectError::ContainerNotFound { id: parent });
+            };
+            children.push(Node::Object(Object::new(child_id, name, placement, Geometry::Constructive(body))));
+            bodies.push(child_id);
+        }
+        self.revision = next_revision;
+        Ok(bodies)
+    }
+
     /// The contours of a contour-set object.
     ///
     /// A node with another payload is [`ProjectError::NotAContoursObject`].

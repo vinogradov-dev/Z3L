@@ -267,13 +267,16 @@ fn extrusion_path_ready(path: &Path) -> Result<Contour, CommandError> {
 pub const OBJECT_PATH_EXTRUDE_ID: &str = "object.path.extrude";
 
 /// User-facing label of the path extrusion command.
-pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudePath;
+pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudeDrawing;
 
 /// Parameters for `object.path.extrude`.
+///
+/// The node is a drawing of one ring or of several: a path becomes one body in place, and a
+/// contour set becomes one body per ring, the node itself keeping the first (X100).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathExtrude {
-    /// The path node that becomes the body.
+    /// The drawing node that becomes the body or the bodies.
     pub object: Id,
     /// Positive extrusion height along `+Z`.
     pub height: Length,
@@ -291,11 +294,11 @@ fn object_path_extrude_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<ObjectPathExtrude>(params, OBJECT_PATH_EXTRUDE_ID) else {
         return false;
     };
+    // A set's every ring has to hold the one face its cap becomes, so a ring the mesh cannot carry
+    // switches the cell off instead of leaving a body that evaluates to an error (X100).
     valid_extrusion_height(params.height)
-        && session
-            .project()
-            .object_path(params.object)
-            .is_ok_and(|path| path.to_contour().is_ok_and(|contour| validate_extrusion_contour(&contour).is_ok()))
+        && extrusion_rings(session.project(), params.object)
+            .is_ok_and(|rings| rings.iter().all(|ring| validate_extrusion_contour(ring).is_ok()))
 }
 
 fn object_path_extrude_run(
@@ -314,14 +317,41 @@ fn object_path_extrude_run(
             ),
         });
     }
-    let path = project.object_path(params.object)?;
-    let contour = path.to_contour().map_err(|error| CommandError::InvalidParams {
-        command: OBJECT_PATH_EXTRUDE_ID,
-        message: format!("the path must be a closed ring: {error}"),
-    })?;
-    evaluate_contour(OBJECT_PATH_EXTRUDE_ID, &contour)?;
-    project.extrude_object_path(params.object, params.height)?;
+    let rings = extrusion_rings(project, params.object)?;
+    for ring in &rings {
+        evaluate_contour(OBJECT_PATH_EXTRUDE_ID, ring)?;
+    }
+    // A set becomes one body per ring and a path becomes one body in place; one command, because
+    // both are the same drawing and the cell that runs it does not ask which one it holds (X100).
+    if project.object_contours(params.object).is_ok() {
+        project.extrude_object_contours(params.object, params.height)?;
+    } else {
+        project.extrude_object_path(params.object, params.height)?;
+    };
     Ok(CommandOutcome::changed())
+}
+
+/// The rings an extrudable drawing holds, one body each.
+///
+/// A path is one ring and a contour set is one ring per piece a boolean left, so the cell and the
+/// command read both payloads the same way; a node with another payload is refused as a path, which
+/// is the payload the command has always named.
+fn extrusion_rings(project: &Project, id: Id) -> Result<Vec<Contour>, CommandError> {
+    let ring = |path: &Path| {
+        path.to_contour().map_err(|error| CommandError::InvalidParams {
+            command: OBJECT_PATH_EXTRUDE_ID,
+            message: format!("the path must be a closed ring: {error}"),
+        })
+    };
+    let object = project.object(id).ok_or(ProjectError::NodeNotFound { id })?;
+    let geometry = object.geometry();
+    if let Some(path) = geometry.as_path() {
+        return ring(path).map(|contour| vec![contour]);
+    }
+    if let Some(set) = geometry.as_contours() {
+        return set.paths().iter().map(ring).collect();
+    }
+    Err(ProjectError::NotAPathObject { id }.into())
 }
 
 /// Stable id of the extrusion height command.
@@ -737,7 +767,7 @@ fn object_collapse_run(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use model::{ContourSegment, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
+    use model::{ContourSegment, Contours, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
     use testkit::{millimetres, open_path, sample_catalog, sample_project};
     use units::Degrees;
 
@@ -1509,6 +1539,52 @@ mod tests {
 
         session.undo().expect("one undo restores the drawing");
         assert_eq!(session.project().object_path(id), Ok(&stored));
+    }
+
+    #[test]
+    fn a_contour_set_is_extruded_one_body_per_ring_in_one_revision_and_one_undo() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+        let set = Contours::new(vec![left.clone(), right.clone()]).expect("a contour set");
+        let id = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set object");
+        let children = project.root().children().len();
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let value =
+            serde_json::to_value(ObjectPathExtrude { object: id, height: millimetres(18) }).expect("params serialize");
+        let spec = CommandRegistry::new().get(OBJECT_PATH_EXTRUDE_ID).expect("registered");
+        assert!(spec.enabled(&session, &value), "the cell runs on a drawing of several rings");
+        let before = session.project().revision();
+        session.dispatch(OBJECT_PATH_EXTRUDE_ID, &value).expect("both rings become bodies");
+
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision");
+        assert_eq!(session.project().root().children().len(), children + 1, "the set became two bodies");
+        let first = session.project().object(id).expect("the node stays");
+        assert_eq!(first.name(), "Union", "the first body keeps the drawing's name");
+        let body = first.geometry().as_constructive().expect("the drawing is a body now");
+        assert_eq!(body.path(), &left, "the first body owns the first ring");
+        assert_eq!(body.height(), Some(millimetres(18)), "each body carries the typed height");
+        let sibling = session
+            .project()
+            .root()
+            .children()
+            .iter()
+            .filter_map(|child| child.as_object())
+            .find(|object| object.name() == "Union 2")
+            .expect("the second body");
+        let body = sibling.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &right, "the second body owns the second ring");
+        assert_eq!(body.height(), Some(millimetres(18)));
+        assert!(session.project().object_contours(id).is_err(), "the set is consumed");
+        assert!(!spec.enabled(&session, &value), "a body is not extruded a second time");
+
+        session.undo().expect("one undo restores the whole drawing");
+        assert_eq!(session.project().object_contours(id).map(Contours::len), Ok(2), "the set is back, whole");
+        assert_eq!(session.project().root().children().len(), children, "and the second body is gone");
+        assert!(!session.can_undo(), "the whole expansion was one entry");
     }
 
     #[test]

@@ -1460,6 +1460,65 @@ mod tests {
     }
 
     #[test]
+    fn extruding_a_contour_set_leaves_one_body_per_ring_in_one_revision() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let container = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+        let set = Contours::new(vec![left.clone(), right.clone()]).expect("a contour set");
+        let placement = Placement::new(DVec3::new(10.0, 0.0, 0.0), DQuat::IDENTITY).expect("a placement");
+        let id = project.add_object(container, "Union", placement, Geometry::Contours(set)).expect("a set object");
+        let revision = project.revision();
+
+        let bodies = project.extrude_object_contours(id, millimetres(18)).expect("both rings become bodies");
+
+        assert_eq!(bodies.len(), 2, "one body per ring");
+        assert_eq!(bodies.first(), Some(&id), "the drawing's own node is the first body");
+        assert_eq!(project.revision().get(), revision.get() + 1, "one revision for the whole expansion");
+        let first = project.object(id).expect("the node is still there");
+        assert_eq!(first.name(), "Union", "the node keeps its name");
+        assert_eq!(first.placement(), placement, "the node keeps its placement");
+        let body = first.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &left, "the first body owns the first ring");
+        assert_eq!(body.height(), Some(millimetres(18)), "each body carries the typed height");
+        let second = bodies.get(1).and_then(|body| project.object(*body)).expect("the second body");
+        assert_eq!(second.name(), "Union 2", "a sibling is named after the drawing");
+        assert_eq!(second.placement(), placement, "a sibling stands in the drawing's own frame");
+        let body = second.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &right, "the second body owns the second ring");
+        assert_eq!(body.height(), Some(millimetres(18)));
+        assert_eq!(project.parent_of(bodies[1]), project.parent_of(id), "a sibling is a sibling of the drawing");
+        assert_eq!(project.root().children().len(), 2, "the set became one body and made one more");
+        assert_eq!(
+            project.extrude_object_contours(id, millimetres(18)),
+            Err(ProjectError::NotAContoursObject { id }),
+            "a body is not a set and is not expanded a second time"
+        );
+        assert_eq!(project.revision().get(), revision.get() + 1, "a refused expansion changes nothing");
+    }
+
+    #[test]
+    fn extrude_a_contour_set_keeps_the_pivot_a_new_body_starts_with() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let container = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(0), millimetres(40)], [millimetres(40), millimetres(60)]).expect("ring");
+        let set = Contours::new(vec![left, right]).expect("a contour set");
+        let id = project.add_object(container, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set");
+        let pivot = PivotLocal::new(millimetres(5), millimetres(5), Length::ZERO);
+        project.set_node_pivot(id, pivot).expect("the pivot moves");
+
+        let bodies = project.extrude_object_contours(id, millimetres(18)).expect("both rings become bodies");
+
+        assert_eq!(project.pivot_local(id), Some(pivot), "the node keeps the pivot it had");
+        assert_eq!(project.pivot_local(bodies[1]), Some(PivotLocal::ZERO), "a new body is born at a zero pivot");
+    }
+
+    #[test]
     fn an_open_path_is_refused_before_it_becomes_a_body() {
         let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
         let mut project = Project::new(root).expect("valid project");

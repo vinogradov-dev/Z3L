@@ -1,6 +1,7 @@
 # 0205. The areas of a drawing are derived on read
 
-- Status: Accepted; completes G3's contour sets and the hole question G4 left open
+- Status: Accepted; completes G3's contour sets and the hole question G4 left open; the cell's
+gesture is the Extrude cell's second method since 0220
 - Date: 2026-11-21
 
 ## Context
@@ -38,8 +39,9 @@ changes, which is the defect ADR 0118 names.
   matching its area the moment its height changed, because a tool body's own height is frozen when
   the step is stored (ADR 0197). The refusal is the honest half of the feature, and the profile with
   holes is the task that closes it.
-- **The gesture is the cone's, on another payload.** The Extrude cell arms the pull when the
-  selection is a drawing; the pointer names a face through the `ui::Area` atom and the shell paints
+- **The gesture is the cone's, on another payload.** The Extrude cell's second method arms the pull
+  when the selection is a drawing (0220) and its first press extrudes the whole drawing; the pointer
+  names a face through the `ui::Area` atom and the shell paints
   it; a click runs the command in an edit scope and hands the body to the existing pull arrow, so the
   arrow's height joins the same undo entry, the ✓ closes it and the ✕ rolls the body back
   (ADR 0138, ADR 0141). The atom caches the faces by the drawing and the revision they were derived
