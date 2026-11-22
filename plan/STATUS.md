@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=a510037 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=487bb25 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -35,13 +35,9 @@ which the Render place offers as a percentage of a white room and the command li
 
 ## Next
 
-Nothing is scheduled: J20 landed, so the program teaches its own domain — the two worlds, the order
-of a build, the frame shapes, the stances, the classes and the units ride on `command_list` and
-print as `z3l guide`, and every command says which world it serves (ADR 0215). J9 is the next agent
-step — the inspector finds the seven mistakes and the model explains them — and it is what catches a
-wrong number now that no Rust recipe computes one; J14 waits with the network adapter, its consent
-card and the key's two homes; P18 and P19 sit beside them, and P18 has now bitten for real: this
-close numbered its record 0214 because the render stream had taken 0213.
+Nothing is scheduled: P18 landed: no number names two decisions. The next agent step is J9 — the
+inspector finds the seven mistakes and the model explains them — and P19, the plan still pointing at
+the rename that already landed, is the plan-side gap beside it.
 
 ## Index
 

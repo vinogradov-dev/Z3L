@@ -106,22 +106,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 
 ## Bugs
-- `[ ]` **P18** two decisions carry the number 0104, and the index cannot see it
-  Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
-   `0104-supply-names-four-sources.md`, and `docs/decisions/README.md` lists both rows under
-   one number, so "ADR 0104" in `app/src/box_gizmo.rs`, `crates/model/src/class.rs`,
-   `plan/questions.md`, `PROJECT.md` and four notes names two different decisions. `cargo xtask
-   docs` cannot see it: `state-contract/src/cli/docs.rs` compares numbers only and dedups the
-   index list, so two files that share one number both match and the row count still agrees.
-  Shape: Renumber the supply record to the next free number across its file name, its index row
-   and every reference that means it (the supply one: `crates/model/src/class.rs`,
-   `plan/notes/T1.md`, `plan/questions.md`, `PROJECT.md`), and make the check reject two files
-   with one number and one number listed twice — a scratch directory and a test per case, the
-   way the index check tests its own mismatches today.
-  Done: `cargo xtask docs` fails on a scratch directory holding two files numbered 0180 and on
-   an index that lists 0180 twice; the tree has one record per number and every "ADR 0104"
-   reference names one of them; `cargo xtask ci` is green.
-  `files: docs/decisions/README.md,state-contract/src/cli/docs.rs`
 - `[ ]` **P19** the plan still sends a session to take the rename that already landed
   Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is
    `furniture.scene` and the crates are bare. But `plan/rename.md` still opens with "R1 waits
@@ -1188,6 +1172,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **P18** two decisions carry the number 0104, and the index cannot see it
+  Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
+   `0104-supply-names-four-sources.md`, and `docs/decisions/README.md` lists both rows under
+   one number, so "ADR 0104" in `app/src/box_gizmo.rs`, `crates/model/src/class.rs`,
+   `plan/questions.md`, `PROJECT.md` and four notes names two different decisions. `cargo xtask
+   docs` cannot see it: `state-contract/src/cli/docs.rs` compares numbers only and dedups the
+   index list, so two files that share one number both match and the row count still agrees.
+  Shape: Renumber the supply record to the next free number across its file name, its index row
+   and every reference that means it (the supply one: `crates/model/src/class.rs`,
+   `plan/notes/T1.md`, `plan/questions.md`, `PROJECT.md`), and make the check reject two files
+   with one number and one number listed twice — a scratch directory and a test per case, the
+   way the index check tests its own mismatches today.
+  Done: `cargo xtask docs` fails on a scratch directory holding two files numbered 0180 and on
+   an index that lists 0180 twice; the tree has one record per number and every "ADR 0104"
+   reference names one of them; `cargo xtask ci` is green.
+  `files: docs/decisions/README.md,state-contract/src/cli/docs.rs` — `487bb25`
 
 - `[x]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
   why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
