@@ -7,8 +7,8 @@ goal: the tool surface carries the words a released agent has: the sides, the un
 steps:
   [ ] starting the task
 
-now: starting the task
+now: the surface annotates every unit, the class rows carry the fill pair, the sides are a reading rule, and the acceptance test places five shelves and a rod from those answers
 blocked: nothing
 run: cargo xtask task J19
-resume: read the first `files:` path and its callers
+resume: commit, then merge into dev from the primary and close J19
 ```

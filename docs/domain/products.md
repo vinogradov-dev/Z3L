@@ -78,6 +78,12 @@ ties `Side::Left` to `OpeningView::Left`, so a reader never infers a side from a
   front of the piece sees on their left is `+X`; that is `Side::Left`, and `OpeningView::Left` looks
   from it. A left door and a right door are named by the same rule.
 
+The reading is the person's and the caller's, not the document's: no command, query, class or answer
+takes or returns a side, because the next reader may read «слева» the other way round. The tool
+surface states the frame and asks the caller to say back which axis it put each group of parts on
+(ADR 0227); the value object in the code names the four sides for the interface, where a person does
+name them.
+
 ## 3. Place in the tree
 
 - A product is the top node of its own assembly. Everything inside it — panels, facades, fittings,

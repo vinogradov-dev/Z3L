@@ -47,7 +47,7 @@ pub struct ObjectAreaExtrude {
     /// The area is derived rather than stored, so a point names it: the one face of the drawing that
     /// contains it is the face the pointer was over.
     pub area: [Length; 2],
-    /// Positive extrusion height along the set's `+Z`.
+    /// Positive extrusion height along the set's `+Z`, in micrometres.
     pub height: Length,
     /// User-visible name of the body the command creates.
     pub name: String,

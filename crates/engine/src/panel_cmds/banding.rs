@@ -510,7 +510,7 @@ pub struct PanelBowSet {
     pub panel: Id,
     /// Edge to bow.
     pub edge: EdgeId,
-    /// Signed sagitta: positive outward, negative inward.
+    /// Signed sagitta in micrometres: positive outward, negative inward.
     pub sagitta: Length,
 }
 

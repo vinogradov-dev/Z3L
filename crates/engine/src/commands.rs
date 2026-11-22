@@ -196,9 +196,51 @@ impl CommandSpec {
 /// The schema of `P`, in the JSON Schema dialect [`schemars`] emits.
 ///
 /// A pure function of the type: no session, no document and no failure path, because the value is
-/// built from a derive over a `serde` type rather than serialized from a running document.
+/// built from a derive over a `serde` type rather than serialized from a running document. The one
+/// thing the derive cannot say is a unit — a field's own doc comment shadows the type's, so a length
+/// described as "side along +X" arrives without its micrometres (X115, J19) — and the pass below
+/// states it from [`UNITS`] instead of from a hundred field comments.
 fn params_schema<P: JsonSchema>() -> Value {
-    schemars::schema_for!(P).to_value()
+    let mut schema = schemars::schema_for!(P).to_value();
+    annotate_units(&mut schema);
+    schema
+}
+
+/// The unit every number of a type is in, as the schema annotation a caller reads.
+///
+/// The rows are the types whose numbers a caller sends, not a table of fields: a new command that
+/// takes a [`units::Length`] is annotated by name, so a unit cannot be forgotten. The words are the
+/// guide's (`engine::guide().units`) and the type's own doc comment, so one vocabulary serves both.
+const UNITS: [(&str, &str); 3] = [("Length", "micrometres"), ("Degrees", "millidegrees"), ("Placement", "millimetres")];
+
+/// Writes `unit` beside every `$ref` to a type [`UNITS`] names, through the whole schema.
+///
+/// A JSON Schema annotation is an open object, so an unknown key is legal and a validator ignores it;
+/// this one is what a caller reads to know that `2400000` is 2.4 m and `2400.0` is 2.4 m in a
+/// placement. A field description is left alone: the unit is a property of the type, so it is
+/// written once per occurrence from one table rather than restated in prose that can drift.
+fn annotate_units(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let named = map.get("$ref").and_then(Value::as_str).and_then(|reference| reference.rsplit('/').next());
+            if let Some(name) = named
+                && let Some((_, unit)) = UNITS.iter().find(|(type_name, _)| *type_name == name)
+            {
+                map.insert("unit".to_owned(), Value::from(*unit));
+            }
+            for (key, inner) in map.iter_mut() {
+                if key != "unit" {
+                    annotate_units(inner);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                annotate_units(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The commands compiled into this build.
@@ -397,6 +439,63 @@ fn part_name(project: &Project, id: Id) -> String {
 mod tests {
     use super::*;
     use text::Lang;
+
+    #[test]
+    fn every_schema_that_takes_a_length_says_which_unit_it_is_in() {
+        // A model built the first wardrobe a thousand times its size because a field's own doc comment
+        // ("side along +X") shadowed the type's, so nothing on the surface said micrometres (X115,
+        // J19). The unit is a property of the type, so it is annotated on every occurrence from one
+        // table; this test is what stops a new field from arriving without one.
+        let registry = CommandRegistry::new();
+        let mut seen: Vec<String> = Vec::new();
+        for spec in registry.specs() {
+            let schema = spec.params_schema();
+            let mut refs: Vec<(String, Option<String>)> = Vec::new();
+            collect_units(&schema, &mut refs);
+            for (name, unit) in refs {
+                let Some((_, expected)) = UNITS.iter().find(|(type_name, _)| *type_name == name) else {
+                    continue;
+                };
+                assert_eq!(
+                    unit.as_deref(),
+                    Some(*expected),
+                    "{} takes `{name}`, so its schema must say `{expected}`",
+                    spec.id()
+                );
+                seen.push(name);
+            }
+        }
+        for (name, _) in UNITS {
+            assert!(
+                seen.iter().any(|seen| seen == name),
+                "no command schema references `{name}`, so the table row is stale"
+            );
+        }
+    }
+
+    /// Every `$ref` in a schema with the `unit` written beside it, through the whole object.
+    fn collect_units(value: &Value, found: &mut Vec<(String, Option<String>)>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map.get("$ref").and_then(Value::as_str).and_then(|schema| schema.rsplit('/').next())
+                {
+                    let unit = map.get("unit").and_then(Value::as_str).map(str::to_owned);
+                    found.push((name.to_owned(), unit));
+                }
+                for (key, inner) in map {
+                    if key != "unit" {
+                        collect_units(inner, found);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    collect_units(item, found);
+                }
+            }
+            _ => {}
+        }
+    }
 
     #[test]
     fn registry_exposes_panel_commands() {
