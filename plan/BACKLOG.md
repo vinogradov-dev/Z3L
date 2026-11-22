@@ -105,20 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **X108** the assistant window grows by itself while it is open
-  Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
-   with no drag and no resize. `Chat::show` sets `default_size`, `min_width(WIDTH)` and
-   `resizable(true)` while the transcript and the field ask for the width their own content
-   reports, so the host can grow frame after frame. Not reproduced in a test yet; the
-   observation comes from the owner looking at the open panel.
-  Shape: Reproduce it headlessly first: drive an `egui::Context` with a long transcript line
-   and a long input for a hundred frames and compare the window rect of the first frame with
-   the last. The fix is whatever the measurement names; a guess at a width is not accepted
-   before the number exists.
-  Done: A frame test opens the panel, feeds a long transcript line and a long input, runs a
-   hundred frames and asserts the window rect is the same in the first and the last frame; the
-   note records the rect the tree draws today.
-  `files: app/src/chat.rs,crates/ui/src/theme.rs`
 - `[ ]` **X110** nothing answers what a body is, so a caller cannot check what it built
   Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
    a product; box reports the box a product reserves`, and no other query reports the bounds,
@@ -871,6 +857,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **X108** the assistant window grows by itself while it is open
+  Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
+   with no drag and no resize. `Chat::show` sets `default_size`, `min_width(WIDTH)` and
+   `resizable(true)` while the transcript and the field ask for the width their own content
+   reports, so the host can grow frame after frame. Not reproduced in a test yet; the
+   observation comes from the owner looking at the open panel.
+  Shape: Reproduce it headlessly first: drive an `egui::Context` with a long transcript line
+   and a long input for a hundred frames and compare the window rect of the first frame with
+   the last. The fix is whatever the measurement names; a guess at a width is not accepted
+   before the number exists.
+  Done: A frame test opens the panel, feeds a long transcript line and a long input, runs a
+   hundred frames and asserts the window rect is the same in the first and the last frame; the
+   note records the rect the tree draws today.
+  `files: app/src/chat.rs,crates/ui/src/theme.rs` — `e29e269`
 
 - `[x]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
   Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the

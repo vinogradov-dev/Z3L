@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=b9c06f5 updated=2026-11-22
+STATE: milestone=M7 phase=T task=- state=idle base=e29e269 updated=2026-11-22
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -41,7 +41,8 @@ own settings, which the Render place offers as a percentage of a white room and 
 
 ## Next
 
-Nothing is scheduled: 42 open tasks wait in `## Next`.
+Nothing is scheduled: 41 open tasks wait in `## Next`, and X110 — nothing answers what a body is —
+is the next bug in `## Bugs`.
 
 ## Index
 
