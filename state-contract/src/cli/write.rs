@@ -896,7 +896,17 @@ fn apply(root: &Path, changes: Changes, options: &Options, git: &dyn Git, _lock:
         .filter_map(|path| resulting(root, &changes, &path).map(|text| (path, text)))
         .collect();
     let notes = notes_after(root, &changes)?;
-    let plan = crate::PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: Some(&notes) };
+    // A reference file the change writes is checked as it will be, not as it is on disk: a stale map
+    // row was invisible to the write that landed it (P27).
+    let references: Vec<(String, String)> =
+        changes.files.iter().filter(|(path, _)| REFERENCE_FILES.contains(&path.as_str())).cloned().collect();
+    let plan = crate::PlanText {
+        status: &status,
+        backlog: &backlog,
+        sessions: &sessions,
+        notes: Some(&notes),
+        references: Some(&references),
+    };
     let after = violations_of(root, &plan, git);
     let repairing = if after.is_empty() {
         false
@@ -2181,6 +2191,44 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         let error = file(&root, &["plan/debt.md".to_owned(), "--body".to_owned(), "   \n".to_owned()], &FakeGit)
             .expect_err("an empty file says nothing");
         assert!(error.contains("would be empty"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_write_is_checked_against_the_text_it_writes() {
+        // P27: the gate read `plan/map.md` from the disk, so `file` validated the map it replaced and
+        // a row naming a file no branch held landed as "valid". The reference files now enter the
+        // checked plan the way the notes do.
+        let root = project("file-map", STATUS, BACKLOG, None);
+        let map = |path: &str| {
+            format!("# Map\n\n| Feature | Where | Notes |\n|---|---|---|\n| Src | `{path}` (`Src`) | whole file |\n")
+        };
+        let write =
+            |body: &str| file(&root, &["plan/map.md".to_owned(), "--body".to_owned(), body.to_owned()], &FakeGit);
+        write(&map("src/a.rs")).expect("a row beside the tree that holds it lands");
+
+        let error = write(&map("src/gone.rs")).expect_err("a row naming a path the workspace does not hold");
+        assert!(error.contains("refused"), "the gate refused the write: {error}");
+        assert!(text(&root, "plan/map.md").contains("src/a.rs"), "the refused write left the map alone");
+
+        // The sentence the gate printed names the row, so the guard is the one that reported it.
+        let (status, backlog) = (text(&root, "plan/STATUS.md"), text(&root, "plan/BACKLOG.md"));
+        let references = [("plan/map.md".to_owned(), map("src/gone.rs"))];
+        let plan = crate::PlanText {
+            status: &status,
+            backlog: &backlog,
+            sessions: &[],
+            notes: None,
+            references: Some(&references),
+        };
+        let violations = crate::check_text(&root, &plan, &FakeGit).expect_err("the row is checked");
+        assert!(
+            violations.iter().any(|violation| violation.contains("src/gone.rs")),
+            "the violation names the row's path: {violations:?}"
+        );
+
+        std::fs::write(root.join("src/gone.rs"), "fn gone() {}\n").expect("the file the row will name");
+        write(&map("src/gone.rs")).expect("the same row passes beside a tree that holds the file");
         let _ = std::fs::remove_dir_all(&root);
     }
 

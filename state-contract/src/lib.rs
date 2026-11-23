@@ -280,7 +280,7 @@ pub fn check_with(root: &Path, git: &dyn Git) -> Result<Summary, Vec<String>> {
     if !stray.is_empty() {
         return Err(stray);
     }
-    let plan = PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: None };
+    let plan = PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: None, references: None };
     check_text(root, &plan, git)
 }
 
@@ -297,6 +297,9 @@ pub struct PlanText<'a> {
     pub sessions: &'a [(String, String)],
     /// `plan/notes/` as `(file name, text)`, when the caller changed it; `None` reads the disk.
     pub notes: Option<&'a [(String, String)]>,
+    /// The reference files the change writes, as `(path, text)`; a path supplied here is checked as
+    /// it will be, and only a path the change leaves alone is read from the disk (P27).
+    pub references: Option<&'a [(String, String)]>,
 }
 
 /// Checks a plan given as text against the workspace under `root`: the same rules [`check_with`]
@@ -319,14 +322,16 @@ pub fn check_text(root: &Path, plan: &PlanText<'_>, git: &dyn Git) -> Result<Sum
         summary.interrupted = session_interrupted(&summary.state, primary_note, summary.head.as_deref(), git);
         violations.extend(workspace_violations(root, summary, git, plan.notes));
         // The reference files are the plan too: a stale map row or an undeclared debt tag rots it.
-        if let Ok(map) = std::fs::read_to_string(root.join("plan/map.md")) {
+        // The text the change writes wins over the copy on disk, so a `file` write is checked
+        // against the tree it produces rather than the one it replaces (P27).
+        if let Some(map) = reference_text(plan, root, "plan/map.md") {
             violations.extend(validate::map_violations(&map, |path| root.join(path).exists()));
         }
-        if let Ok(debt) = std::fs::read_to_string(root.join("plan/debt.md")) {
+        if let Some(debt) = reference_text(plan, root, "plan/debt.md") {
             violations.extend(validate::debt_violations(&debt));
             violations.extend(validate::reference_violations("plan/debt.md", &debt));
         }
-        if let Ok(questions) = std::fs::read_to_string(root.join("plan/questions.md")) {
+        if let Some(questions) = reference_text(plan, root, "plan/questions.md") {
             violations.extend(validate::reference_violations("plan/questions.md", &questions));
         }
     }
@@ -365,6 +370,14 @@ fn read(path: &Path, name: &str) -> Result<String, Vec<String>> {
 /// The text of one stream's note as the plan being checked holds it.
 fn note_text<'a>(plan: &'a PlanText<'_>, path: &str) -> Option<&'a str> {
     plan.sessions.iter().find(|(note, _)| note == path).map(|(_, text)| text.as_str())
+}
+
+/// One reference file as the plan being checked holds it: the text the change supplies, or the disk's.
+fn reference_text(plan: &PlanText<'_>, root: &Path, path: &str) -> Option<String> {
+    if let Some((_, text)) = plan.references.and_then(|files| files.iter().find(|(candidate, _)| candidate == path)) {
+        return Some(text.clone());
+    }
+    std::fs::read_to_string(root.join(path)).ok()
 }
 
 /// A note file in `plan/` that no stream declares: a renamed stream leaves one behind, and a plan

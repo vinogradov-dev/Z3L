@@ -103,11 +103,16 @@ let backlog = state_contract::edit::set_marker(&backlog, "A3", state_contract::e
 let plan = state_contract::PlanText {
     status: &status,
     backlog: &backlog,
-    session: Some(&session),
-    notes: None,
+    sessions: &sessions,        // the session notes as `(path, text)`
+    notes: None,                // `plan/notes/` when the change touches it, else the disk
+    references: Some(&map),     // `plan/map.md`, `plan/debt.md`, `plan/questions.md` as `(path, text)`
 };
 state_contract::check_text(root, &plan, &git)?; // the caller writes only after this returns `Ok`
 ```
+
+A file the change writes is checked as it will be, not as it is on disk: the notes and the three
+validated reference files enter the plan as text, so a `file` write of `plan/map.md` cannot land a
+stale row (P27).
 
 The prose under `## Next` is the one part of `plan/STATUS.md` a command has to own, because the gate
 requires it to name the current task: `edit::set_section` replaces a whole section body, and a close
