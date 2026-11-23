@@ -17,7 +17,7 @@
 //! It does not own the frame, the grid or the picking result: [`Camera::ray_ndc`] produces a
 //! [`Ray`], and picking itself lives in [`crate::ray`].
 //!
-//! The surface is over B6's 25 public items because it is one type's: a [`Camera`]'s constructor,
+//! The surface is over B6's 26 public items because it is one type's: a [`Camera`]'s constructor,
 //! accessors, navigation calls and projection conversions change together with [`Projection`], and
 //! every one of them is a question about the same value.
 //!
@@ -66,6 +66,13 @@ pub const MIN_DISTANCE_MM: f64 = 10.0;
 /// Farthest camera distance from its target, in millimetres.
 pub const MAX_DISTANCE_MM: f64 = 1.0e6;
 
+/// How far past a distance limit a computed distance may sit and still count as the limit.
+///
+/// A visible height is a multiplication away from the distance that shows it, so a view wound out to
+/// [`MAX_DISTANCE_MM`] asks for a distance a rounding step or two beyond it. A billionth is far
+/// below what a viewport can show and far above what a double loses here (X120).
+const DISTANCE_SLACK: f64 = 1.0e-9;
+
 /// A reason why a camera could not be constructed.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum CameraError {
@@ -102,6 +109,40 @@ impl Projection {
             Self::Perspective { fov_y } => fov_y.is_finite() && fov_y > 1.0e-6 && fov_y < PI - 1.0e-6,
             Self::Orthographic { height } => height.is_finite() && height > 0.0,
         }
+    }
+}
+
+/// What a projection switch did with the visible height it promises.
+///
+/// A switch keeps the frame the maker was looking at, or it does nothing and says why: a camera
+/// that silently clamped its distance would show another frame than the one the toggle promised
+/// (X120).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[must_use = "a switch with no height to keep is the caller's to repair, not a silent clamp"]
+pub enum ProjectionToggle {
+    /// The projection changed and the visible height at the target is the one the view had.
+    Kept,
+    /// The view is pinned to an authored basis, so the viewport may not switch it.
+    Pinned,
+    /// Perspective has no supported distance that shows this height, so nothing moved.
+    ///
+    /// The caller refits the view on the scene: a frame that holds the whole model is one every
+    /// projection can show.
+    NoDistance {
+        /// The visible height the view had, in millimetres.
+        height: f64,
+    },
+}
+
+impl ProjectionToggle {
+    /// Whether the switch happened.
+    pub const fn kept(self) -> bool {
+        matches!(self, Self::Kept)
+    }
+
+    /// Whether the view has to be refitted before the switch can happen at all.
+    pub const fn needs_refit(self) -> bool {
+        matches!(self, Self::NoDistance { .. })
     }
 }
 
@@ -237,27 +278,55 @@ impl Camera {
         if self.fixed.is_some() {
             return;
         }
-        if let Projection::Perspective { fov_y } = self.projection {
-            self.projection = Projection::Orthographic { height: 2.0 * self.distance * (fov_y * 0.5).tan() };
+        if matches!(self.projection, Projection::Perspective { .. }) {
+            self.projection = Projection::Orthographic { height: self.visible_height() };
         }
     }
 
-    /// Switches between a perspective and an orthographic view.
+    /// The world height the view shows at its target plane, in millimetres.
+    ///
+    /// The one number both projections agree on: a perspective view shows
+    /// `2 · distance · tan(fov/2)` there and an orthographic view shows its own height, so a rule
+    /// about how much of the scene a view shows needs no branch on the projection (X120).
+    pub fn visible_height(self) -> f64 {
+        match self.projection {
+            Projection::Perspective { fov_y } => 2.0 * self.distance * (fov_y * 0.5).tan(),
+            Projection::Orthographic { height } => height,
+        }
+    }
+
+    /// Switches between a perspective and an orthographic view, keeping the height it promises.
     ///
     /// The visible height at the target is preserved: a perspective view becomes orthographic with
     /// the height it shows at the target plane, and an orthographic view becomes perspective with
-    /// the default field of view and the distance that shows the same height. An authored camera is
-    /// pinned to its document projection and is left unchanged.
-    pub fn toggle_projection(&mut self) {
+    /// the default field of view and the distance that shows the same height. That distance has to
+    /// be one the camera supports, so a height no supported distance can show leaves the camera as
+    /// it was and says so in [`ProjectionToggle::NoDistance`] — clamping the distance silently would
+    /// show another frame than the one the switch promised (X120). An authored camera is pinned to
+    /// its document projection and is not the viewport's to switch.
+    pub fn toggle_projection(&mut self) -> ProjectionToggle {
         if self.fixed.is_some() {
-            return;
+            return ProjectionToggle::Pinned;
         }
         match self.projection {
-            Projection::Perspective { .. } => self.set_orthographic(),
+            Projection::Perspective { .. } => {
+                self.set_orthographic();
+                ProjectionToggle::Kept
+            }
             Projection::Orthographic { height } => {
                 let fov_y = DEFAULT_FOV_Y;
-                self.distance = (height / (2.0 * (fov_y * 0.5).tan())).clamp(MIN_DISTANCE_MM, MAX_DISTANCE_MM);
+                let distance = height / (2.0 * (fov_y * 0.5).tan());
+                // The height of a view at a limit was computed from that limit, so the two do not
+                // round-trip exactly: a distance within a billionth of one is the limit, not a
+                // reason to refuse the switch (X120).
+                let low = MIN_DISTANCE_MM * (1.0 - DISTANCE_SLACK);
+                let high = MAX_DISTANCE_MM * (1.0 + DISTANCE_SLACK);
+                if !(low..=high).contains(&distance) {
+                    return ProjectionToggle::NoDistance { height };
+                }
+                self.distance = distance.clamp(MIN_DISTANCE_MM, MAX_DISTANCE_MM);
                 self.projection = Projection::Perspective { fov_y };
+                ProjectionToggle::Kept
             }
         }
     }
@@ -479,6 +548,18 @@ impl Camera {
         let ndc = clip.truncate() / clip.w;
         let ndc = DVec2::new(ndc.x, ndc.y);
         ndc.is_finite().then_some(ndc)
+    }
+
+    /// Whether every one of `corners` lands inside the frame of a view `aspect` wide.
+    ///
+    /// This is the question the automatic fit asks before it moves a view nobody has framed: a
+    /// camera that answers `false` no longer holds the model, because a corner is off the side of
+    /// the picture, behind the near plane, or outside an orthographic view's own height (X119). An
+    /// empty list is held by every camera, because there is nothing to hold.
+    pub fn holds(self, corners: &[DVec3], aspect: f64) -> bool {
+        corners
+            .iter()
+            .all(|corner| self.project_ndc(*corner, aspect).is_some_and(|ndc| ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0))
     }
 
     /// World millimetres covered by one viewport point at `depth` millimetres from the eye.

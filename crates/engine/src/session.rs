@@ -508,9 +508,15 @@ impl Session {
             // (X112); the report carries the document, so the session takes the view state back
             // from the trial along with it.
             let open_product = trial.active_product;
-            self.land(trial.project, scope);
+            let before = self.project.revision();
+            let entries = self.land(trial.project, scope);
+            // The copy advanced the revision once per step, and the document moves one number: a
+            // batch is one operation, and the count of operations is what a cache and the answer
+            // read (X128).
+            self.project.settle_revision(before);
             self.active_product = open_product;
             self.retain_active_product();
+            return report.with_entries(entries);
         }
         report
     }
@@ -589,7 +595,11 @@ impl Session {
     /// or one undo would take the person's drag and somebody else's batch back together. A batch that
     /// was handed a scope which is already open and holds the state before the turn merges into it
     /// instead, which is how one message stays one entry (ADR 0187).
-    fn land(&mut self, project: Project, scope: Option<EditScope>) {
+    /// Installs a document the operation built, as one entry of the history.
+    ///
+    /// Returns the entries the history gained: one when this is the operation's own entry, none
+    /// when it merged into an open edit that already holds the state before it.
+    fn land(&mut self, project: Project, scope: Option<EditScope>) -> usize {
         let merged = matches!(
             (scope, self.edit),
             (Some(scope), Some(open)) if open.scope == scope && open.snapshot_pushed && !self.undo.is_empty()
@@ -604,6 +614,7 @@ impl Session {
         }
         self.dirty = !self.project.same_content(&self.saved_project);
         self.retain_active_product();
+        usize::from(!merged)
     }
 
     /// Runs one command on a copy of the document and installs the result.
@@ -1609,6 +1620,55 @@ mod tests {
         assert_eq!(container.children().len(), 0, "one undo removes both panels");
         assert_eq!(container.name(), "Cabinet", "and takes the rename back");
         assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_batch_of_thirty_nine_steps_is_one_revision_and_one_entry() {
+        // X128: the acceptance run over the channel watched one batch move the revision from 8 to
+        // 53, so a caller could not tell one operation from one command. A batch is one operation,
+        // so the document moves one number, the answer says one entry, and one undo takes it back.
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let steps: Vec<BatchStep> = (0..39)
+            .map(|index| {
+                let rename = json_params(&NodeRename { node: product, name: format!("Frame {index}") });
+                BatchStep::new("node.rename", rename)
+            })
+            .collect();
+        let before = session.project().revision();
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert_eq!(report.steps().len(), 39, "every step ran");
+        assert_eq!(session.project().revision().get(), before.get() + 1, "one batch is one operation");
+        assert_eq!(report.entries(), 1, "and leaves one entry of the history");
+        assert_eq!(session.project().container(product).expect("product").name(), "Frame 38");
+
+        session.undo().expect("one undo takes the whole batch back");
+        assert_eq!(session.project().container(product).expect("product").name(), "Cabinet");
+        assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_batch_inside_an_open_edit_claims_no_entry_of_its_own() {
+        // A chat turn holds one entry for its whole message (ADR 0187), so the batch inside it says
+        // `entries: 0` beside the revision it moved to, and one undo still takes the message back.
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let scope = session.begin_edit();
+        let first = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        session.dispatch_in(scope, "node.rename", &first).expect("the turn's first answer");
+        let second = json_params(&NodeRename { node: product, name: "Frame two".to_owned() });
+
+        let report = session.batch_in(scope, &[BatchStep::new("node.rename", second)], BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert_eq!(report.entries(), 0, "the message's open entry already holds the state before it");
+        assert_eq!(session.project().container(product).expect("product").name(), "Frame two");
+
+        session.undo().expect("one undo takes the whole message back");
+        assert_eq!(session.project().container(product).expect("product").name(), "Cabinet");
     }
 
     #[test]

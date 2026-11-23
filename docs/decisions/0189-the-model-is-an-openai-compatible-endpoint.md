@@ -1,6 +1,6 @@
 # 0189. The model is an OpenAI-compatible endpoint, and the key is not in the settings file
 
-- Status: Accepted
+- Status: Accepted; its "no provider name in a type" narrowed by 0235
 - Date: 2026-11-21
 
 ## Context

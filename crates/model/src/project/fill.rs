@@ -318,7 +318,7 @@ struct Part {
 /// turn a board half a turn about its own length axis, which negates both (ADR 0108), and that is
 /// the whole vocabulary this needs.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Stance {
+pub(crate) struct Stance {
     /// The product axis the board's local `X` runs along.
     u: usize,
     /// The product axis the board's local `Y` runs along.
@@ -342,7 +342,7 @@ impl Stance {
     }
 
     /// The board's rotation in the product frame.
-    fn rotation(self) -> DQuat {
+    pub(crate) fn rotation(self) -> DQuat {
         if self.other_face { self.turn * DQuat::from_rotation_x(PI) } else { self.turn }
     }
 
@@ -358,7 +358,7 @@ impl Stance {
 }
 
 /// The stance a fill's board takes before the walls decide which face is the wide one.
-fn stance(fill: Fill) -> Stance {
+pub(crate) fn stance(fill: Fill) -> Stance {
     match fill {
         Fill::WidthAndDepth => {
             Stance { u: 0, v: 1, t: 2, against_y: false, against_z: false, other_face: false, turn: DQuat::IDENTITY }
@@ -385,6 +385,14 @@ fn stance(fill: Fill) -> Stance {
             turn: DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2),
         },
     }
+}
+
+/// The rotation a fill's stance gives a board, for a caller that builds its own placement.
+///
+/// The typed create ([`crate::PanelType`]) reaches the same table through this, so a board made by
+/// a command and a board made by a fill stand in one frame (X117).
+pub(crate) fn stance_rotation(fill: Fill) -> DQuat {
+    stance(fill).rotation()
 }
 
 /// One fill plan's inputs: the measurement, the tool's choice and the parts the sight switched off.

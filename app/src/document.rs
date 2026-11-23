@@ -76,8 +76,52 @@ use crate::{Shell, Transform, theme};
 /// Orbit sensitivity in radians per point dragged.
 const ORBIT_RADIANS_PER_POINT: f64 = 0.008;
 
-/// Zoom sensitivity per scroll point.
+/// Zoom sensitivity per scroll point, while the view holds the scene at a workable size.
 const ZOOM_PER_SCROLL_POINT: f64 = 0.004;
+
+/// What one notch of a mouse wheel is worth, in scroll points.
+///
+/// `egui` converts a line of wheel to this many points, so it is the unit the step below is
+/// explained in and the unit the tests turn the wheel by.
+pub(crate) const WHEEL_NOTCH_POINTS: f64 = 40.0;
+
+/// How fast the wheel closes the gap to the scene's own frame, per scroll point.
+///
+/// A notch takes half of what is left, so a camera left a kilometre from its model is back on it in
+/// five or six notches instead of thirty, and each notch takes a share of the gap rather than a
+/// fixed ratio, so the wheel never jumps past the fit (X120).
+const ZOOM_GAP_PER_POINT: f64 = std::f64::consts::LN_2 / WHEEL_NOTCH_POINTS;
+
+/// The factor one zoom step of `points` applies to a view that shows `visible` millimetres.
+///
+/// Two rules meet here. While the view holds the scene at a workable size the step is the fine
+/// share it always was — a notch moves the image by the same amount everywhere the maker works. Once
+/// the view has wandered outside the scene's own frame the step also takes a share of the *gap*,
+/// measured in logarithms: the ratio between the height the view shows and the height a fit would
+/// show. A camera left a kilometre away is sharing a gap of six, not a distance of a kilometre, so a
+/// few notches bring it back, and because the share is taken from the gap itself the wheel cannot
+/// jump past the fit in one notch (X120).
+///
+/// A positive `points` zooms in, and coming in from outside the frame stops on it rather than past
+/// it. `fit_visible` is what a fit of the scene would show, and the view's own height stands in for
+/// it when the scene has no frame to measure from.
+fn zoom_factor(points: f64, visible: f64, fit_visible: f64) -> f64 {
+    if !points.is_finite() || points == 0.0 || !visible.is_finite() || visible <= 0.0 {
+        return 1.0;
+    }
+    let fit_visible = if fit_visible.is_finite() && fit_visible > 0.0 { fit_visible } else { visible };
+    let gap = (visible / fit_visible).ln().max(0.0);
+    let magnitude = points.abs();
+    let near = magnitude * ZOOM_PER_SCROLL_POINT;
+    let far = gap * (1.0 - (-magnitude * ZOOM_GAP_PER_POINT).exp());
+    let step = match points > 0.0 {
+        // Coming back from outside the frame stops on it: the gap is the whole way back, so a fling
+        // that asks for more of it lands on the fit rather than past it.
+        true if gap > 0.0 => near.max(far).min(gap),
+        _ => near.max(far),
+    };
+    (-points.signum() * step).exp()
+}
 
 /// Colour and radius of an unselected mesh vertex marker.
 const MESH_VERTEX_COLOR: egui::Color32 = egui::Color32::from_rgb(226, 226, 226);
@@ -192,6 +236,27 @@ impl Display {
 /// good geometry on screen and paints the busy state, and the work runs on the next frame, so the
 /// window answers input in between. A cheap scene never shows the message at all.
 pub(crate) const SLOW_REBUILD: Duration = Duration::from_millis(250);
+
+/// How long the status bar says that a view fitted itself to the scene.
+///
+/// A camera that moves with no hand on it has to say why (X119). The sentence is a fact about the
+/// last few seconds rather than about the view's state, so it expires instead of joining the
+/// readouts the bar keeps up to date: long enough to be read after a build lands, short enough to
+/// leave the row to the tool that comes next.
+pub(crate) const FIT_NOTICE: Duration = Duration::from_secs(6);
+
+/// A sentence the bar owes about a view that moved under no hand, and when it started owing it.
+///
+/// Two things make a view move by itself and both have to say so: a view nobody framed follows the
+/// scene (X119), and a view too wide for any perspective distance is fitted so the switch can
+/// happen at all (X120).
+#[derive(Clone, Copy, Debug)]
+struct FitNotice {
+    /// When the view moved, so [`FIT_NOTICE`] can expire the sentence.
+    since: Instant,
+    /// What the bar says about it.
+    message: Message,
+}
 
 /// What the last rebuild cost, and whether the pending one has announced itself yet.
 #[derive(Clone, Copy, Debug, Default)]
@@ -309,6 +374,12 @@ pub(crate) struct Document {
     /// World-space bounds of the latest evaluation, so *Frame all* fits the objects the scene has
     /// now instead of the ones it had when the file opened.
     scene_bounds: Bounds,
+    /// When the view was last fitted under no hand, and the sentence it is saying about it.
+    ///
+    /// A view nobody has framed follows the scene (X119), and a view too wide for perspective is
+    /// fitted by the switch (X120). A camera that moved with no hand on it has to say so: the bar
+    /// carries the sentence for [`FIT_NOTICE`] after the fit, then drops it.
+    fit_notice: Option<FitNotice>,
     scene_revision: Revision,
     /// The editor's visibility revision the frame was built from. A hidden subtree changes the
     /// frame without touching the document revision, so the rebuild watches both (ADR 0065).
@@ -516,6 +587,7 @@ impl Document {
             scene,
             layout,
             scene_bounds,
+            fit_notice: None,
             target,
             file: FileMenu::new(),
             extra,
@@ -983,6 +1055,17 @@ impl Document {
         &self.layout
     }
 
+    /// The sentence a view that moved under no hand still owes the bar, if it owes one.
+    pub(crate) fn fit_sentence(&self) -> Option<Message> {
+        self.fit_notice.map(|notice| notice.message)
+    }
+
+    /// The world bounds of the latest evaluation, for a test that checks what a fit framed.
+    #[cfg(test)]
+    pub(crate) fn scene_bounds(&self) -> Bounds {
+        self.scene_bounds
+    }
+
     /// Whether the status bar should say «Перестроение…» on this frame.
     ///
     /// The shell asks before it syncs, so the frame that announces a heavy rebuild is the one that
@@ -1025,6 +1108,11 @@ impl Document {
         viewport: &ViewportSettings,
         colors: SceneColors,
     ) -> Result<(), String> {
+        self.age_fit_notice(ctx);
+        // A view nobody has framed follows the scene, on this frame rather than on the rebuild
+        // alone: the fit that has to happen is the one the person is about to see, and the hand may
+        // have let go of its tool since the last rebuild (X119).
+        self.fit_left_behind();
         let previous = self.display;
         self.display = Display::of(viewport, colors);
         if self.display.repaints(previous) {
@@ -1041,6 +1129,79 @@ impl Document {
             return Ok(());
         }
         self.refresh()
+    }
+
+    /// Fits every view a person has not framed while the model is outside it.
+    ///
+    /// The camera of a tab is fitted once, when it opens, and an empty scene has no bounds to fit:
+    /// the view starts 1.2 m from the document's corner, so a wardrobe built afterwards is drawn
+    /// from its base corner and the orbit turns about a point that is not the model. A view nobody
+    /// has navigated therefore follows the scene — it is fitted again on the first frame that finds
+    /// the model outside its frame — and the bar says so, so a camera that moved with no hand on it
+    /// never reads as one that moves by itself (X119). *Frame all*, an orbit, a pan, a zoom, a look
+    /// or a roll claims the view for the person, and from then on it is left alone.
+    ///
+    /// The fit waits while a gesture or an armed tool is reading the scene: a camera that moved under
+    /// a pointer that is placing a point, pulling a height or carrying a piece would land the next
+    /// click somewhere else than the screen showed (X119). The wait is not a loss — the next frame
+    /// after the hand lets go fits the view on the same bounds.
+    fn fit_left_behind(&mut self) {
+        if self.scene_in_hand() || !self.layout.follows_the_scene() {
+            return;
+        }
+        let Some(corners) = self.scene_bounds.corners() else {
+            // An empty scene has nothing to frame, and no centre to orbit about either.
+            return;
+        };
+        let Ok(fit) = home_camera(self.scene_bounds) else {
+            return;
+        };
+        if self.layout.fit_left_behind(fit, &corners, self.scene_rect) == 0 {
+            return;
+        }
+        self.fit_notice = Some(FitNotice { since: Instant::now(), message: Message::StatusFitted });
+        self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
+    }
+
+    /// Whether a gesture or an armed tool is reading the scene right now.
+    ///
+    /// The automatic fit and this question meet at one rule: the picture may not move under a hand
+    /// that is working in it. Every state that owns the pointer is named here once — the editor's
+    /// drafts and arms, the gizmos that drag, the piece in hand and the session's preview — so a new
+    /// tool adds itself to this list in the same change (X119).
+    fn scene_in_hand(&self) -> bool {
+        let editor = &self.editor;
+        editor.drawing().is_some()
+            || editor.contour_edit().is_some()
+            || editor.box_draft().is_some()
+            || editor.fill_arm().is_some()
+            || editor.measure().is_some()
+            || editor.void_armed()
+            || editor.area_pull().is_some()
+            || editor.boolean_arm().is_some()
+            || editor.mesh_edit().is_some()
+            || self.preview().is_some()
+            || self.extrude_gizmo.is_dragging()
+            || self.box_grips.is_dragging()
+            || self.contour_gizmo.is_dragging()
+            || self.gizmo.is_dragging()
+            || self.layout.dragging_axis().is_some()
+    }
+
+    /// Drops the fit's sentence once it is old enough that the bar owes it to nobody.
+    ///
+    /// The bar is drawn every frame, so the notice needs no repaint of its own to disappear — but a
+    /// window that idles would keep it on screen, so the frame after the expiry is asked for here.
+    fn age_fit_notice(&mut self, ctx: &egui::Context) {
+        let Some(notice) = self.fit_notice else {
+            return;
+        };
+        let elapsed = notice.since.elapsed();
+        if elapsed >= FIT_NOTICE {
+            self.fit_notice = None;
+        } else {
+            ctx.request_repaint_after(FIT_NOTICE - elapsed);
+        }
     }
 
     /// Re-evaluates the scene when the document revision, the visibility or the preview moved.
@@ -2617,33 +2778,62 @@ impl Document {
 
     /// Returns the active view to *Axonometric* without refitting the scene.
     ///
-    /// The preset writes yaw and pitch only, so the model does not move and the view keeps its
-    /// target, its distance and its projection (ADR 0049).
+    /// The familiar angle is not a standard view: it writes yaw and pitch only, so the model does
+    /// not move and the view keeps its target, its distance and its projection (ADR 0049).
     pub(crate) fn home_view(&mut self) {
         self.layout.active_leaf_mut().home();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 
-    /// Zooms one view about the point under the pointer, which keeps that point where it is.
+    /// Zooms one view by a step of `points` about the point under the pointer, which keeps that
+    /// point where it is.
     ///
     /// The wheel and every drag that zooms go through here: a zoom about the view's centre slides
     /// everything the maker is looking at out from under the pointer, and a piece carried by that
-    /// pointer left the hand on every step (X67).
-    fn zoom_about_pointer(&mut self, leaf: LeafId, viewport: egui::Rect, pointer: egui::Pos2, factor: f64) {
+    /// pointer left the hand on every step (X67). The size of the step is [`zoom_factor`]'s: the fine
+    /// share while the view holds the scene, a share of the gap once the view stands outside the
+    /// scene's own frame, so a camera left far away comes back in a few notches (X120).
+    fn zoom_about_pointer(&mut self, leaf: LeafId, viewport: egui::Rect, pointer: egui::Pos2, points: f64) {
+        let Some(camera) = self.layout.leaf(leaf).map(|leaf| leaf.camera()) else {
+            return;
+        };
+        let fit = self.fit_height().unwrap_or_else(|| camera.visible_height());
+        let factor = zoom_factor(points, camera.visible_height(), fit);
         let Some(leaf) = self.layout.leaf_mut(leaf) else {
             return;
         };
-        let anchor = gizmo_math::view_plane_point(pointer, viewport, leaf.camera());
+        let anchor = gizmo_math::view_plane_point(pointer, viewport, camera);
         leaf.zoom_about(factor, anchor);
+    }
+
+    /// The visible height a fit of this scene would show, which is the size the wheel measures from.
+    ///
+    /// `home_camera` is bounds arithmetic and evaluates nothing, so a wheel frame can ask it for the
+    /// scene's own frame on every step (X120). A scene no camera can hold has no frame to measure
+    /// from, and `None` leaves the wheel its plain step.
+    fn fit_height(&self) -> Option<f64> {
+        home_camera(self.scene_bounds).ok().map(|fit| fit.visible_height())
+    }
+
+    /// The scene's own frame: the centre of the model and the distance that holds all of it.
+    ///
+    /// A scene no camera can hold has no frame, and a view asked to centre on it keeps the frame it
+    /// has: the fallback is the active view's own camera, so a preset never moves a view to a point
+    /// nobody can see (X121).
+    fn scene_fit(&self) -> Camera {
+        home_camera(self.scene_bounds).unwrap_or_else(|_| self.layout.active_camera())
     }
 
     /// Turns the active view to a standard preset, the way the corner widget and the view menu do.
     ///
-    /// The preset writes the camera's direction and its projection, so this is view state and no
-    /// command (ADR 0049); the shell's camera is refreshed here so one entry point cannot leave the
-    /// two disagreeing.
+    /// The preset writes the camera's direction, its projection and the point it centres on, so this
+    /// is view state and no command (ADR 0049); the shell's camera is refreshed here so one entry
+    /// point cannot leave the two disagreeing. A standard view centres the scene on the distance
+    /// that holds it, unless the person has already framed this view by hand and chosen its size
+    /// (X121).
     pub(crate) fn apply_view_preset(&mut self, preset: ui::display::OpeningView) {
-        self.layout.active_leaf_mut().apply_preset(preset);
+        let fit = self.scene_fit();
+        self.layout.active_leaf_mut().apply_preset(preset, fit);
         let camera = self.layout.active_camera();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
     }
@@ -2652,9 +2842,19 @@ impl Document {
     ///
     /// The ribbon, the Display popover and the corner widget all end here, so the three entry points
     /// cannot disagree. The projection is view state, so this is not a command and leaves no undo
-    /// entry (ADR 0049).
+    /// entry (ADR 0049). A view too wide for any distance a perspective camera may stand at is
+    /// fitted on the scene instead of being clamped: the fit frame is one both projections show, so
+    /// the switch keeps its promise, and the bar says the view was refitted (X120).
     pub(crate) fn toggle_view_projection(&mut self) {
-        self.layout.active_leaf_mut().toggle_projection();
+        let outcome = self.layout.active_leaf_mut().toggle_projection();
+        if outcome.needs_refit() {
+            // *Frame all* is the fit every projection can show, and it reports its own refusal: a
+            // scene whose bounds no camera can hold leaves the view as it was and says why.
+            self.frame_all();
+            if self.layout.active_leaf_mut().toggle_projection().kept() {
+                self.fit_notice = Some(FitNotice { since: Instant::now(), message: Message::StatusRefitted });
+            }
+        }
         let camera = self.layout.active_camera();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
     }
@@ -3214,12 +3414,7 @@ impl Document {
             if scroll != 0.0
                 && let Some(at) = ui.input(|input| input.pointer.hover_pos())
             {
-                self.zoom_about_pointer(
-                    target_leaf,
-                    target_rect,
-                    at,
-                    (-f64::from(scroll) * ZOOM_PER_SCROLL_POINT).exp(),
-                );
+                self.zoom_about_pointer(target_leaf, target_rect, at, f64::from(scroll));
             }
         }
 
@@ -3248,12 +3443,7 @@ impl Document {
                 }
                 Some(NavigationMode::Zoom) => {
                     if let Some(at) = response.interact_pointer_pos() {
-                        self.zoom_about_pointer(
-                            target_leaf,
-                            navigation_rect,
-                            at,
-                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
-                        );
+                        self.zoom_about_pointer(target_leaf, navigation_rect, at, f64::from(drag.y));
                     }
                 }
                 None => {}
@@ -3268,12 +3458,7 @@ impl Document {
                     leaf.pan_pixels(f64::from(drag.x), f64::from(drag.y), f64::from(navigation_rect.height()));
                 } else if modifiers.ctrl {
                     if let Some(at) = response.interact_pointer_pos() {
-                        self.zoom_about_pointer(
-                            target_leaf,
-                            navigation_rect,
-                            at,
-                            (-f64::from(drag.y) * ZOOM_PER_SCROLL_POINT).exp(),
-                        );
+                        self.zoom_about_pointer(target_leaf, navigation_rect, at, f64::from(drag.y));
                     }
                 } else {
                     leaf.orbit(
@@ -3649,7 +3834,8 @@ impl Document {
         {
             match action {
                 gizmo::GizmoAction::LookFrom(direction) => {
-                    self.layout.active_leaf_mut().look_from(direction);
+                    let fit = self.scene_fit();
+                    self.layout.active_leaf_mut().look_from(direction, fit);
                 }
                 gizmo::GizmoAction::Home => self.home_view(),
                 gizmo::GizmoAction::ToggleProjection => self.toggle_view_projection(),
@@ -3838,6 +4024,10 @@ impl Document {
     /// Divides the workspace into `kind`, keeping the cameras the views already have.
     pub(crate) fn set_layout(&mut self, kind: LayoutKind) {
         self.layout.set_kind(kind);
+        // The layout that was just shown may never have been on screen, so its views are still the
+        // ones the document opened with: an unframed view among them follows the scene at once
+        // instead of after the next rebuild (X119).
+        self.fit_left_behind();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 
@@ -5035,6 +5225,116 @@ mod tests {
         document.toggle_shadows();
         assert!(!document.layout.leaf(second).expect("second").shadows());
         assert_eq!(document.session.project().revision(), revision, "a view switch is never an edit");
+    }
+
+    #[test]
+    fn a_zoom_notch_is_fine_while_the_view_holds_the_scene_and_takes_the_gap_far_away() {
+        // X120: the wheel scaled the distance by a fixed ratio, so the further the camera stood the
+        // longer the way back. The step now takes a share of the gap to the scene's own frame.
+        let base = (-(WHEEL_NOTCH_POINTS * ZOOM_PER_SCROLL_POINT)).exp();
+        for visible in [1_000.0, 500.0, 250.0] {
+            let factor = zoom_factor(WHEEL_NOTCH_POINTS, visible, 1_000.0);
+            assert!((factor - base).abs() < 1.0e-12, "a view that holds the scene keeps the fine step: {visible}");
+            let out = zoom_factor(-WHEEL_NOTCH_POINTS, visible, 1_000.0);
+            assert!((out - 1.0 / base).abs() < 1.0e-12, "and the same step back out");
+        }
+
+        // A notch far away takes half of what is left of the gap: six notches close a gap of 5.6.
+        let (fit, visible) = (3_125.0, 828_427.1);
+        let mut notches = 0;
+        let mut showed = visible;
+        while showed > fit * 1.05 && notches < 20 {
+            showed *= zoom_factor(WHEEL_NOTCH_POINTS, showed, fit);
+            notches += 1;
+        }
+        assert_eq!(notches, 6, "the gap halves a notch, so 5.6 comes down to 5 % in six of them");
+    }
+
+    #[test]
+    fn a_zoom_never_jumps_past_the_scene_and_ignores_hostile_input() {
+        // The share is taken from the gap itself, so no wheel, however far it is flung, can zoom in
+        // past the frame the scene fills — and no position the view is not in can move it (X120).
+        let fit = 3_125.0;
+        for points in [WHEEL_NOTCH_POINTS, 1_000.0, 100_000.0] {
+            let zoomed = 828_427.1 * zoom_factor(points, 828_427.1, fit);
+            assert!(zoomed >= fit * (1.0 - 1.0e-9), "a fling of {points} points lands on the frame, not past it");
+        }
+        assert!((zoom_factor(WHEEL_NOTCH_POINTS, 1_500.0, fit) - 1.0).abs() > 0.1, "a view off the frame moves");
+        assert_eq!(zoom_factor(0.0, 1_000.0, fit), 1.0, "a wheel that moved nothing moves nothing");
+        assert_eq!(zoom_factor(f64::NAN, 1_000.0, fit), 1.0);
+        assert_eq!(zoom_factor(WHEEL_NOTCH_POINTS, 0.0, fit), 1.0, "a view with no height has no scale");
+        assert_eq!(
+            zoom_factor(WHEEL_NOTCH_POINTS, 1_000.0, f64::NAN),
+            zoom_factor(WHEEL_NOTCH_POINTS, 1_000.0, 1_000.0)
+        );
+    }
+
+    #[test]
+    fn a_view_at_the_distance_cap_switches_and_keeps_its_frame() {
+        // The widest frame a navigable view can hold: the visible height the distance cap allows.
+        // The switch to perspective keeps exactly that frame, so a view wound out to the cap is not
+        // a view that lost its frame (X120).
+        let session = crate::scene_build::demo_session().expect("the sample scene");
+        let settings = Settings::default();
+        let shell = Shell::default();
+        let mut document =
+            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+
+        document.toggle_view_projection();
+        assert!(matches!(document.camera().projection(), Projection::Orthographic { .. }), "the view is orthographic");
+        document.zoom_active_view(1.0e12);
+        // The wheel writes the view and not the frame's snapshot of it, so the test reads the view.
+        let wide = document.layout.active_camera();
+        assert!(
+            (wide.distance() - scene::MAX_DISTANCE_MM).abs() < 1.0e-6,
+            "the view stands at the cap: {}",
+            wide.distance()
+        );
+        let height = wide.visible_height();
+
+        document.toggle_view_projection();
+
+        let switched = document.camera();
+        assert!(matches!(switched.projection(), Projection::Perspective { .. }), "the switch happened");
+        assert!(
+            ((switched.visible_height() - height) / height).abs() < 1.0e-9,
+            "the frame at the target is the one the view had: {} against {height}",
+            switched.visible_height()
+        );
+        assert_eq!(document.fit_sentence(), None, "the height could be shown, so nothing was refitted");
+    }
+
+    #[test]
+    fn a_view_too_wide_for_perspective_is_fitted_rather_than_clamped() {
+        // X120, the owner's report: switching a wide orthographic view to perspective clamped the
+        // distance at the cap, so the camera stood a kilometre from a 2.2 m wardrobe and said
+        // nothing. A height no supported distance can show now fits the view on the scene — a frame
+        // both projections can show — and the bar says the view was refitted.
+        let session = crate::scene_build::demo_session().expect("the sample scene");
+        let revision = session.project().revision();
+        let settings = Settings::default();
+        let shell = Shell::default();
+        let mut document =
+            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let active = document.layout.active();
+        let wide = document.layout.active_camera().with_projection(Projection::Orthographic { height: 2_200_000.0 });
+        document.layout.leaf_mut(active).expect("the active leaf").set_camera(wide);
+        assert_eq!(document.fit_sentence(), None, "no view has moved on its own yet");
+
+        document.toggle_view_projection();
+
+        let drawn = document.camera();
+        let fit = home_camera(document.scene_bounds()).expect("the scene fits a camera");
+        assert!(matches!(drawn.projection(), Projection::Perspective { .. }), "the switch happened");
+        assert!(
+            ((drawn.visible_height() - fit.visible_height()) / fit.visible_height()).abs() < 1.0e-6,
+            "the view shows the scene's own frame: {} against {}",
+            drawn.visible_height(),
+            fit.visible_height()
+        );
+        assert!(drawn.distance() < scene::MAX_DISTANCE_MM, "and stands inside the cap: {}", drawn.distance());
+        assert_eq!(document.fit_sentence(), Some(Message::StatusRefitted), "the bar says the view was refitted");
+        assert_eq!(document.session.project().revision(), revision, "a view is never an edit");
     }
 
     #[test]

@@ -492,7 +492,9 @@ checkout — which is how a plan line and a source file were lost once.
 - `plan/SESSION.md` — the live task note; exists only while `state=doing`, template in `plan/SESSION.template.md`.
 - `plan/map.md` — where each feature lives (feature → path + anchor); the dashboard prints it as `MAP`.
 - `cargo xtask help` — every command with a one-line summary, generated from the command table. The plan is read with `task`/`status`, written with the `task` verbs and `state`, and `agents` prints the session contract below, versioned with the tool.
-- `plan/debt.md` — accepted gaps, tagged by area; append-only, an entry leaves when the fix lands.
+- `plan/debt.md` — accepted gaps, tagged by area; append-only, an entry leaves when the fix lands:
+  `cargo xtask file` refuses a body that drops an entry the file holds, and `--replace` is the
+  whole-file rewrite a person asks for when one has been paid off.
 - `plan/rename.md` — the pre-release rename, which landed at `d4a56f3` (R1): what the old name
   touched, what the move cost, the four steps and the gotchas that outlived it. History, not a task
   to take; read it when a change adds a surface that carries the product name.

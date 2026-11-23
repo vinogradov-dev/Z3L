@@ -53,7 +53,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0046](0046-machining-compiles-to-staged-effects.md) | Machining compiles to staged effects through one descriptor table | Accepted |
 | [0047](0047-icons-are-one-ink-on-a-24-grid.md) | Icons are one ink on a 24 grid, in three families | Accepted; refined by 0055; one-ink clause superseded by 0090 |
 | [0048](0048-a-flat-drawing-is-a-path-of-segments.md) | A flat drawing is a path of segments | Accepted |
-| [0049](0049-the-viewport-toggles-its-own-projection.md) | The viewport toggles its own projection | Accepted |
+| [0049](0049-the-viewport-toggles-its-own-projection.md) | The viewport toggles its own projection | Accepted; a height no distance shows is fitted by 0236, and a standard view centres the scene (X121) |
 | [0050](0050-the-work-plane-follows-the-view.md) | The work plane follows the view | Accepted |
 | [0051](0051-snapping-composes-the-grid-the-axis-and-the-draft-ends.md) | Snapping composes the grid, the axis and the draft ends | Accepted |
 | [0052](0052-a-drawing-commits-as-one-path-on-the-work-plane.md) | A drawing commits as one path on the work plane | Accepted; parent rule superseded by 0056 |
@@ -237,6 +237,10 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0231](0231-the-list-is-short-rows-and-a-schema-is-read-by-id.md) | The list is short rows, and a schema is read one id at a time | Accepted; amends the `command_list` answer of 0185 and the dictionary clause of 0227 |
 | [0232](0232-the-chat-offers-the-tools-the-door-publishes.md) | The chat offers the tools the door publishes, and the history keeps every call | Accepted; supersedes the no-read-tool ruling of J14, refines 0185, 0189 and 0190 |
 | [0233](0233-a-tab-owns-its-assistant-conversation.md) | A tab owns its assistant conversation, and one panel draws the tab in front | Accepted; tab routing of a process's calls is debt |
+| [0234](0234-a-batch-moves-the-revision-once.md) | A batch moves the revision once, and the answer says how many entries it left | Accepted |
+| [0235](0235-a-provider-is-data-and-the-endpoint-lists-the-model.md) | A provider is data: presets fill the address, and the endpoint lists the model | Accepted; amends 0189; the anthropic wire is debt |
+| [0236](0236-a-view-no-distance-shows-is-fitted-not-clamped.md) | A view no distance can show is fitted, not clamped | Accepted; amends 0049 |
+| [0237](0237-the-wheel-step-follows-the-scene.md) | The wheel's step follows the scene the view is in | Accepted |
 
 ## Format
 

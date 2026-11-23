@@ -71,12 +71,3 @@ this file only when a task touches the question.
   carries it and the door does not, so the inspector cannot tell a flush overlay door from an inset
   one and `door_gap` reads every front as an overlay. Confirm whether the mounting form belongs on
   the door (a reserved property or a class variant) before the rule stops guessing (J9).
-
-- The assistant settings page has no ready-made templates, and the owner asked for some "as in
-  SolidCraft". ADR 0189 says no provider name appears in a type, a match arm or a default, and a
-  preset table is one. Three shapes: (1) amend the record to allow a data-driven preset list in the
-  workspace settings, seeded from a file, with the address still the only wire; (2) offer the
-  addresses already in `assistant.consent` as one-click "use again", which needs no provider name
-  and helps a returning workshop; (3) ship a documented `settings.example.json` with one example and
-  change no code. The session took (2) as the default for now: a first-run beginner test decides
-  whether (1) is needed.

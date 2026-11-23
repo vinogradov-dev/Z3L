@@ -45,6 +45,7 @@ mod header;
 mod logging;
 mod measure_gizmo;
 mod mesh_pick;
+mod model_list;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
@@ -98,7 +99,7 @@ use crate::scene_build::empty_session_with;
 /// identity that wants reverse DNS takes its own line here and changes nothing else (ADR 0135).
 pub(crate) const APP_ID: &str = "z3l";
 use crate::settings_store::SettingsStore;
-use crate::shortcuts::take_shortcuts;
+use crate::shortcuts::{take_assistant_key, take_shortcuts};
 use crate::side_panels::{
     ANIMATION_SECONDS, Chrome, EXPANDED_WIDTH, PanelEvent, PanelHead, PanelRects, PanelSide, PanelSlot, Panels,
     STRIP_WIDTH, panel_top, scroll_body, show as show_panel,
@@ -289,6 +290,11 @@ struct App {
     watch: directory_watch::Watch,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
+    /// The model list the *Assistant* page asked its endpoint for, and the last answer (ADR 0234).
+    ///
+    /// It is view state of this window: the request is made off the frame, the answer is thrown away
+    /// when another address is asked for, and nothing of it is ever written to the settings file.
+    assistant_models: model_list::Models,
     /// Whether the Settings window is open.
     settings_open: bool,
     /// Whether the Home surface is open.
@@ -448,6 +454,7 @@ impl App {
             settings_store,
             watch,
             settings_section: SettingsSection::default(),
+            assistant_models: model_list::Models::default(),
             settings_open: false,
             home_open: false,
             render_open: false,
@@ -484,9 +491,13 @@ impl App {
     ///
     /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
     /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
-    /// (X106, ADR 0222).
+    /// (X106, ADR 0222). Opening asks the panel for the caret: a person who opens a field means to
+    /// type into it, and the panel is one field and one turn (X122).
     fn toggle_assistant(&mut self) {
         self.assistant_open = !self.assistant_open;
+        if self.assistant_open {
+            self.chat_mut().focus_field();
+        }
     }
 
     /// Reports a failure in the active tab's status bar.
@@ -1324,9 +1335,17 @@ impl App {
             return;
         }
         let before = self.settings.clone();
-        let outcome = ui::settings::show(ctx, &mut self.settings, &mut self.settings_section);
+        self.assistant_models.poll();
+        let outcome =
+            ui::settings::show(ctx, &mut self.settings, &mut self.settings_section, self.assistant_models.listed());
         if outcome.changed {
             self.apply_settings(&before, ctx);
+        }
+        // The page asked for an endpoint's models; the request is made off this frame and its answer
+        // is drawn by a later one, so pressing the button never stalls the window (ADR 0234).
+        if let Some(address) = outcome.list_models {
+            let folder = self.settings_store.folder().map(std::path::Path::to_path_buf);
+            self.assistant_models.request(&address, folder);
         }
         if outcome.close {
             self.settings_open = false;
@@ -1625,7 +1644,14 @@ impl App {
         if let Err(error) = self.tabs.active_mut().sync_selection() {
             self.failed(error);
         }
-        if !ui.ctx().text_edit_focused() && !modals {
+        // A focused field owns the keys, so typing never saves, undoes, reframes or arms a tool. The
+        // assistant's own key is the one exception: it is what opened the panel, and the field the
+        // panel takes the caret in would otherwise leave a window only the pointer can close (X122).
+        if ui.ctx().text_edit_focused() {
+            if !modals && take_assistant_key(ui.ctx()) {
+                self.toggle_assistant();
+            }
+        } else if !modals {
             let shortcuts = take_shortcuts(ui.ctx());
             if shortcuts.palette {
                 self.palette.open();

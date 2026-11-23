@@ -191,6 +191,15 @@ fn consume(input: &mut egui::InputState, id: &str) -> bool {
     input.consume_key(binding.chord.modifiers(), binding.key)
 }
 
+/// Consumes the assistant's own key in a frame a text field owns.
+///
+/// A focused field keeps the keys for itself — typing must never save, undo, reframe or arm a tool —
+/// with one exception: the key that opened the assistant closes it. Without it the caret the panel
+/// takes when it opens (X122) would leave a panel a person can only close with the pointer.
+pub(crate) fn take_assistant_key(ctx: &egui::Context) -> bool {
+    ctx.input_mut(|input| consume(input, ui::inventory::ASSISTANT_OPEN))
+}
+
 /// Consumes at most one drawing-tool key and starts its tool.
 ///
 /// The table is [`ui::toolbars::shortcut`], the same one the button hints print, so the

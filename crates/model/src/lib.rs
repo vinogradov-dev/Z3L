@@ -35,6 +35,7 @@ mod node;
 mod object;
 mod panel;
 mod panel_features;
+mod panel_type;
 mod placement;
 mod primitive;
 mod profile;
@@ -77,6 +78,7 @@ pub use panel::{
     RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes,
 };
 pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
+pub use panel_type::PanelType;
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
     Cone, DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,

@@ -41,3 +41,28 @@ different height at the target than the orthographic height the camera would be 
 - Top and bottom views still stop five degrees short of the poles ([0019](0019-standard-views-from-a-corner-widget.md)),
   so an orthographic top view is near-plan rather than an exact plan. The work plane decides which
   plane axis-aligned drawing uses.
+
+## Amendment: a standard view centres the scene (2026-11-24)
+
+X121 is the exception this record now carries. "A preset keeps the target and the distance" holds
+for the axonometric view and fails for a standard one: a plan or an elevation is the picture a maker
+measures a panel against, and a view whose target is still the empty scene's origin frames a corner
+of the model instead of the model. Pressing Top on the corner widget showed exactly that.
+
+- A standard preset writes the direction, the projection and the **target**: the target becomes the
+  centre of the scene's bounds, and the distance becomes the one `home_camera` gives for those
+  bounds, so the whole model is inside the frame.
+- The person's size survives. A view the person has framed by hand keeps its distance through a
+  preset, so asking for Top on a view zoomed into a detail does not throw the zoom away; the target
+  still lands on the model.
+- The corner widget's axis balls are standard views and follow the same rule (`Leaf::look_from`). A
+  free direction still turns the camera and keeps the frame.
+- The axonometric preset keeps the rule above unchanged — direction only, target, distance and
+  projection untouched — because it is the familiar angle and not a standard view, and *Home* must
+  not throw away a pan or a zoom.
+- A scene no camera can hold has no centre, and a preset then keeps the frame the view has instead
+  of moving it to a point nobody can see.
+
+Consequences: a standard view lands on the model every time it is asked for, whichever door asked —
+the preset menu, the View tab or the corner widget. The target it writes is the point the next orbit
+turns about and the point *Frame all* would keep, so a plan check needs no separate fit.

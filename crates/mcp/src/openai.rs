@@ -41,6 +41,9 @@ pub const KEY_ENV: &str = "Z3L_AGENT_KEY";
 /// The file a key is read from second, in the folder the settings file lives in.
 pub const KEY_FILE: &str = "agent-key";
 
+/// The header a Go gateway routes on, named here once so the wire and its tests spell it the same.
+pub const GO_SESSION_HEADER: &str = "x-opencode-session";
+
 /// How long one request may take before the turn is told the endpoint stopped answering.
 ///
 /// A completion on a large model is minutes, not seconds; a deadline that fires during a good answer
@@ -83,6 +86,123 @@ impl Endpoint {
     pub fn is_configured(&self) -> bool {
         !self.base_url.trim().is_empty() && !self.model.trim().is_empty()
     }
+
+    /// The URL an endpoint's model list is read from: the base URL and `/models`.
+    pub fn models_url(&self) -> String {
+        format!("{}/models", self.base_url.trim_end_matches('/'))
+    }
+}
+
+/// One model an endpoint lists, as its own `/models` answer names it.
+///
+/// The id is the only part a request needs; the name is what the person reads in the picker and is
+/// the id again when the endpoint names none. No provider appears in either: both are the answer's
+/// words (ADR 0235).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelInfo {
+    /// The id a request asks for, spelled the way the endpoint spells it.
+    pub id: String,
+    /// The endpoint's own name for the model, or its id when it has none.
+    pub name: String,
+}
+
+/// How many models one answer may name, so a hostile endpoint cannot fill the picker.
+const MAX_MODELS: usize = 4096;
+
+/// How much of a `/models` answer is read before it is refused as too big.
+///
+/// Measured 2026-11-23: the gateway's 105-model answer is 199 KiB, a fifth of this bound, and a
+/// listing is read once when the person asks for it rather than on a frame (ADR 0235).
+const MAX_LIST_BYTES: u64 = 4 << 20;
+
+/// How long an endpoint is given to list its models.
+///
+/// A listing is a picker, not a completion: a person waiting for a list gives up in seconds, so the
+/// bound is short and the request is retried by pressing the button again.
+const LIST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// One HTTP agent for every request of this crate: the OS TLS, a deadline and a status read as a
+/// value so the provider's own sentence reaches the panel (ADR 0189, J21).
+///
+/// The agent names its TLS provider explicitly: [`ureq::tls::TlsProvider`] defaults to Rustls and
+/// "is never picked up automatically", so an https endpoint would otherwise panic on the request
+/// thread with the `rustls` feature off. `native-tls` is the provider this workspace compiles.
+fn agent(timeout: Duration) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
+    let config =
+        ureq::Agent::config_builder().timeout_global(Some(timeout)).http_status_as_error(false).tls_config(tls).build();
+    ureq::Agent::new_with_config(config)
+}
+
+/// The models `base_url` says it answers, from `GET {base}/models`.
+///
+/// This is the listing the settings page's picker reads: one blocking request, made off the frame by
+/// the shell, that turns an address into the model ids a person can choose from instead of typing
+/// from memory (ADR 0235). The key travels only when one of its homes holds one, because a gateway
+/// that publishes its list answers without a key (measured 2026-11-23); a workspace with no key can
+/// still see what an endpoint offers.
+///
+/// A Go gateway is sent its session header here too, because the routing it needs is the address's
+/// property and not the message's (X124).
+pub fn models(base_url: &str, folder: Option<&Path>) -> Result<Vec<ModelInfo>, BackendError> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err(BackendError::new("the endpoint has no address to ask for its models"));
+    }
+    let endpoint = Endpoint::new(base, String::new());
+    let mut request = agent(LIST_TIMEOUT).get(&endpoint.models_url()).header("Accept", "application/json");
+    if let Ok(key) = key(folder) {
+        request = request.header("Authorization", format!("Bearer {}", key.trim()));
+    }
+    if go_gateway(base) {
+        request = request.header(GO_SESSION_HEADER, default_session());
+    }
+    let mut response = request.call().map_err(|error| refusal(&endpoint, &error))?;
+    if !response.status().is_success() {
+        let code = response.status().as_u16();
+        let body = response.body_mut().with_config().limit(MAX_ERROR_BYTES).read_to_string().unwrap_or_default();
+        return Err(status_refusal(&endpoint, code, &body));
+    }
+    let body = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_LIST_BYTES)
+        .read_to_string()
+        .map_err(|error| BackendError::new(format!("`{base}` did not answer its model list: {error}")))?;
+    listed_models(&body)
+}
+
+/// The models a `/models` answer names, in the order the endpoint lists them.
+///
+/// Two envelopes are read, because one gateway answers both families: the OpenAI one
+/// (`{"object":"list","data":[{"id":…,"name":…}]}`) and the Anthropic one
+/// (`{"data":[{"type":"model","id":…,"display_name":…}]}`). Only `data[].id` is required: a row
+/// without one is not a model a request can ask for, so it is skipped rather than shown as a choice
+/// that cannot be sent.
+fn listed_models(body: &str) -> Result<Vec<ModelInfo>, BackendError> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|error| BackendError::new(format!("the endpoint's model list is not JSON: {error}")))?;
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| BackendError::new("the endpoint's answer names no models"))?;
+    Ok(data
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str)?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            let named = entry
+                .get("name")
+                .or_else(|| entry.get("display_name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            Some(ModelInfo { id: id.to_owned(), name: named.unwrap_or(id).to_owned() })
+        })
+        .take(MAX_MODELS)
+        .collect())
 }
 
 /// The key a request carries, from its first home or its second.
@@ -153,9 +273,9 @@ pub struct OpenAi {
     endpoint: Endpoint,
     /// The settings folder the key's second home sits in, when the workspace has one.
     folder: Option<PathBuf>,
-    /// This chat's stable id, sent as `x-opencode-session` when the endpoint is a Go gateway. The
+    /// This chat's stable id, sent as [`GO_SESSION_HEADER`] when the endpoint is a Go gateway. The
     /// name is the gateway's, not a setting: the person never sees it and no other provider is asked
-    /// for it (ADR 0189).
+    /// for it (ADR 0235).
     session: String,
     // Never printed: `ureq::Agent` has no useful `Debug` and a test that names the backend should
     // read the endpoint's own shape.
@@ -173,10 +293,8 @@ impl fmt::Debug for OpenAi {
 impl OpenAi {
     /// A backend for `endpoint`, with the one agent every request of this session shares.
     ///
-    /// The agent names its TLS provider explicitly: [`ureq::tls::TlsProvider`] defaults to Rustls
-    /// and "is never picked up automatically", so an https endpoint would otherwise panic on the
-    /// request thread with the `rustls` feature off. `native-tls` is the provider this workspace
-    /// compiles (ADR 0189).
+    /// The agent is [`agent`]'s: the OS TLS named explicitly and a status read as a value, so an
+    /// https endpoint reaches the host instead of panicking on the request thread (J21, ADR 0189).
     pub fn new(endpoint: Endpoint, folder: Option<PathBuf>) -> Self {
         Self::with_session(endpoint, folder, String::new())
     }
@@ -188,15 +306,7 @@ impl OpenAi {
     /// one, for a caller that did not make a chat (a test, a one-shot tool).
     pub fn with_session(endpoint: Endpoint, folder: Option<PathBuf>, session: String) -> Self {
         let session = if session.trim().is_empty() { default_session() } else { session };
-        let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
-        // The status is read by [`complete`] so the provider's own sentence reaches the panel; the
-        // default would turn a 400 into a bare `StatusCode` with the body discarded.
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .http_status_as_error(false)
-            .tls_config(tls)
-            .build();
-        Self { endpoint, folder, session, agent: ureq::Agent::new_with_config(config), answer: None }
+        Self { endpoint, folder, session, agent: agent(REQUEST_TIMEOUT), answer: None }
     }
 
     /// The endpoint this backend asks, for the shell's consent and the panel's words.
@@ -220,11 +330,12 @@ impl ChatBackend for OpenAi {
         let agent = self.agent.clone();
         let endpoint = self.endpoint.clone();
         let session = self.session.clone();
-        let (sender, answer) = mpsc::channel();
+        // One piece at a time: a streamed answer is what the frame in front has not drawn yet, so
+        // the worker waits for the frame instead of running a whole answer into a queue (J26). The
+        // wait ends when the turn drops its receiver, which is what the person's stop does.
+        let (sender, answer) = mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new().name("agent-request".to_owned()).spawn(move || {
-            // A send fails only when the turn dropped the request it replaces; the answer is then
-            // nobody's, which is exactly what the person's stop asked for.
-            let _ = sender.send(complete(&agent, &endpoint, &key, &body, &session));
+            let _ = sender.send(answer_for(&agent, &endpoint, &key, &body, &session, &sender));
         });
         self.answer = Some(match spawned {
             Ok(_) => answer,
@@ -238,6 +349,11 @@ impl ChatBackend for OpenAi {
         let answer = self.answer.as_ref()?;
         match answer.try_recv() {
             Ok(result) => {
+                // A piece of an answer leaves the request in flight, so the receiver stays until the
+                // answer is whole: only the last reply of a stream ends it (J26).
+                if result.as_ref().map(|reply| reply.more).unwrap_or(false) {
+                    return Some(result);
+                }
                 self.answer = None;
                 Some(result)
             }
@@ -301,6 +417,10 @@ fn request_body(endpoint: &Endpoint, transcript: &Conversation) -> Value {
         "messages": messages,
         "tools": tools(),
         "tool_choice": "auto",
+        // The answer arrives as it is written, so a person who types "build me a wardrobe" watches
+        // the words appear instead of a still line (J26). An endpoint that ignores the flag answers
+        // the whole completion, which is read exactly as before.
+        "stream": true,
     })
 }
 
@@ -425,11 +545,14 @@ fn system_message() -> String {
 }
 
 /// Whether `base_url` is an OpenCode Go gateway: those route on a session header the OpenAI wire
-/// does not name, and the program knows it by the address rather than asking the person (ADR 0231).
+/// does not name, and the program knows it by the address rather than asking the person (ADR 0235).
 ///
-/// The predicate is the gateway's own name and path, so the `zen/go` and `inference/go/...` forms
-/// both match and no other endpoint is sent the header.
-fn is_opencode_go(base_url: &str) -> bool {
+/// The predicate is the gateway's own name and path, so the `zen/go/v1` and `inference/go/v1` forms
+/// both match — measured 2026-11-23, both answer a model list and both refuse a completion without
+/// the header — and no other endpoint is sent the header. It is public because a preset address is
+/// a setting: the page that offers one and the wire that sends it have to agree, and a test asserts
+/// they do.
+pub fn go_gateway(base_url: &str) -> bool {
     let url = base_url.trim().to_ascii_lowercase();
     url.contains("opencode.ai") && url.contains("/go")
 }
@@ -446,20 +569,25 @@ fn default_session() -> String {
     format!("z3l-{t:x}-{n:x}-{:x}", std::process::id())
 }
 
-/// One completion, on the thread [`OpenAi::ask`] started.
-fn complete(
+/// One completion, on the thread [`OpenAi::ask`] started: the whole answer, or its pieces.
+///
+/// A piece of a streamed answer travels through `sender` as it arrives, so the panel draws the
+/// model's words while it is still writing them; the answer the caller gets back is the whole of it
+/// and the only thing that enters the history (J26).
+fn answer_for(
     agent: &ureq::Agent,
     endpoint: &Endpoint,
     key: &str,
     body: &Value,
     session: &str,
+    sender: &mpsc::SyncSender<Result<Reply, BackendError>>,
 ) -> Result<Reply, BackendError> {
     let mut request = agent
         .post(endpoint.chat_url())
         .header("Authorization", format!("Bearer {}", key.trim()))
-        .header("Accept", "application/json");
-    if is_opencode_go(endpoint.base_url()) {
-        request = request.header("x-opencode-session", session);
+        .header("Accept", "text/event-stream, application/json");
+    if go_gateway(endpoint.base_url()) {
+        request = request.header(GO_SESSION_HEADER, session);
     }
     let mut response = request.send_json(body).map_err(|error| refusal(endpoint, &error))?;
     if !response.status().is_success() {
@@ -467,11 +595,143 @@ fn complete(
         let body = response.body_mut().with_config().limit(MAX_ERROR_BYTES).read_to_string().unwrap_or_default();
         return Err(status_refusal(endpoint, code, &body));
     }
-    let value: Value = response
-        .body_mut()
-        .read_json()
-        .map_err(|error| BackendError::new(format!("`{}` did not answer with JSON: {error}", endpoint.base_url())))?;
-    reply_from(&value)
+    // The answer's own content type decides how it is read, not the flag that was sent: a gateway
+    // that ignores `stream` answers one completion, and a client that insisted would lose it.
+    if !answers_in_pieces(&response) {
+        let value: Value = response.body_mut().read_json().map_err(|error| {
+            BackendError::new(format!("`{}` did not answer with JSON: {error}", endpoint.base_url()))
+        })?;
+        return reply_from(&value);
+    }
+    read_stream(&mut response, endpoint, sender)
+}
+
+/// Whether this answer is a stream of events rather than one completion.
+fn answers_in_pieces(response: &ureq::http::Response<ureq::Body>) -> bool {
+    response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+}
+
+/// Reads one answer as it is written: a growing text, and the tool calls that end it.
+///
+/// The wire is the OpenAI one: `data:` lines carrying a JSON chunk each, `[DONE]` at the end, and a
+/// `delta` whose `content` is the next piece of the words. A piece is drawn the moment it arrives,
+/// because the whole point of a streamed answer is that a person reads it while it happens (J26).
+/// The text sent with each piece is the answer **so far** and not the delta, so the panel replaces a
+/// line instead of adding one per token.
+fn read_stream(
+    response: &mut ureq::http::Response<ureq::Body>,
+    endpoint: &Endpoint,
+    sender: &mpsc::SyncSender<Result<Reply, BackendError>>,
+) -> Result<Reply, BackendError> {
+    let mut reader = std::io::BufReader::new(response.body_mut().as_reader());
+    let mut line = String::new();
+    let mut said = String::new();
+    let mut calls: Vec<StreamedCall> = Vec::new();
+    loop {
+        line.clear();
+        let read = std::io::BufRead::read_line(&mut reader, &mut line)
+            .map_err(|error| BackendError::new(format!("`{}` cut the answer short: {error}", endpoint.base_url())))?;
+        if read == 0 {
+            break;
+        }
+        // Comments, ids and the event's own name say nothing a person reads; the payload is the
+        // line that starts with `data:`.
+        let Some(payload) = line.trim_end().strip_prefix("data:") else { continue };
+        let payload = payload.trim();
+        if payload.is_empty() {
+            continue;
+        }
+        if payload == "[DONE]" {
+            break;
+        }
+        let value: Value = serde_json::from_str(payload).map_err(|error| {
+            BackendError::new(format!("`{}` sent a piece that is not JSON: {error}", endpoint.base_url()))
+        })?;
+        let choice = value.get("choices").and_then(Value::as_array).and_then(|choices| choices.first());
+        let Some(delta) = choice.and_then(|choice| choice.get("delta")) else { continue };
+        let text = delta_text(delta.get("content"));
+        if !text.is_empty() {
+            said.push_str(&text);
+            // A send fails only when the turn dropped the request, which is the person's stop: the
+            // socket is let go of instead of reading an answer nobody will draw.
+            if sender.send(Ok(Reply::saying_so_far(said.clone()))).is_err() {
+                return Ok(Reply::saying(&said));
+            }
+        }
+        collect_calls(delta.get("tool_calls"), &mut calls);
+    }
+    let mut reply = Reply { text: said, ..Reply::default() };
+    for call in &calls {
+        read_call(&call.as_wire(), &mut reply)?;
+    }
+    Ok(reply)
+}
+
+/// One streamed tool call, assembled from the fragments the wire spreads it over.
+///
+/// A streamed call arrives as pieces: the id once, the name once, and the arguments a few characters
+/// at a time. What the turn reads is the call they add up to, so the fragments are collected and the
+/// same reader parses the whole.
+#[derive(Debug, Default)]
+struct StreamedCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl StreamedCall {
+    /// The call as the non-streamed wire carries it, so one reader parses both shapes.
+    fn as_wire(&self) -> Value {
+        let function = json!({ "name": self.name, "arguments": self.arguments });
+        match self.id.is_empty() {
+            true => json!({ "function": function }),
+            false => json!({ "id": self.id, "function": function }),
+        }
+    }
+}
+
+/// How many streamed calls one answer may name, so a broken index cannot grow the list without end.
+const MAX_STREAMED_CALLS: usize = 32;
+
+/// Adds one chunk's tool-call fragments to `calls`, by the index the wire sends them under.
+fn collect_calls(deltas: Option<&Value>, calls: &mut Vec<StreamedCall>) {
+    let Some(deltas) = deltas.and_then(Value::as_array) else { return };
+    for delta in deltas {
+        let index = delta.get("index").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok());
+        let Some(index) = index.filter(|index| *index < MAX_STREAMED_CALLS) else { continue };
+        if calls.len() <= index {
+            calls.resize_with(index.saturating_add(1), StreamedCall::default);
+        }
+        let Some(call) = calls.get_mut(index) else { continue };
+        if let Some(id) = delta.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()) {
+            call.id.push_str(id);
+        }
+        let function = delta.get("function");
+        if let Some(name) = function.and_then(|function| function.get("name")).and_then(Value::as_str) {
+            call.name.push_str(name);
+        }
+        if let Some(arguments) = function.and_then(|function| function.get("arguments")).and_then(Value::as_str) {
+            call.arguments.push_str(arguments);
+        }
+    }
+}
+
+/// The words one streamed chunk adds, exactly as they were sent.
+///
+/// It is [`words`] without the trim: a delta carries the spaces between the words, and trimming each
+/// piece would run the answer's words together.
+fn delta_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => {
+            parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<&str>>().join("")
+        }
+        _ => String::new(),
+    }
 }
 
 /// How much of a provider's refusal is read before the sentence is built.
@@ -783,6 +1043,71 @@ mod tests {
     }
 
     #[test]
+    fn the_model_list_is_asked_at_models_and_reads_both_envelopes() {
+        // ADR 0235: the picker is the endpoint's own answer, not a table in the program. One gateway
+        // answers the OpenAI envelope and the Anthropic one for the same models, so both are read
+        // and `data[].id` is the only part a request needs.
+        let openai = json!({ "object": "list", "data": [
+            { "id": "deepseek-v4.1-flash", "object": "model", "name": "DeepSeek V4.1 Flash" },
+            { "id": "glm-5.3" },
+            { "name": "a row with no id is not a model" },
+        ] });
+        let (url, requests) = testkit::stub_endpoint_request(openai);
+        let listed = models(&url, Some(&keyed("openai-models"))).expect("the stub lists its models");
+        assert_eq!(
+            listed,
+            [
+                ModelInfo { id: "deepseek-v4.1-flash".to_owned(), name: "DeepSeek V4.1 Flash".to_owned() },
+                ModelInfo { id: "glm-5.3".to_owned(), name: "glm-5.3".to_owned() },
+            ],
+            "the endpoint's order, its own names, and the id where it names none"
+        );
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert_eq!(request.path, "/v1/models", "the list is read at `{{base}}/models`");
+        assert!(
+            request.headers.iter().any(|(name, _)| name == "authorization"),
+            "a workspace with a key sends it: {:?}",
+            request.headers
+        );
+
+        let anthropic = json!({ "data": [
+            { "type": "model", "id": "big-pickle", "display_name": "Big Pickle", "created_at": "2025-10-17" },
+        ] });
+        let (url, _requests) = testkit::stub_endpoint(anthropic);
+        let listed = models(&url, None).expect("a workspace with no key still reads the list");
+        assert_eq!(listed, [ModelInfo { id: "big-pickle".to_owned(), name: "Big Pickle".to_owned() }]);
+    }
+
+    #[test]
+    fn a_model_list_that_is_not_one_is_a_sentence_not_a_panic() {
+        assert!(listed_models("{\"nope\":true}").is_err(), "an answer with no `data` names no models");
+        assert!(listed_models("not json").is_err(), "an answer that is not JSON is refused");
+        assert_eq!(listed_models("{\"data\":[]}"), Ok(Vec::new()), "an empty list is an answer, not an error");
+        let (url, _requests) = testkit::stub_endpoint_status(401, r#"{"error":{"message":"Invalid credential"}}"#);
+        let error = models(&url, None).expect_err("a refusal is not a list");
+        assert!(
+            error.sentence().contains("401") && error.sentence().contains("Invalid credential"),
+            "the provider's own sentence reaches the page: {}",
+            error.sentence()
+        );
+    }
+
+    #[test]
+    fn a_go_gateway_is_sent_its_session_header_by_the_listing_too() {
+        // The routing is the address's property, so the list that a Go gateway publishes is asked
+        // with the same header its completions carry; another address is not given it (X124).
+        let (url, requests) = testkit::stub_endpoint_request(json!({ "data": [] }));
+        let go_url = url.replace("127.0.0.1", "opencode.ai@127.0.0.1").replace("/v1", "/go/v1");
+        let _ = models(&go_url, None).expect("the stub lists no models");
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert!(
+            request.headers.iter().any(|(name, _)| name == GO_SESSION_HEADER),
+            "the Go gateway carries a session id: {:?}",
+            request.headers
+        );
+    }
+
+    #[test]
     fn an_opencode_go_endpoint_carries_its_session_and_another_endpoint_does_not() {
         // X124: the owner's Go gateway answered 400 MissingSessionID while the same curl worked. The
         // gateway routes on a header the OpenAI wire does not name, so the program names it by the
@@ -812,6 +1137,65 @@ mod tests {
             "another endpoint is not sent the gateway's header: {:?}",
             request.headers
         );
+    }
+
+    #[test]
+    fn a_streamed_answer_arrives_in_pieces_and_lands_one_batch() {
+        // J26: a person who asks for a wardrobe watches the model say what it is doing. The endpoint
+        // answers in events, the pieces reach the panel as they arrive, and the batch they add up to
+        // is one undo entry — the words are drawn once, not once per token.
+        let (mut session, panel) = fixture();
+        let arguments = json!({
+            "steps": [{ "command": "node.rename", "params": { "node": panel.get(), "name": "Left" } }]
+        })
+        .to_string();
+        let (head, tail) = arguments.split_at(arguments.len() / 2);
+        let events = vec![
+            json!({ "choices": [{ "delta": { "content": "Renaming" } }] }).to_string(),
+            json!({ "choices": [{ "delta": { "content": " the side." } }] }).to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "id": "call-batch", "function": { "name": "command_batch", "arguments": "" } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": head } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": tail } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }).to_string(),
+            "[DONE]".to_owned(),
+        ];
+        let (url, requests) = testkit::stub_events(events);
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-stream")));
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+        let scope = session.edit_scope();
+        let mut door = crate::reads::MessageDoor::new(&mut session, scope);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut drawn: Vec<String> = Vec::new();
+        while !turn.is_done() && Instant::now() < deadline {
+            turn.advance(&mut backend, &mut conversation, Lang::En, &mut door);
+            for line in conversation.lines() {
+                if line.speaker == Speaker::Agent && drawn.last() != Some(&line.text) {
+                    drawn.push(line.text.clone());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        session.end_edit();
+
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert_eq!(request.body["stream"], true, "the answer is asked for as it is written: {}", request.body);
+        assert!(turn.is_done(), "the turn ended before its deadline");
+        assert!(drawn.len() > 1, "the words were drawn more than once, each time longer: {drawn:?}");
+        assert_eq!(
+            drawn.last().map(String::as_str),
+            Some("Renaming the side."),
+            "one line holds the answer: {drawn:?}"
+        );
+        assert_eq!(name(&session, panel).as_deref(), Some("Left"), "the batch the call assembled landed");
+        session.undo().expect("the whole answer is one entry");
+        assert_eq!(name(&session, panel).as_deref(), Some("Side"), "and one undo takes it back");
+        let spoken = conversation.lines().iter().filter(|line| line.speaker == Speaker::Agent).count();
+        assert_eq!(spoken, 1, "the answer is one line, not one per piece");
     }
 
     #[test]

@@ -226,6 +226,7 @@ pub struct BatchReport {
     changed: Vec<Id>,
     removed: Vec<Id>,
     content_changed: bool,
+    entries: usize,
 }
 
 impl BatchReport {
@@ -265,6 +266,21 @@ impl BatchReport {
         self.content_changed
     }
 
+    /// The undo entries this batch left, so one operation can be told from one command.
+    ///
+    /// One for a batch that landed as an operation of its own, none for a batch that merged into an
+    /// open edit — a chat turn keeps its whole message in one entry (ADR 0187) — or that wrote
+    /// nothing. The revision moves by one either way, because a batch is one operation (X128).
+    pub const fn entries(&self) -> usize {
+        self.entries
+    }
+
+    /// Records the entries the history gained, so the answer says what the batch left behind.
+    pub(crate) const fn with_entries(mut self, entries: usize) -> Self {
+        self.entries = entries;
+        self
+    }
+
     /// The step that refused the batch, and why: its number counting from one, and the command's
     /// own sentence.
     pub fn refusal(&self) -> Option<(usize, &CommandError)> {
@@ -284,6 +300,7 @@ impl BatchReport {
             changed: changes.changed,
             removed: changes.removed,
             content_changed: !before.same_content(after),
+            entries: 0,
         }
     }
 }

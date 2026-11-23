@@ -85,13 +85,49 @@ pub fn stub_endpoint_status(status: u16, body: impl Into<String>) -> (String, Re
     stub_seen(status, body.into())
 }
 
-/// What the stub read from one request: the JSON body and every header, names lowercased.
+/// What the stub read from one request: the path it asked for, the JSON body and every header,
+/// names lowercased.
 #[derive(Debug)]
 pub struct Request {
+    /// The path of the request line, as the client sent it (`/v1/models`).
+    ///
+    /// It is what a wire that reads a different endpoint is proved by: the base URL decides the
+    /// path, and a stub that answered whatever came in would hide a client that asked the wrong one.
+    pub path: String,
     /// The JSON body the client sent.
     pub body: Value,
     /// The headers in the order the client sent them, each name lowercased.
     pub headers: Vec<(String, String)>,
+}
+
+/// A stub endpoint that answers one request as a stream of events, one `data:` line each.
+///
+/// It is how a client that reads an answer while it is written is proved without a provider: the
+/// listener writes each payload, flushes it and closes the connection, so the body ends where the
+/// last event ended. The body carries no `Content-Length`, which is what a real stream does, and the
+/// content type is the one that tells a client the answer arrives in pieces.
+#[allow(clippy::expect_used)]
+pub fn stub_events(events: Vec<String>) -> (String, Receiver<Request>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+    let port = listener.local_addr().expect("the test reads the port it took").port();
+    let (sender, requests) = mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let Some(request) = read_request(&mut stream) else { continue };
+            let _ = sender.send(request);
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                        Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = std::io::Write::write_all(&mut stream, head.as_bytes());
+            for event in &events {
+                let _ = std::io::Write::write_all(&mut stream, format!("data: {event}\n\n").as_bytes());
+                let _ = std::io::Write::flush(&mut stream);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            break;
+        }
+    });
+    (format!("http://127.0.0.1:{port}/v1"), requests)
 }
 
 /// One loopback listener that answers the first request with `status` and `answer` and breaks.
@@ -140,7 +176,16 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
             })
             .unwrap_or(0);
         if raw.len() >= head_end + length {
-            let body = serde_json::from_slice(&raw[head_end..head_end + length]).ok()?;
+            // A request with no body — a `GET` — carries no `Content-Length` and reads as `Null`,
+            // so a listing is served by the same stub a completion is.
+            let body = match length {
+                0 => Value::Null,
+                _ => serde_json::from_slice(&raw[head_end..head_end + length]).ok()?,
+            };
+            // The request line is `METHOD SP request-target SP HTTP-version`; the target carries the
+            // query a GET may use, so the whole of it is kept.
+            let path =
+                head.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or_default().to_owned();
             let headers = head
                 .lines()
                 .skip(1)
@@ -149,7 +194,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
                     Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
                 })
                 .collect();
-            return Some(Request { body, headers });
+            return Some(Request { path, body, headers });
         }
     }
 }

@@ -25,6 +25,8 @@ use ui::{DrawIntent, DrawTool, FieldParam, MeasureStage, TransformMode};
 use units::Length;
 
 use super::*;
+use crate::document::WHEEL_NOTCH_POINTS;
+use crate::scene_build::home_camera;
 
 /// The window a headless frame is drawn into: the default launch size (M2).
 fn screen() -> egui::Rect {
@@ -1948,6 +1950,66 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     );
 }
 
+/// The wheel event a mouse sends: one notch is [`WHEEL_NOTCH_POINTS`] points.
+fn wheel(points: f32) -> egui::Event {
+    egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    }
+}
+
+#[test]
+fn the_wheel_brings_a_camera_left_a_kilometre_back_to_the_model() {
+    // X120, the owner's report: from a kilometre the wheel moved the camera by a share of a
+    // kilometre — a millimetre on screen — so coming back to a wardrobe took thirty notches and read
+    // as movement by micrometres. The step now takes a share of the gap to the scene's own frame.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-wheel-far", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    // The pointer sits on the model, which is the middle of the view and where the anchor of a zoom
+    // under it is: the wheel keeps what is under the pointer, so a pointer beside the model would
+    // rightly carry the view after itself.
+    harness.hover(harness.node_point(panel));
+
+    // Wind out to the distance cap: a kilometre from a two metre board, which is where the report
+    // left the camera.
+    harness.run(vec![wheel(-(WHEEL_NOTCH_POINTS as f32) * 25.0)]);
+    harness.settle();
+    let far = harness.camera();
+    assert!(
+        (far.distance() - scene::MAX_DISTANCE_MM).abs() < 1.0e-6,
+        "the wheel stops at the cap, a kilometre out: {}",
+        far.distance()
+    );
+
+    let fit = home_camera(harness.app.tabs.active().scene_bounds()).expect("the scene fits a camera");
+    let mut notches = 0;
+    while notches < 20 && harness.camera().visible_height() > fit.visible_height() * 1.05 {
+        harness.run(vec![wheel(WHEEL_NOTCH_POINTS as f32)]);
+        // One event is one notch, and `egui` spreads it over the frames after it: the test delivers
+        // a whole notch before it counts one.
+        for _ in 0..12 {
+            harness.frame();
+        }
+        notches += 1;
+    }
+    // The gap from the cap to the scene's own frame is `ln(828427 / 3125)` — 5.6 — and a notch takes
+    // half of what is left, so six notches close it and the seventh is the frame the first event
+    // lands on. Thirty notches were the old answer and are the defect the report names.
+    assert!(notches <= 8, "the model comes back in a handful of notches, not {notches}");
+    assert!(
+        harness.camera().visible_height() <= fit.visible_height() * 1.05,
+        "and it fills the frame: {} against {}",
+        harness.camera().visible_height(),
+        fit.visible_height()
+    );
+}
+
 #[test]
 fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     // N25, X67: the hold owns no button, so nothing about it may own the viewport. The camera keeps
@@ -3359,6 +3421,13 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
             )
             .expect("add a post");
     }
+    // The two posts stand outside the frame the tab opened on, so the view fitted itself to them.
+    // The maker then looks into the niche from the front: a standard view is orthographic, so its
+    // rays are parallel and the pointer names the same cell and the same place down the section
+    // whatever the fit did to the distance (X119).
+    harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Front);
+    harness.settle();
+    let document = harness.app.tabs.active();
     let project = document.session.project();
     let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
     let size = geom::DVec3::new(
@@ -3366,7 +3435,11 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
         envelope.y().millimetres_f64(),
         envelope.z().millimetres_f64(),
     );
-    let centre = project.world_placement(product).expect("a frame").transform_point(size * 0.5);
+    // The pointer aims at the middle of the frame, which the front view enters through the back
+    // wall: a pointer names the cell it *enters* the frame by, so the aim is the space the maker
+    // means rather than the face the eye can see over (X119).
+    let aim = geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.5);
+    let centre = project.world_placement(product).expect("a frame").transform_point(aim);
     let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
     let pointer = gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen");
     assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
@@ -7102,6 +7175,63 @@ fn a_turn_pauses_when_its_tab_leaves_and_finishes_when_it_comes_back() {
 }
 
 #[test]
+fn the_panel_says_how_long_the_agent_has_worked_and_what_it_is_doing() {
+    // J26: the owner's complaint was that a simple request takes long and the panel says nothing
+    // while it does. A waiting person now reads the seconds, the request count and the step the
+    // agent is on, and the answer grows in one line as it is written instead of appearing whole.
+    let (mut harness, panel) = chat_fixture("frame-chat-progress");
+    harness.app.assistant_open = true;
+    harness.settle();
+    assert!(harness.drew("Plan"), "the panel is on screen before the message: {:?}", harness.drawn);
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying_so_far("Renaming"),
+        mcp::Reply::saying_so_far("Renaming the side"),
+        mcp::Reply::saying("Renaming the side now."),
+    ])));
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+
+    // The first frame only asks, so the panel says it is working and names no step yet.
+    harness.frame();
+    assert!(harness.app.chat_mut().is_busy());
+    assert!(
+        harness.drawn.iter().any(|text| text.starts_with("The agent is working")),
+        "the panel says how long it has been working: {:?}",
+        harness.drawn
+    );
+
+    // The batch lands, so the next frame names the step it dispatched. `repaint_causes` names the
+    // frame before the last one, so the ask the panel made is read a frame later.
+    harness.frame();
+    assert!(
+        harness.ctx.repaint_causes().iter().any(|cause| cause.file.ends_with("app/src/chat.rs")),
+        "the panel asks for the frames that keep its clock and its answer moving (J26): {:?}",
+        harness.ctx.repaint_causes()
+    );
+    assert!(harness.app.chat_mut().is_busy(), "the turn asks again after the batch");
+    assert!(harness.drew("now: node.rename"), "the panel names the step: {:?}", harness.drawn);
+
+    // The answer arrives in pieces and is drawn as one line that grows.
+    harness.frame();
+    harness.frame();
+    assert!(harness.drew("Renaming"), "the words appear as they arrive: {:?}", harness.drawn);
+    harness.frame();
+    harness.frame();
+    assert!(harness.drew("Renaming the side"), "the same line grew: {:?}", harness.drawn);
+    assert!(
+        !harness.drawn_rects.iter().any(|(_, text)| text == "Renaming"),
+        "and the shorter piece is not drawn beside it: {:?}",
+        harness.drawn
+    );
+
+    drive_turn(&mut harness, 8);
+    assert!(!harness.app.chat_mut().is_busy(), "the whole answer ends the turn");
+    harness.frame();
+    assert!(!harness.drew("The agent is working"), "the progress line goes when the turn does");
+}
+
+#[test]
 fn the_workspace_settings_reach_every_open_tab() {
     // The backend is the tab's, so a settings change is applied to every tab and not only to the one
     // in front: a scene that comes forward is already able to send (J24).
@@ -7338,6 +7468,108 @@ fn a_remembered_address_is_one_click_away_from_the_settings_page() {
     assert_eq!(harness.app.settings.assistant.endpoint, remembered, "the remembered address is back in the field");
 }
 
+#[test]
+fn a_provider_preset_fills_the_address_and_the_field_stays_the_persons() {
+    // ADR 0235: a preset writes one base URL and nothing else. The field is still typed by hand, and
+    // *Other address* keeps whatever is in it, so a workshop with an address nobody lists is not
+    // pushed out by the table.
+    let (mut harness, _panel) = chat_fixture("frame-settings-preset");
+    harness.app.settings.assistant.endpoint.clear();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let combo = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantProviderCustom.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the provider row shows what the field holds");
+    harness.click(combo, egui::PointerButton::Primary);
+    let row = harness
+        .drawn_rects
+        .iter()
+        .find(|(rect, text)| {
+            text == Message::AssistantProviderOpenCodeGo.text(Lang::En) && combo.distance(rect.center()) > 4.0
+        })
+        .map(|(rect, _)| rect.center())
+        .expect("the presets are listed under the row");
+    harness.click(row, egui::PointerButton::Primary);
+    assert_eq!(
+        harness.app.settings.assistant.endpoint,
+        ui::settings::PRESETS[0].base_url,
+        "the preset filled the address"
+    );
+    harness.app.settings.assistant.endpoint = "https://api.example.com/v1".to_owned();
+    harness.settle();
+    assert!(harness.drew(Message::AssistantProviderCustom.text(Lang::En)), "a typed address reads as the person's own");
+    assert_eq!(harness.app.settings.assistant.endpoint, "https://api.example.com/v1", "and it is still there");
+}
+
+#[test]
+fn a_model_the_endpoint_listed_fills_the_model_field() {
+    // The picker is the endpoint's answer, so a person chooses an id they cannot misspell. The field
+    // keeps what was typed until a row is chosen (ADR 0235).
+    let (mut harness, _panel) = chat_fixture("frame-settings-models");
+    let address = "https://api.example.com/v1";
+    harness.app.settings.assistant.endpoint = address.to_owned();
+    harness.app.settings.assistant.model = "typed-model".to_owned();
+    harness.app.assistant_models.land(ui::settings::ListedModels {
+        address: address.to_owned(),
+        rows: vec![
+            ui::settings::ModelRow { id: "gpt-6-luna".to_owned(), name: "GPT 6 Luna".to_owned() },
+            ui::settings::ModelRow { id: "glm-5.3".to_owned(), name: "glm-5.3".to_owned() },
+        ],
+        ..ui::settings::ListedModels::default()
+    });
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let picker = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantModelsPick.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the picker is drawn once the endpoint answered");
+    harness.click(picker, egui::PointerButton::Primary);
+    // A row that names its model shows both: the word a person reads and the id a request sends.
+    let named = Message::AssistantModelNamed.with(Lang::En, ["GPT 6 Luna".to_owned(), "gpt-6-luna".to_owned()]);
+    let row = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == &named)
+        .map(|(rect, _)| rect.center())
+        .expect("every listed model is a row");
+    harness.click(row, egui::PointerButton::Primary);
+    assert_eq!(harness.app.settings.assistant.model, "gpt-6-luna", "the id a request sends is what was chosen");
+}
+
+#[test]
+fn the_list_models_button_asks_the_address_and_the_page_reads_the_answer() {
+    // The whole path of ADR 0235 in one frame test: the button reports the address, the shell asks it
+    // off the frame, and the page draws what came back. A closed port answers at once, so the test is
+    // a refusal — the sentence a workshop reads when an address is down — and no network is touched.
+    let (mut harness, _panel) = chat_fixture("frame-settings-list-models");
+    harness.app.settings.assistant.endpoint = "http://127.0.0.1:1/v1".to_owned();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let button = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantModelsList.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the page offers the button beside the model field");
+    harness.click(button, egui::PointerButton::Primary);
+    for _ in 0..200 {
+        harness.frame();
+        if harness.drew("The models could not be listed") {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the answer reached the page: {:?}", harness.drawn);
+}
+
 /// The Send buttons the last frame drew, topmost first.
 ///
 /// The consent card sits above the field, so the card's own Send is the first one while the card is
@@ -7351,6 +7583,35 @@ fn assistant_send_points(harness: &Harness) -> Vec<egui::Pos2> {
         .collect();
     points.sort_by(|left, right| left.y.total_cmp(&right.y));
     points
+}
+
+/// The middle of the panel's button that prints `message`.
+///
+/// The panel is a window over the scene, so the button is found where the frame drew its label
+/// instead of at a coordinate the field's row would have to repeat (X122).
+fn assistant_button(harness: &Harness, message: Message) -> egui::Pos2 {
+    let label = message.text(Lang::En);
+    harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == label)
+        .map(|(rect, _)| rect.center())
+        .unwrap_or_else(|| panic!("the panel draws no `{label}`: {:?}", harness.drawn))
+}
+
+/// A model that never answers, so a test can hold a turn in flight for as long as it looks.
+///
+/// A scripted backend that runs out answers with a sentence and ends the turn; this one leaves the
+/// request in flight, which is the state the panel's Stop and its working line are drawn for (X122).
+#[derive(Debug)]
+struct Silent;
+
+impl mcp::ChatBackend for Silent {
+    fn ask(&mut self, _transcript: &mcp::Conversation) {}
+
+    fn take(&mut self) -> Option<Result<mcp::Reply, mcp::BackendError>> {
+        None
+    }
 }
 
 /// Writes the key's second home into `folder` with owner-only permissions.
@@ -7483,6 +7744,86 @@ fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
 }
 
 #[test]
+fn the_panel_opens_with_the_caret_in_its_field() {
+    // X122: opening the panel is opening a field. The field holds the keyboard on the frame the
+    // window comes up, so the first key a person types is the message and not a viewport shortcut;
+    // and the key that opened the panel still closes it, because a field that owns the keys would
+    // otherwise leave a window only the pointer can put away.
+    let (mut harness, _panel) = chat_fixture("frame-chat-caret");
+    harness.settle();
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::saying("ok")])));
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.assistant_open, "Ctrl+J opens the panel");
+    assert!(harness.ctx.text_edit_focused(), "and the caret stands in the panel's field");
+
+    harness.run(vec![egui::Event::Text("rename the side".to_owned())]);
+    assert_eq!(harness.app.chat().input, "rename the side", "the first key typed reached the field");
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(!harness.app.assistant_open, "and the key that opened it closes it");
+}
+
+#[test]
+fn a_running_turn_keeps_its_field_and_a_click_on_stop_ends_it() {
+    // X122: a turn in flight draws Stop where Send was, the field stays typable — the owner's
+    // decision of 2026-11-23: a person composes the next message while the agent works — and the
+    // panel's own Stop ends the turn between two calls and says so. The backend never answers, so
+    // the turn is in flight for the whole test instead of ending on a scripted reply.
+    let (mut harness, _panel) = chat_fixture("frame-chat-stop-click");
+    harness.app.chat_mut().backend = Some(Box::new(Silent));
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.assistant_open, "Ctrl+J opens the panel");
+
+    harness.run(vec![egui::Event::Text("rename the side".to_owned())]);
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.chat().is_busy(), "Enter sent the field as one turn");
+    assert!(harness.drew(Message::AssistantStop.text(Lang::En)), "the row draws Stop: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantSend.text(Lang::En)), "Stop replaces Send, never beside it");
+
+    harness.run(vec![egui::Event::Text("the next message".to_owned())]);
+    assert_eq!(harness.app.chat().input, "the next message", "the field stays typable while the agent works");
+
+    let stop = assistant_button(&harness, Message::AssistantStop);
+    harness.click(stop, egui::PointerButton::Primary);
+    assert!(!harness.app.chat().is_busy(), "the click on Stop ended the turn");
+    assert!(
+        harness.drew(Message::AssistantStoppedLine.text(Lang::En)),
+        "and the panel says the turn was stopped: {:?}",
+        harness.drawn
+    );
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "the row offers Send again");
+}
+
+#[test]
+fn a_carried_piece_leaves_the_panel_offering_send() {
+    // X122: a gesture postpones the next message and never chooses the button. With no turn in
+    // flight, a carried piece draws Send and no Stop — the row has one meaning at a time.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-chat-carried", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.tabs.active_mut().editor.select_node(None);
+    harness.settle();
+
+    let cell = harness.mode_cell(&TransformMode::Object.caption(Lang::En));
+    harness.click(cell, egui::PointerButton::Primary);
+    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the header's cell arms the object move");
+    harness.settle();
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "a click on the board takes it");
+
+    harness.app.chat_mut().backend = Some(Box::new(Silent));
+    harness.app.assistant_open = true;
+    harness.settle();
+    assert!(!harness.app.chat().is_busy(), "no turn is in flight");
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "the row still offers Send: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantStop.text(Lang::En)), "and draws no Stop");
+}
+
+#[test]
 fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
     // The panel's key is the inventory's row, and the switch a person turns is drawn with the
     // sentence that stands for it.
@@ -7580,6 +7921,62 @@ fn the_assistant_panel_keeps_the_size_it_opens_at() {
         let (first, last) = (first.expect("the panel drew"), last.expect("the panel drew"));
         assert_eq!(first, last, "{lang:?}: the panel kept the size it opened at, first {first:?}, last {last:?}");
     }
+}
+
+#[test]
+fn the_assistant_window_takes_the_height_a_drag_gives_it() {
+    // X131: the transcript stopped at TRANSCRIPT_HEIGHT whatever the window did, and the window
+    // follows its content, so the bottom edge could move neither way — inward it hit the transcript
+    // cap, outward it ran off the screen. A long answer stayed cut off. The transcript now takes the
+    // height the window has left, so the drag is the person's and the answer follows it.
+    let (mut harness, _panel) = chat_fixture("frame-chat-resize");
+    harness.settle();
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![])));
+    for n in 0..14 {
+        harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, format!("line {n} of the answer"));
+    }
+    harness.settle();
+    let id = egui::Id::unique("assistant_panel");
+    let last_line = |harness: &Harness| {
+        harness
+            .drawn_rects
+            .iter()
+            .find(|(_, text)| text.contains("line 13 of the answer"))
+            .map(|(rect, _)| *rect)
+            .expect("the answer's last line is drawn")
+    };
+    let opened = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let opened_line = last_line(&harness);
+
+    // Pull the bottom edge up: the window shrinks and the transcript with it.
+    let bottom = egui::pos2(opened.center().x, opened.bottom() - 2.0);
+    harness.drag(bottom, egui::vec2(0.0, -100.0), egui::PointerButton::Primary);
+    let shrunk = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let shrunk_line = last_line(&harness);
+    assert!(
+        shrunk.height() < opened.height() - 80.0,
+        "the window shrinks with the drag: opened {opened:?}, shrunk {shrunk:?}"
+    );
+    assert!(
+        shrunk_line.top() < opened_line.top() - 80.0,
+        "the transcript shrinks with it: opened {opened_line:?}, shrunk {shrunk_line:?}"
+    );
+
+    // And push it back down: the window grows and the transcript takes the height it gained.
+    let bottom = egui::pos2(shrunk.center().x, shrunk.bottom() - 2.0);
+    harness.drag(bottom, egui::vec2(0.0, 100.0), egui::PointerButton::Primary);
+    let grown = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let grown_line = last_line(&harness);
+    assert!(
+        grown.height() > shrunk.height() + 80.0,
+        "the window grows with the drag: shrunk {shrunk:?}, grown {grown:?}"
+    );
+    assert_eq!(grown.width(), opened.width(), "the width stays as it was");
+    assert!(
+        grown_line.top() > shrunk_line.top() + 80.0,
+        "the transcript takes the height it gained: shrunk {shrunk_line:?}, grown {grown_line:?}"
+    );
 }
 
 /// Drives frames until the panel's turn is over, with the real time a process needs to answer.
@@ -7781,4 +8178,165 @@ fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() 
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo takes it back");
     harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
     assert!(panel_name(&harness, panel).is_none(), "the dead turn left no second entry");
+}
+
+/// A session with a root and a catalogue and nothing built, so a tab opens on an empty scene.
+///
+/// It is the scene the owner's report starts from: the fit has no bounds to work with, so the view
+/// opens 1.2 m from the document's corner and cannot know where the model will be (X119).
+fn empty_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let project = model::Project::new(root).expect("an empty project");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
+/// Builds one board whose base corner stands at `at` millimetres, through the typed create.
+///
+/// The command is the maker's own door (`panel.create.standard`), so the part arrives the way the
+/// ribbon's build arrives: one revision, one rebuild and no gesture in flight (X119).
+fn build_a_board(session: &mut engine::Session, name: &str, at: [f64; 3]) {
+    let mm = testkit::millimetres;
+    session
+        .dispatch(
+            engine::panel_cmds::CREATE_STANDARD_ID,
+            &serde_json::json!({
+                "parent": session.project().root().id(),
+                "name": name,
+                "material": testkit::sample_material_id(),
+                "type": "wall",
+                "at": at,
+                "length": mm(600),
+                "width": mm(720),
+            }),
+        )
+        .expect("the typed create builds the board");
+}
+
+/// The world centre of everything the last rebuild drew.
+fn scene_centre(harness: &Harness) -> geom::DVec3 {
+    harness.app.tabs.active().scene_bounds().center().expect("the scene has geometry")
+}
+
+/// The cluster's own *Frame all* cell, which floats over the scene, not the View tab's copy.
+fn cluster_frame_all(harness: &Harness) -> egui::Pos2 {
+    let scene = harness.scene();
+    harness
+        .faces
+        .iter()
+        .filter(|(name, _)| name.starts_with(Message::ToolFrameAll.text(Lang::En)))
+        .map(|(_, rect)| rect.center())
+        .find(|at| scene.contains(*at))
+        .unwrap_or_else(|| panic!("the view cluster offers Frame all: {:?}", harness.faces))
+}
+
+#[test]
+fn a_view_nobody_framed_follows_the_model_it_was_built_into() {
+    // X119, the owner's report: the view is fitted once, when the tab opens, and an empty scene has
+    // no bounds — so a wardrobe built afterwards is drawn from 1.2 m at its base corner and the
+    // orbit turns about a point that is not the model. A view nobody has framed follows the scene,
+    // and the bar says that it moved.
+    let mut harness = Harness::with_session("frame-fit-follows", empty_session());
+    harness.settle();
+    let opened = harness.camera();
+    assert_eq!(opened.target(), geom::DVec3::ZERO, "an empty scene opens at the document's corner");
+    assert!((opened.distance() - 1_200.0).abs() < 1.0e-6, "from the default 1.2 m: {}", opened.distance());
+    assert!(!harness.drew(Message::StatusFitted.text(Lang::En)), "and nothing was fitted, so the bar is quiet");
+
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [5_000.0, 0.0, 0.0]);
+    harness.settle();
+
+    let fitted = harness.camera();
+    let centre = scene_centre(&harness);
+    assert_ne!(fitted, opened, "the view followed the part built far outside it");
+    assert!((fitted.target() - centre).length() < 1.0, "the orbit target is the framed centre: {fitted:?}");
+    assert!(fitted.distance() > 1_200.0, "and the camera stands back far enough to hold it: {}", fitted.distance());
+    assert!(
+        harness.drew(Message::StatusFitted.text(Lang::En)),
+        "the bar says the view was fitted: {:?}",
+        harness.drawn
+    );
+}
+
+#[test]
+fn a_standard_view_centres_the_model_that_stands_away_from_the_origin() {
+    // X121, the owner's report: «когда жму на виджете вид сверху или сбоку, то вид не центрируется
+    // на центр сцены» — top and side kept the target the view happened to have, so a model standing
+    // away from the empty scene's origin was framed at a corner. A standard view writes the target,
+    // the projection and the distance that holds the scene, so the model lands in the middle.
+    let mut harness = Harness::with_session("frame-view-standard-centres", empty_session());
+    harness.settle();
+    // Two boards: a near one that is the model, and a far one that the automatic fit (X119) has to
+    // reach. Removing the far one leaves a model the view already holds, so nothing centres the view
+    // on the person's behalf and the target stays where the union of the two was.
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [600.0, 200.0, 0.0]);
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Far", [6_000.0, 4_000.0, 0.0]);
+    harness.settle();
+    harness.app.tabs.active_mut().session.undo().expect("the far board is one entry");
+    harness.settle();
+
+    let centre = scene_centre(&harness);
+    assert!(
+        (harness.camera().target() - centre).length() > 100.0,
+        "the view still looks at the union the far board left: {:?} against {centre:?}",
+        harness.camera().target()
+    );
+
+    harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Top);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    let camera = document.camera();
+    let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+    let aspect = f64::from(rect.width()) / f64::from(rect.height());
+    let corners = document.scene_bounds().corners().expect("the board has eight corners");
+    assert!((camera.target() - centre).length() < 1.0, "the top view looks at the model: {:?}", camera.target());
+    assert!(camera.holds(&corners, aspect), "and holds the whole of it in {rect:?}");
+    let ndc = camera.project_ndc(centre, aspect).expect("the model's centre is in front of the top view");
+    assert!(ndc.x.abs() < 1.0e-6 && ndc.y.abs() < 1.0e-6, "the model's centre lands on the view's centre: {ndc:?}");
+    assert!(matches!(camera.projection(), scene::Projection::Orthographic { .. }), "a top view is a plan");
+}
+
+#[test]
+fn a_view_the_person_framed_is_left_alone_until_frame_all_asks_again() {
+    // The other half of X119: the following fit is the tool's, not the person's. An orbit, a pan, a
+    // zoom or *Frame all* makes the view theirs, and a part built outside it thereafter is drawn
+    // from where they left the camera. *Frame all* stays the explicit act, reachable from the view
+    // cluster and by its key.
+    let mut harness = Harness::with_session("frame-fit-claimed", empty_session());
+    harness.settle();
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [5_000.0, 0.0, 0.0]);
+    harness.settle();
+    let fitted = harness.camera();
+    assert!(fitted.distance() > 1_200.0, "the view followed the first part: {}", fitted.distance());
+
+    // A middle drag orbits, which is the person's own act and claims the view.
+    harness.drag(harness.scene().center(), egui::vec2(80.0, 0.0), egui::PointerButton::Middle);
+    let orbited = harness.camera();
+    assert_ne!(orbited, fitted, "the drag orbited the view");
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Back", [5_000.0, 4_000.0, 0.0]);
+    harness.settle();
+    assert_eq!(harness.camera(), orbited, "a part built outside a claimed view does not move it");
+
+    // The key is the explicit act: it fits the claimed view on the whole scene, keeping the
+    // direction the person left it in.
+    harness.press(egui::Key::F, egui::Modifiers::NONE);
+    let keyed = harness.camera();
+    let centre = scene_centre(&harness);
+    assert_ne!(keyed, orbited, "F reframed the claimed view");
+    assert!((keyed.target() - centre).length() < 1.0, "on the scene's centre: {keyed:?}");
+    assert!((keyed.yaw() - orbited.yaw()).abs() < 1.0e-9, "and kept the direction the drag left");
+
+    // The cluster's own cell is the same act, so the control a person looks for among the view
+    // controls is the one the key runs.
+    harness.drag(harness.scene().center(), egui::vec2(-60.0, 20.0), egui::PointerButton::Middle);
+    let turned = harness.camera();
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Top", [5_000.0, 4_000.0, 3_000.0]);
+    harness.settle();
+    assert_eq!(harness.camera(), turned, "the claimed view still does not follow");
+    let cell = cluster_frame_all(&harness);
+    harness.click(cell, egui::PointerButton::Primary);
+    let clicked = harness.camera();
+    assert_ne!(clicked, turned, "the cluster's Frame all reframed the view");
+    let centre = scene_centre(&harness);
+    assert!((clicked.target() - centre).length() < 1.0, "on the scene's centre: {clicked:?}");
 }

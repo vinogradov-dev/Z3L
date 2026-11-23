@@ -19,7 +19,9 @@
 //!
 //! It is a `Window`, like Settings and Home: the panel is not a document surface, it opens over the
 //! scene and closes without touching it. Its one row in `HOST_OWNERS` is the surface it draws
-//! (`xtask/src/ui_rules.rs`).
+//! (`xtask/src/ui_rules.rs`). The height is the person's: the rows under the conversation take what
+//! they need from the bottom, and the transcript fills what is left, so a taller window reads more
+//! of a long answer and a short one keeps the room those rows ask for (X131).
 //!
 //! One window, one tab: this state belongs to the tab payload (`crate::document::Document`), so two
 //! open scenes hold two conversations, two backends and two turns, and a message sent in one is
@@ -37,17 +39,21 @@ use ui::settings::EndpointProblem;
 use ui::theme;
 
 /// The width and height the panel opens at, in points.
+///
+/// The height is only where the window opens: the transcript takes whatever the person drags the
+/// window to, and the window never shrinks below the rows it draws beneath it (X131).
 const WIDTH: f32 = 420.0;
 const HEIGHT: f32 = 520.0;
-
-/// The height of the transcript above the field, in points.
-const TRANSCRIPT_HEIGHT: f32 = 300.0;
 
 /// The findings a panel lists before it says how many are left.
 ///
 /// Six rows keep the conversation, the findings and the field in one window a person can read at a
 /// glance; the tool answer carries the whole list for the model.
 const FINDINGS_SHOWN: usize = 6;
+
+/// The field's own id, so the caret the shell asks for on the frame the panel opens lands in the
+/// message and in no other text edit on the screen (X122).
+const FIELD_ID: &str = "assistant_field";
 
 /// The id one chat keeps for the whole of its life, sent to an OpenCode Go gateway as
 /// `x-opencode-session`. It is opaque to the gateway and only needs to be stable for one chat, so a
@@ -113,6 +119,19 @@ pub(crate) struct Chat {
     problem: Option<EndpointProblem>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
+    /// What the turn last did — the command it dispatched or the tool it read with — so the progress
+    /// line says what is happening instead of only that something is (J26).
+    step: Option<String>,
+    /// When the turn in flight was sent, so the panel can say how long the person has waited.
+    ///
+    /// A waiting person reads seconds and knows the program is working; a spinner says nothing about
+    /// whether an answer is near (J26).
+    started: Option<std::time::Instant>,
+    /// Whether the field should take the caret the next time the panel draws.
+    ///
+    /// The shell asks once, when the window comes up, and the flag is spent in the frame that honours
+    /// it: a field that asked every frame could never give the keyboard back to the inspector (X122).
+    field_focus: bool,
     /// The rules' findings for the revision the panel last read.
     findings: Vec<Finding>,
     /// The revision [`Self::findings`] was derived from, so a frame polls the rules once.
@@ -141,6 +160,9 @@ impl Chat {
             problem: None,
             session: new_session_id(),
             checklist: Vec::new(),
+            step: None,
+            started: None,
+            field_focus: false,
             findings: Vec::new(),
             findings_revision: None,
         }
@@ -277,6 +299,14 @@ impl Chat {
         self.turn.is_some()
     }
 
+    /// Asks for the caret in the field the next time the panel draws.
+    ///
+    /// Opening the panel is opening a field: the shell calls this from the one act that shows it, so
+    /// the first key a person types is the message and not a viewport shortcut (X122).
+    pub(crate) fn focus_field(&mut self) {
+        self.field_focus = true;
+    }
+
     /// Re-reads the rules when the document has moved since the last look.
     ///
     /// The pass is a derivation and costs a walk of the tree and a pair of boxes per part, so it runs
@@ -316,6 +346,8 @@ impl Chat {
         self.conversation.set_brief(engine::scene_brief(session));
         self.scope = Some(session.edit_scope());
         self.checklist.clear();
+        self.step = None;
+        self.started = Some(std::time::Instant::now());
         self.turn = Some(Turn::new());
     }
 
@@ -350,9 +382,11 @@ impl Chat {
             turn.advance(backend, conversation, lang, &mut door);
         }
         self.checklist = turn.checklist().to_vec();
+        self.step = turn.current().map(str::to_owned);
         if turn.is_done() {
             session.end_edit();
             self.scope = None;
+            self.started = None;
         } else {
             self.turn = Some(turn);
         }
@@ -391,17 +425,32 @@ impl Chat {
         action
     }
 
-    /// The panel's inside: the mode switch, the transcript, the checklist and the field.
+    /// The panel's inside: the switch, the transcript, the findings, the checklist and the field.
+    ///
+    /// The rows under the conversation are laid out from the bottom as one panel, so the transcript
+    /// gets exactly the height that is left: the window's height is the person's, and a taller
+    /// window shows a taller transcript instead of blank space under the field (X131). Drawing the
+    /// transcript first with a fixed cap is what pinned the window's height to its content in both
+    /// directions, so a drag inward hit the cap and a drag outward ran off the screen.
     fn body(&mut self, ui: &mut Ui, mode: AgentMode, lang: Lang, held: bool) -> ChatAction {
         let mut action = ChatAction::None;
         self.mode_switch(ui, mode, lang, &mut action);
         ui.add_space(theme::STEP);
         ui.separator();
+        egui::Panel::bottom("assistant_footer")
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .show(ui, |ui| self.footer(ui, lang, held, &mut action));
         egui::ScrollArea::vertical()
-            .max_height(TRANSCRIPT_HEIGHT)
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| self.transcript(ui, lang));
+        action
+    }
+
+    /// Everything under the conversation: the rules' findings, the model's checklist, what the turn
+    /// is doing and the one field with its button.
+    fn footer(&mut self, ui: &mut Ui, lang: Lang, held: bool, action: &mut ChatAction) {
         self.findings_section(ui, lang);
         if !self.checklist.is_empty() {
             ui.separator();
@@ -412,8 +461,18 @@ impl Chat {
         }
         ui.separator();
         if self.is_busy() {
+            // The turn asks for the frames that draw it: an answer arriving in pieces and a clock
+            // that keeps moving are both invisible without one, and the person is looking at a
+            // panel that would otherwise only move when the pointer does (J26, ADR 0211).
+            ui.ctx().request_repaint();
             let calls = self.turn.as_ref().map_or(0, |turn| turn.calls()).max(1).to_string();
-            ui.label(RichText::new(Message::AssistantWorking.with(lang, [calls])).color(theme::text_dim(ui)));
+            let seconds = self.started.map_or(0, |started| started.elapsed().as_secs()).to_string();
+            ui.label(RichText::new(Message::AssistantWorking.with(lang, [seconds, calls])).color(theme::text_dim(ui)));
+            if let Some(step) = &self.step {
+                ui.label(
+                    RichText::new(Message::AssistantWorkingStep.with(lang, [step.clone()])).color(theme::text_dim(ui)),
+                );
+            }
         }
         if self.backend.is_none() {
             let (words, ink) = if self.blocked {
@@ -426,10 +485,9 @@ impl Chat {
             ui.label(RichText::new(words).color(ink));
         }
         if let Some(endpoint) = self.consent_pending() {
-            self.consent_card(ui, endpoint, lang, &mut action);
+            self.consent_card(ui, endpoint, lang, action);
         }
-        self.field(ui, lang, held, &mut action);
-        action
+        self.field(ui, lang, held, action);
     }
 
     /// The one question a message to a new endpoint asks, in the panel the person is already reading.
@@ -560,10 +618,18 @@ impl Chat {
     /// the window for more room whenever the button is wider than the guess — «Отправить» is — and
     /// the panel then widens by itself, a little every frame (X108). The row is the height
     /// `ui.horizontal` takes, so the panel's rows keep one rhythm.
+    ///
+    /// The field takes the caret the frame the window opens, so the person types instead of finding
+    /// it: opening the panel is opening a field (X122). While a turn runs the field stays enabled — a
+    /// person composes the next message instead of waiting for the answer — and only Stop changed.
     fn field(&mut self, ui: &mut Ui, lang: Lang, held: bool, action: &mut ChatAction) {
         let working = self.is_busy();
         let enabled = self.backend.is_some() && !held;
         let ready = enabled && !working && !self.input.trim().is_empty();
+        // The caret is spent here, and only a field that takes keys takes it: a disabled field would
+        // hold the keyboard while nothing could be typed into it, and the shell stops reading its own
+        // shortcuts for a frame a focused text edit owns (X122).
+        let caret = std::mem::take(&mut self.field_focus) && enabled;
         let (entered, asked) = ui
             .allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
@@ -579,8 +645,9 @@ impl Chat {
                             .clicked()
                             .then_some(ChatAction::Send)
                     };
-                    // The copy sits beside Send, not on a row of its own: the panel keeps the height
-                    // it opened at, and a short label leaves the field wide in both languages.
+                    // The copy sits beside Send, not on a row of its own: a second row would be
+                    // height the transcript cannot have, and a short label leaves the field wide in
+                    // both languages.
                     let copy = ui.add_enabled(
                         !self.conversation.is_empty(),
                         egui::Button::new(Message::AssistantCopy.text(lang)),
@@ -592,9 +659,13 @@ impl Chat {
                     let response = ui.add_enabled(
                         enabled,
                         egui::TextEdit::singleline(&mut self.input)
+                            .id(Id::unique(FIELD_ID))
                             .hint_text(Message::AssistantPlaceholder.text(lang))
                             .desired_width(ui.available_width()),
                     );
+                    if caret {
+                        response.request_focus();
+                    }
                     let entered = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     (entered, asked)
                 },
@@ -604,6 +675,10 @@ impl Chat {
             *action = asked;
         }
         if entered && ready {
+            // The person sent with Enter, and the field asks for the caret back: the next message is
+            // typed where the last one was written instead of the person clicking the field again
+            // (X122, the same act the panel's opening is).
+            self.field_focus = true;
             *action = ChatAction::Send;
         }
     }

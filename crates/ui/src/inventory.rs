@@ -384,6 +384,15 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "panel.create.standard",
+        // The typed create is the caller's door to a standard part: a maker's word and a base
+        // corner instead of a quaternion, so the ribbon's own gesture keeps `panel.create` (X117).
+        label: Message::CmdCreateStandardPanel,
+        places: &[Place::Api],
+        applies: Applies::Always,
+        icon: None,
+    },
+    Row {
         id: "panel.fill",
         // The three ribbon cells arm the empty-space gesture, so the command they write through has
         // no button of its own: a caller that cannot point names the niche's point, its class and

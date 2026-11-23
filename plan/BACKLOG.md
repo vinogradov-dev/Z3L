@@ -105,187 +105,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
-  Why: Measured 2026-11-21: the workshop directory this machine reads
-   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
-   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
-   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
-   mm, and neither exists in either place, so a recipe that names them can only run against the
-   fixture in `app/tests/recipes/catalogue/`.
-  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
-   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
-   starter package the build reads, so a recipe names a row a fresh machine has too.
-  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
-   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
-   against the default directory rather than a fixture copy.
-  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
-- `[ ]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
-  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
-   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
-   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
-   states in its own module comment ("the only place where placement coordinates meet
-   floating-point millimetres"). The published schema shows `format: double` for the
-   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
-   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
-   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
-   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
-   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
-   numbers back as given.
-  Shape: The unit travels with the value, decided once for every command that takes a
-   placement: either the translation enters the surface as `Length` like every other length and
-   the model converts at its own float boundary (where the module already says the conversion
-   belongs), or the schema states millimetres in the field description and the answer echoes
-   the placement it stored, in the unit the caller sent. Not both, and not silence.
-  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
-   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
-   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
-   authored through the surface and read back agrees on every coordinate.
-  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs`
-- `[ ]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
-  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
-   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
-   answered an empty list for every one of them. docs/domain/products.md §2 promises the
-   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
-   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
-   materials, the core and machining only, so the one check that would have caught a whole
-   build being wrong said nothing, and the mistake survived a full build, a cut list and a
-   hand-written overlap check.
-  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
-   product envelope is one issue naming the node and the axis it leaves by, in the same answer
-   that lists the panel problems; a part flush with a face and a part a millimetre past it are
-   different sentences, and a part inside reports nothing.
-  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
-   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
-  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md`
-- `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
-  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
-   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
-   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
-   landed at the top of the board (z = 2182) and the part grew downward. The model states the
-   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
-   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
-   `panel.create` takes a placement as it is, and neither the schema nor any check says which
-   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
-  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
-   created by a command has its origin at a corner of its base face, decided once for every
-   command that creates a part, so the horizontal and the upright placement cannot disagree
-   about which end is the origin. The fill stance then stops being the only place the rule is
-   written.
-  Done: A test creates an upright panel by command and asserts its origin is a base corner of
-   the part; a test asserts a placement whose origin is not on the base face is refused with a
-   sentence naming the anchor rule; the wardrobe fixture has every origin at the bottom.
-  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
-- `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
-  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
-   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
-   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
-   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
-   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
-   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
-   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
-   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
-   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
-   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
-   view was left behind, so the person reads it as a camera that moves by itself. The same
-   stale target is why a standard view does not centre the model (X121) and why the
-   orthographic height was left at the scale of the earlier oversized build (X120).
-  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
-   the model outside the current frame refits and the status bar says so, and once the person
-   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
-   and gets the place a person looks for it among the view controls.
-  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
-   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
-   centre; the frame-all control is reachable from the view controls and by its key.
-  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs`
-- `[ ]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
-  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
-   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
-   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
-   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
-   so the promise its own comment makes - "the distance that shows the same height" - is broken
-   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
-   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
-   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
-   coming back from a kilometre takes about twenty-eight notches and reads as movement by
-   micrometres.
-  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
-   height cannot be shown in perspective the view refits the scene or says why instead of
-   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
-   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
-   explicit escape.
-  Done: A test switches a large orthographic height to perspective and asserts the visible
-   height at the target is unchanged, or that the answer says the view was refitted; a test
-   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
-   notches; a test asserts no projection switch leaves the camera clamped at the cap.
-  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs`
-- `[ ]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
-  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
-   центрируется на центр сцены". Measured: `Layout::apply_preset`
-   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
-   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
-   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
-   the same. So the target is whatever the view had before, and in this tab that is the empty
-   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
-   coming from Blender numpad or a view cube expects a standard view to centre the model, and
-   the older X119 is what put a meaningless target behind it.
-  Shape: A standard view centres the scene: the preset writes the direction, the projection and
-   the target, and the distance frames the scene bounds in that direction, keeping the size the
-   person had chosen when they had already framed this view by hand. ADR 0049 records the
-   exception it makes to "a preset moves the direction only", so the next reader does not
-   reinstate the old rule.
-  Done: A frame test asks for the top view of a model standing away from the origin and asserts
-   the model bounds are inside the frame and its centre lands on the view centre; a test
-   asserts a view the person framed by hand keeps its size through a preset; a test asserts
-   orbiting after a preset keeps the new target.
-  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs`
-- `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
-  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
-   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
-   `App::gesture_in_flight()` is false in the same frame. `App::assistant`
-   (`app/src/main.rs:926`) passes `gesture_in_flight()` as the `busy` the panel reads,
-   `Chat::field` picks the Stop button from that flag, and `Chat::body` draws the working line
-   from `is_busy()`, so the two halves of the panel disagree about what is happening. The row
-   says Send exactly while the turn runs, and pressing it does nothing because `Chat::begin`
-   refuses a second turn, while Stop appears only while a piece is carried or a question waits,
-   which is when `serve_chat` has already paused the turn. ADR 0187 puts the stop between calls
-   and the module comment says Stop stands where Send was while the agent works; the screen
-   shows neither.
-  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was and
-   disables the field while a turn is in flight, so the panel has one meaning at a time. A
-   gesture still pauses the turn at the frame boundary, but it no longer decides what the row
-   offers.
-  Done: A frame test holds a backend that never answers so the turn stays in flight, asserts
-   the panel draws Stop and not Send and that the field is disabled, presses Stop and asserts
-   the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
-   no turn in flight, which still draws Send.
-  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
-- `[ ]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
-  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
-   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
-   batch is one operation a person takes back with one undo, so the document moves once and the
-   answer says so. Suspected cause: each landed command bumps the revision on the batch's
-   working copy, and the install keeps the last number, so the count of commands is visible
-   where the count of operations is meant.
-  Shape: Decide that one batch is one revision, install the copy with the original revision
-   plus one, and have the batch answer carry the entries it left beside the revision it moved
-   to; the alternative — documenting that a command writes two changes — leaves the invariant
-   unobservable from outside, which is why the run could not check it.
-  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
-   answer says one entry (one unit test on Session::batch).
-  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs`
-- `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
-  Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
-   of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
-   file that lost half of them reads as a shorter file. Expected: a reference file that is
-   append-only refuses a body that drops an entry already in it. Suspected cause: validates the
-   body it is given and never compares it with what it replaces, so the only evidence of a
-   deletion is a diff nobody was shown.
-  Shape: A reference file the plan calls append-only (debt, and questions alongside it) is
-   written only when every entry it holds is in the new body; a refusal names the entries that
-   would leave, and a whole-file rewrite stays the reset a person asks for with a flag.
-  Done: A body that omits an entry the file already holds is refused with that entry's opening
-   words, and a body that adds one is written (one unit test over ).
-  `files: state-contract/src/cli/write.rs,plan/debt.md`
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -675,32 +494,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-- `[ ]` **J25** the program knows its providers and lists their models instead of asking the person for a header
-  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
-   preset fills the address, a Go endpoint routes by model family, and the model list comes
-   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
-   product surface instead of a free-text endpoint.
-  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
-   address) with base URLs and the Go protocol table by model family; a model list from `GET
-   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
-   provider names are data and one wire still serves the ordinary case; the protocol matrix is
-   derived from the model name, not a second adapter per provider.
-  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
-   model reaches its family's wire; the person never types a header; the key is not in
-   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
-  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
-- `[ ]` **J26** a simple request feels long because nothing says what the agent is doing
-  Why: The owner says a simple request takes long and the panel does not say what the agent is
-   doing. The OpenAI backend waits for one whole completion, the panel shows one static
-   "working" line, and the only feedback is the final answer.
-  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
-   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
-   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
-   shows the work instead of a spinner.
-  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
-   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
-   the progress line; `cargo xtask ci` is green.
-  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs`
 - `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
   Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
    entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
@@ -716,6 +509,244 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
+  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
+   scenario starts from — still builds its standard parts from a raw `panel.create` with a
+   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
+   command replaced.
+  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
+   carries a word a person understands instead of four numbers, and the scenarios keep their
+   numbers because the stance is the same one they hand-wrote.
+  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
+   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
+   finding-free inspection.
+  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs` — `f70556f`
+
+- `[x]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
+  Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
+   of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
+   file that lost half of them reads as a shorter file. Expected: a reference file that is
+   append-only refuses a body that drops an entry already in it. Suspected cause: validates the
+   body it is given and never compares it with what it replaces, so the only evidence of a
+   deletion is a diff nobody was shown.
+  Shape: A reference file the plan calls append-only (debt, and questions alongside it) is
+   written only when every entry it holds is in the new body; a refusal names the entries that
+   would leave, and a whole-file rewrite stays the reset a person asks for with a flag.
+  Done: A body that omits an entry the file already holds is refused with that entry's opening
+   words, and a body that adds one is written (one unit test over ).
+  `files: state-contract/src/cli/write.rs,plan/debt.md` — `eacb414`
+
+- `[x]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
+  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
+   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
+   `App::gesture_in_flight()` is false in the same frame. `App::assistant` passed
+   `gesture_in_flight()` as the `busy` the panel read, `Chat::field` picked the Stop button
+   from that flag, and `Chat::body` drew the working line from `is_busy()`, so the two halves
+   of the panel disagreed about what was happening; the row said Send exactly while the turn
+   ran, and pressing it did nothing because `Chat::begin` refuses a second turn. Measured again
+   2026-11-23: `7b9007f` made the row follow the turn, and what the entry still owed was its
+   caret clause, an assertion that the field stays typable while a turn runs and a test that
+   presses the panel's own Stop.
+  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was, and a
+   gesture only postpones the next message without ever choosing the button. The field stays
+   enabled while a turn runs — the owner's decision of 2026-11-23, so a person composes the next
+   message instead of waiting for the answer — and it takes the caret the frame the panel opens,
+   so the first key typed is the message and not a viewport shortcut. The assistant's own key
+   still closes the panel while the field owns the keyboard.
+  Done: A frame test opens the panel on `Ctrl+J`, asserts the caret stands in the field, that the first
+   key typed reaches it and that the same key closes the panel; a backend that never answers
+   holds a turn in flight, the panel draws Stop and not Send, the field stays typable, and a
+   click on Stop ends the turn and draws the stopped line; a carried piece with no turn in flight
+   still draws Send. `cargo xtask ci` is green.
+  `files: app/src/chat.rs,app/src/main.rs,app/src/shortcuts.rs,app/src/frame_tests.rs` — `d05b1f6`
+
+- `[x]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
+  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
+   центрируется на центр сцены". Measured: `Layout::apply_preset`
+   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
+   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
+   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
+   the same. So the target is whatever the view had before, and in this tab that is the empty
+   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
+   coming from Blender numpad or a view cube expects a standard view to centre the model, and
+   the older X119 is what put a meaningless target behind it.
+  Shape: A standard view centres the scene: the preset writes the direction, the projection and
+   the target, and the distance frames the scene bounds in that direction, keeping the size the
+   person had chosen when they had already framed this view by hand. ADR 0049 records the
+   exception it makes to "a preset moves the direction only", so the next reader does not
+   reinstate the old rule.
+  Done: A frame test asks for the top view of a model standing away from the origin and asserts
+   the model bounds are inside the frame and its centre lands on the view centre; a test
+   asserts a view the person framed by hand keeps its size through a preset; a test asserts
+   orbiting after a preset keeps the new target.
+  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs` — `1dcca49`
+
+- `[x]` **X131** the assistant window cannot be made taller, so a long answer stays cut off
+  Why: Owner report 2026-11-23: «окно чата невозможно изменить по вертикали» — the assistant
+   window's height does not follow a drag, so a long answer stays cut off inside a short panel
+   and the person cannot read the whole of it without scrolling a strip the height of
+   TRANSCRIPT_HEIGHT.
+  Shape: The panel's height is the person's: the transcript takes whatever the window has and
+   the window keeps the size the drag gave it, so a taller window shows a taller transcript and
+   a short one keeps its minimum.
+  Done: A frame test drags the window's bottom edge, asserts the height grows, and asserts the
+   transcript's drawn height follows it while the window's own width stays as it was.
+  `files: app/src/chat.rs` — `1e58c34`
+
+- `[x]` **J26** a simple request feels long because nothing says what the agent is doing
+  Why: The owner says a simple request takes long and the panel does not say what the agent is
+   doing. The OpenAI backend waits for one whole completion, the panel shows one static
+   "working" line, and the only feedback is the final answer.
+  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
+   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
+   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
+   shows the work instead of a spinner.
+  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
+   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
+   the progress line; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs` — `b52ae53`
+
+- `[x]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
+  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
+   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
+   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
+   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
+   so the promise its own comment makes - "the distance that shows the same height" - is broken
+   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
+   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
+   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
+   coming back from a kilometre takes about twenty-eight notches and reads as movement by
+   micrometres.
+  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
+   height cannot be shown in perspective the view refits the scene or says why instead of
+   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
+   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
+   explicit escape.
+  Done: A test switches a large orthographic height to perspective and asserts the visible
+   height at the target is unchanged, or that the answer says the view was refitted; a test
+   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
+   notches; a test asserts no projection switch leaves the camera clamped at the cap.
+  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs` — `47da4f4`
+
+- `[x]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
+  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
+   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
+   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
+   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
+   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
+   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
+   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
+   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
+   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
+   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
+   view was left behind, so the person reads it as a camera that moves by itself. The same
+   stale target is why a standard view does not centre the model (X121) and why the
+   orthographic height was left at the scale of the earlier oversized build (X120).
+  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
+   the model outside the current frame refits and the status bar says so, and once the person
+   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
+   and gets the place a person looks for it among the view controls.
+  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
+   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
+   centre; the frame-all control is reachable from the view controls and by its key.
+  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs` — `64edc50`
+
+- `[x]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
+  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
+   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
+   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
+   landed at the top of the board (z = 2182) and the part grew downward. The model states the
+   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
+   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
+   `panel.create` takes a placement as it is, and neither the schema nor any check says which
+   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
+  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
+   created by a command has its origin at a corner of its base face, decided once for every
+   command that creates a part, so the horizontal and the upright placement cannot disagree
+   about which end is the origin. The fill stance then stops being the only place the rule is
+   written.
+  Done: A test creates each of the three types by command and asserts its zero corner sits at
+   the point, its class is the type's and the world box's lowest point is that corner's height;
+   a test asserts each type's length axis is never turned downwards; a panel built by the typed
+   command and one built by the fill tool name the same rotation, because both read one stance
+   table.
+  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs` — `b685681`
+
+- `[x]` **J25** the program knows its providers and lists their models instead of asking the person for a header
+  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
+   preset fills the address, a Go endpoint routes by model family, and the model list comes
+   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
+   product surface instead of a free-text endpoint.
+  Shape: A provider preset table on the *Assistant* page — OpenCode Go, OpenCode, DeepSeek,
+   OpenAI, Ollama and LM Studio, six rows of a name and a base URL — that writes the address
+   into the field the person still types in (*Other address* clears nothing), and a model list
+   read from `GET {base}/models` with a picker that writes the chosen id. The row is derived
+   from the field (`AssistantSettings::preset`), so a pinned choice cannot disagree with the
+   address. Measured 2026-11-23: the gateway's families are real wires but every family serves
+   every model, so the OpenAI wire stays and the family matrix is debt, not this task; the key
+   keeps its two homes. ADR 0235 amends ADR 0189: provider names are data.
+  Done: A preset fills the address and the field stays the person's own; a model the endpoint
+   listed fills the model field; the Go preset's address is the one the wire routes on and
+   carries the session header the person never types; the assistant settings section carries no
+   header and no key; a test covers the preset table, the list parser (both envelopes, a
+   refusal, an empty list) and the listing's own request; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/model_list.rs,app/src/frame_tests.rs` — `577232e`
+
+- `[x]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
+  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
+   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
+   batch is one operation a person takes back with one undo, so the document moves once and the
+   answer says so. Suspected cause: each landed command bumps the revision on the batch's
+   working copy, and the install keeps the last number, so the count of commands is visible
+   where the count of operations is meant.
+  Shape: Decide that one batch is one revision, install the copy with the original revision
+   plus one, and have the batch answer carry the entries it left beside the revision it moved
+   to; the alternative — documenting that a command writes two changes — leaves the invariant
+   unobservable from outside, which is why the run could not check it.
+  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
+   answer says one entry (one unit test on Session::batch).
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs` — `8853fbb`
+
+- `[x]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
+  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
+   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
+   answered an empty list for every one of them. docs/domain/products.md §2 promises the
+   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
+   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
+   materials, the core and machining only, so the one check that would have caught a whole
+   build being wrong said nothing, and the mistake survived a full build, a cut list and a
+   hand-written overlap check.
+  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
+   product envelope is one issue naming the node and the axis it leaves by, in the same answer
+   that lists the panel problems; a part flush with a face and a part a millimetre past it are
+   different sentences, and a part inside reports nothing.
+  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
+   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
+  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md` — `63c1852`
+
+- `[x]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
+  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
+   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
+   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
+   states in its own module comment ("the only place where placement coordinates meet
+   floating-point millimetres"). The published schema shows `format: double` for the
+   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
+   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
+   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
+   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
+   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
+   numbers back as given.
+  Shape: The unit travels with the value, decided once for every command that takes a
+   placement: either the translation enters the surface as `Length` like every other length and
+   the model converts at its own float boundary (where the module already says the conversion
+   belongs), or the schema states millimetres in the field description and the answer echoes
+   the placement it stored, in the unit the caller sent. Not both, and not silence.
+  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
+   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
+   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
+   authored through the surface and read back agrees on every coordinate.
+  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs` — `861f1d8`
 
 - `[x]` **X130** the assistant's no-key test reads the developer's own environment, so the gate fails on a machine that is configured
   Why: Measured 2026-11-23 in this checkout: `cargo xtask ci` fails at test in an ordinary
