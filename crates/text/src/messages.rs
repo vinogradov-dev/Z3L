@@ -1423,10 +1423,42 @@ messages! {
         "Build: the next answer may change the document. Every answer is one undo entry.",
         "Сборка: следующий ответ может изменить документ. Каждый ответ — одна запись в истории."
     ],
+    AssistantWays = [
+        "Two ways to give the assistant a model: an address it answers at, or an agent process already installed on this machine. One is enough.",
+        "Два способа дать ассистенту модель: адрес, по которому она отвечает, или процесс агента, уже установленный на этой машине. Достаточно одного."
+    ],
+    AssistantByAddress = ["Connect by address", "Подключить по адресу"],
+    AssistantByProcess = ["Run an agent process (advanced)", "Запустить процесс агента (для опытных)"],
     AssistantEndpoint = ["Endpoint", "Адрес"],
     AssistantEndpointHint = [
         "The OpenAI-compatible base URL a model is asked at, for example https://api.example.com/v1. A server on this machine is the same field with its own address.",
         "Базовый адрес модели в формате OpenAI, например https://api.example.com/v1. Сервер на этой машине — то же поле со своим адресом."
+    ],
+    AssistantEndpointProblem = ["The address cannot be used: {}", "Адрес нельзя использовать: {}"],
+    AssistantEndpointInvalid = [
+        "The endpoint address is not valid: {}. Fix it in Settings › Assistant.",
+        "Адрес модели неверен: {}. Исправьте его в «Настройки → Ассистент»."
+    ],
+    AssistantEndpointNeedsScheme = [
+        "it must start with http:// or https://",
+        "он должен начинаться с http:// или https://"
+    ],
+    AssistantEndpointDoubled = [
+        "it contains a second http:// or https:// — a URL was pasted into a URL",
+        "в нём второй раз встречается http:// или https:// — адрес вставлен в уже введённый адрес"
+    ],
+    AssistantEndpointNoHost = ["it has no host after the scheme", "в нём нет хоста после схемы"],
+    AssistantEndpointSpace = [
+        "it contains a space or a line break",
+        "в нём есть пробел или перевод строки"
+    ],
+    AssistantEndpointHasCompletion = [
+        "it ends with /chat/completions, which the program adds itself",
+        "он оканчивается на /chat/completions — программа добавляет его сама"
+    ],
+    AssistantWhatNext = [
+        "Send a message in the assistant panel. The first message to a new address asks once before anything leaves this machine.",
+        "Отправьте сообщение в панели ассистента. Перед первым сообщением на новый адрес программа один раз спросит и покажет, что уходит с этой машины."
     ],
     AssistantModel = ["Model", "Модель"],
     AssistantModelHint = [
@@ -1434,8 +1466,8 @@ messages! {
         "Имя модели, которым отвечает адрес, ровно так, как его пишет сам адрес."
     ],
     AssistantProcessWins = [
-        "An agent process named above runs the loop itself; this endpoint is used while that command is empty.",
-        "Процесс агента, названный выше, ведёт работу сам; этот адрес используется, пока та команда пуста."
+        "An agent process named here runs the loop itself; the model address above is used while that command is empty.",
+        "Процесс агента, названный здесь, ведёт работу сам; адрес модели выше используется, пока эта команда пуста."
     ],
     AssistantKeyHint = [
         "The key comes from Z3L_AGENT_KEY, else from agent-key with mode 0600 beside this settings file, and is never written here.",

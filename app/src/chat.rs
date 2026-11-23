@@ -87,6 +87,8 @@ pub(crate) struct Chat {
     consent: Option<String>,
     /// Whether the workspace names an agent process the window offers no channel to.
     blocked: bool,
+    /// The clause that stops the workspace's address from being used, when the page named one.
+    problem: Option<Message>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
     /// The rules' findings for the revision the panel last read.
@@ -115,6 +117,7 @@ impl Chat {
             model: None,
             consent: None,
             blocked: false,
+            problem: None,
             checklist: Vec::new(),
             findings: Vec::new(),
             findings_revision: None,
@@ -184,6 +187,15 @@ impl Chat {
             .clone()
             .map(|endpoint| Box::new(mcp::OpenAi::new(endpoint, key_folder.clone())) as Box<dyn ChatBackend>);
         self.model = wanted;
+    }
+
+    /// Names the reason the workspace's address cannot be used, or clears it.
+    ///
+    /// The settings page owns the rule and the shell reads it every frame, because the panel is what
+    /// a person sees next: a message sent to a typed-but-unusable address answers the clause that is
+    /// wrong instead of the generic "no model" sentence.
+    pub(crate) fn apply_problem(&mut self, problem: Option<Message>) {
+        self.problem = problem;
     }
 
     /// Whether the panel is asking an endpoint rather than a process, which the shell asks before it
@@ -279,7 +291,11 @@ impl Chat {
         self.input.clear();
         self.conversation.push(Speaker::Person, text);
         if self.backend.is_none() {
-            self.conversation.push(Speaker::Note, Message::AssistantNotConfigured.text(lang));
+            let sentence = match self.problem {
+                Some(problem) => Message::AssistantEndpointInvalid.with(lang, [problem.text(lang)]),
+                None => Message::AssistantNotConfigured.text(lang).to_owned(),
+            };
+            self.conversation.push(Speaker::Note, sentence);
             return;
         }
         self.scope = Some(session.edit_scope());
@@ -370,11 +386,13 @@ impl Chat {
         }
         if self.backend.is_none() {
             let (words, ink) = if self.blocked {
-                (Message::AssistantNoChannel, theme::warn(ui))
+                (Message::AssistantNoChannel.text(lang).to_owned(), theme::warn(ui))
+            } else if let Some(problem) = self.problem {
+                (Message::AssistantEndpointInvalid.with(lang, [problem.text(lang)]), theme::warn(ui))
             } else {
-                (Message::AssistantNotConfigured, theme::warn(ui))
+                (Message::AssistantNotConfigured.text(lang).to_owned(), theme::warn(ui))
             };
-            ui.label(RichText::new(words.text(lang)).color(ink));
+            ui.label(RichText::new(words).color(ink));
         }
         if let Some(endpoint) = self.consent_pending() {
             self.consent_card(ui, endpoint, lang, &mut action);
