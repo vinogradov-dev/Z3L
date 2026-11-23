@@ -259,39 +259,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
    no turn in flight, which still draws Send.
   `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
-- `[ ]` **P27** a `file` write of `plan/map.md` is checked against the copy on disk, so a stale row lands
-  Why: `check_text` reads `plan/map.md` from the workspace it is handed instead of from the
-   text being written, so `cargo xtask file plan/map.md --stdin` validated the old map and
-   wrote a row naming `crates/mcp/src/openai.rs` before that file existed on the branch. The
-   next verb then refused, and `--repair` cannot fix it: the write that would needs the same
-   stale copy to compute the same violation (J14).
-  Shape: The reference files enter the checked plan the way the notes already do — `map`,
-   `debt` and `questions` as text supplied by the change, read from the workspace only when the
-   change does not touch them — so a write is checked against the tree it produces, not against
-   the one it replaces.
-  Done: A test writes a map row naming a path the workspace does not hold and the write is
-   refused with the row named; the same row written beside a tree that holds the file passes.
-  `files: state-contract/src/lib.rs,state-contract/src/cli/write.rs,state-contract/src/validate.rs`
-- `[ ]` **P28** a stream checkout cannot keep its own session note, because the primary leaves it uncommitted
-  Why: Measured 2026-11-23 (J15): the primary ran `task start J15`, which wrote
-   `plan/BACKLOG.md` and `plan/SESSION.agent.md` into its own working tree and committed
-   neither. From the `stream/agent` worktree the same task's `cargo xtask task step J15 --now …
-   --resume …` answers `cannot read plan/SESSION.agent.md: No such file or directory`, so the
-   session working the task can never keep its own note true. AGENTS.md §6.2 promises the
-   opposite — "the stream keeps that note true from its own worktree with `task step`" — and
-   `own_task_refusal` in the tool allows exactly that verb. Suspected cause: the note is a
-   working-tree file of another checkout, and a stream sees only what is committed on its
-   branch, so an uncommitted start cannot reach it.
-  Shape: Two shapes. (a) `task start` writes the note and the primary commits it before the
-   stream merges `dev` in, so the note travels as history from the moment it exists. (b) `task
-   step` writes the note from the backlog entry when it is absent, filling the four fields the
-   gate requires, so the verb never fails on a file another checkout owns. (b) keeps one writer
-   and needs no extra commit; (a) keeps the note in history and is the smaller change to the
-   tool.
-  Done: From a `stream/<key>` checkout with no `plan/SESSION.<key>.md`, `task step` on the
-   stream's own live task answers and `cargo xtask plan` passes; a `state-contract` test covers
-   the absent note; `cargo xtask ci` is green.
-  `files: state-contract/src/cli/write.rs,state-contract/src/cli/mod.rs,AGENTS.md`
 - `[ ]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
   Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
    the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
@@ -765,6 +732,41 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **P27** a `file` write of `plan/map.md` is checked against the copy on disk, so a stale row lands
+  Why: `check_text` reads `plan/map.md` from the workspace it is handed instead of from the
+   text being written, so `cargo xtask file plan/map.md --stdin` validated the old map and
+   wrote a row naming `crates/mcp/src/openai.rs` before that file existed on the branch. The
+   next verb then refused, and `--repair` cannot fix it: the write that would needs the same
+   stale copy to compute the same violation (J14).
+  Shape: The reference files enter the checked plan the way the notes already do — `map`,
+   `debt` and `questions` as text supplied by the change, read from the workspace only when the
+   change does not touch them — so a write is checked against the tree it produces, not against
+   the one it replaces.
+  Done: A test writes a map row naming a path the workspace does not hold and the write is
+   refused with the row named; the same row written beside a tree that holds the file passes.
+  `files: state-contract/src/lib.rs,state-contract/src/cli/write.rs,state-contract/src/validate.rs` — `7463bdf`
+
+- `[x]` **P28** a stream checkout cannot keep its own session note, because the primary leaves it uncommitted
+  Why: Measured 2026-11-23 (J15): the primary ran `task start J15`, which wrote
+   `plan/BACKLOG.md` and `plan/SESSION.agent.md` into its own working tree and committed
+   neither. From the `stream/agent` worktree the same task's `cargo xtask task step J15 --now …
+   --resume …` answers `cannot read plan/SESSION.agent.md: No such file or directory`, so the
+   session working the task can never keep its own note true. AGENTS.md §6.2 promises the
+   opposite — "the stream keeps that note true from its own worktree with `task step`" — and
+   `own_task_refusal` in the tool allows exactly that verb. Suspected cause: the note is a
+   working-tree file of another checkout, and a stream sees only what is committed on its
+   branch, so an uncommitted start cannot reach it.
+  Shape: Two shapes. (a) `task start` writes the note and the primary commits it before the
+   stream merges `dev` in, so the note travels as history from the moment it exists. (b) `task
+   step` writes the note from the backlog entry when it is absent, filling the four fields the
+   gate requires, so the verb never fails on a file another checkout owns. (b) keeps one writer
+   and needs no extra commit; (a) keeps the note in history and is the smaller change to the
+   tool.
+  Done: From a `stream/<key>` checkout with no `plan/SESSION.<key>.md`, `task step` on the
+   stream's own live task answers and `cargo xtask plan` passes; a `state-contract` test covers
+   the absent note; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,state-contract/src/cli/mod.rs,AGENTS.md` — `0b1d00f`
 
 - `[x]` **J16** a parameter refusal repeats the payload and never says what shape to send
   Why: Measured 2026-11-21: a `params` value that arrived as a JSON string was answered
