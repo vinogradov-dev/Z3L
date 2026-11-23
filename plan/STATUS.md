@@ -1,61 +1,53 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=fa133fb3d02e648122750a293b33454557b9cccb updated=2026-11-23
+STATE: milestone=M7 phase=T task=- state=idle base=c426c9f updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
+A workshop can hand the model loop to a program it already runs: `AssistantSettings.agent` is one
+line, the process it names speaks ACP version one over its own stdio, and the session it opens has
+one MCP server, `z3l mcp bridge` — the pipe that reads `channel.json`, presents the token and copies
+bytes both ways, so the token never enters the agent's argv (J11, ADR 0230). The tools stay the
+window's: a batch that arrives during a turn joins the turn's edit scope, so one message is one undo
+entry and a process that dies mid-turn leaves the document as the last completed batch left it; a
+tool call is a line of its own, the answer's chunks are drawn as they are spoken, and the stop
+becomes `session/cancel` on the frame it is taken.
+
 An inspector reads the seven mistakes ADR 0191 names in one pass and returns one list in severity
 order — each finding names the document ids it blames, says what a person would see and carries the
-commands a fix would dispatch. The rules reuse the derivation that owns each answer and read the
-workshop's numbers from `model::WorkshopProfile`; `inspect` is the fifth coarse tool, `z3l inspect
-<scene>` is the same list on the command line, and the assistant panel re-reads it once per revision
-so the model explains the mistake and never computes it. The reference wardrobe reports nothing
-(J9, ADR 0191, ADR 0193).
+commands a fix would dispatch; the rules reuse the derivation that owns each answer and read the
+workshop's numbers from `model::WorkshopProfile`, `inspect` is the fifth coarse tool, `z3l inspect
+<scene>` the same list on the command line, and the assistant panel re-reads it once per revision so
+the model explains the mistake and never computes it (J9, ADR 0191, ADR 0193).
 
-The command line and the tool server are two doors to one document, and a run, a batch and a
-served call are one operation of the session: `z3l run` reads a recipe as JSON Lines and
-`command_batch` takes the same steps, one undo entry either way, all or nothing, a dry run that
-writes nothing and a refusal that carries the command's own sentence (J4, ADR 0198). A batch names
-the product it works in, which opens it before the steps and leaves no revision behind (J17, ADR
-0212); a step names what it creates with `as`, and a later step refers to that name as
-`{"$ref": "<name>"}`, resolved as the batch runs, so a part and its banding are one call and one
-undo entry, and the wardrobe recipe in `app/tests/recipes` builds its 38 steps without writing a
+The command line and the tool server are two doors to one document, and a run, a batch and a served
+call are one operation: `z3l run` reads a recipe as JSON Lines and `command_batch` takes the same
+steps, one undo entry either way, all or nothing, a dry run that writes nothing (J4, ADR 0198); a
+batch names the product it works in (J17, ADR 0212), and a step names what it creates with `as`, so
+a later step says `{"$ref": "<name>"}` and the wardrobe recipe builds its 38 steps without writing a
 single document id (J18, ADR 0214).
 
-The guide is what a model reads before its first command: `engine::guide()` returns the two worlds
-a request can belong to — a product frame with the parts inside it, or a free body — and the two
-that serve neither, the order of a build from scratch, the shapes a frame takes with a real
-`Envelope` as the radius-corner example, the three stances of ADR 0105, the class registry grouped
-by family with the words a person types and the axis pair each one fills, the units and the frame a
-description is read from, all of it generated from the registries so a name cannot drift; every
-command carries the one family word it serves, so `command_list` and `z3l guide` teach the same
-world from one function (J20, ADR 0215). A released build ships no prose, so the surface is the
-dictionary: every schema annotates the unit of each field whose type carries one, from one table of
-types, and the sides are the caller's reading rather than the program's vocabulary — the guide
-states the frame, that the person in front of the piece sees their left at `+X`, and that the caller
-says its reading back, because a command that took a side would bake one reader's meaning of
-«слева» into the document (J19, ADR 0227).
+The guide is what a model reads before its first command: `engine::guide()` returns the two worlds a
+request can belong to and the order of a build from scratch, generated from the registries so a name
+cannot drift, and every command carries the one family word it serves (J20, ADR 0215). A released
+build ships no prose, so the surface is the dictionary: every schema annotates the unit of each
+field that carries one, and the sides are the caller's reading rather than the program's vocabulary
+(J19, ADR 0227).
 
-A drawing becomes bodies in one press: `object.path.extrude` takes a closed path or a contour set,
-so a path becomes one body in place and a set becomes one body per ring, the node keeping the first
-ring and the rest landing beside it in the drawing's own frame, one revision and one undo entry. The
-Extrude cell is a split cell — its main face extrudes the whole drawing and its list offers the area
-pull, which names one face the pointer rests on and leaves the drawing where it is (X100, ADR 0205,
-ADR 0220). The final render is a path tracer, and the studio it draws a scene in is a setting of the
-render rather than the document: three lobes — a matte board, a GGX conductor completed with its
-multiple scattering and a refractive pane — direct light sampled by emitted power through an alias
-table, Owen-scrambled Sobol for the samples and Russian roulette past three bounces, all of it
-written and tested in Rust with the WGSL as its transcription (Y2, ADR 0213). The frame carries a
-`Surface` on every drawable and a `Lighting::environment`; `render.final` fills the latter from its
-own settings, which the Render place offers as a percentage of a white room and the command line as
-`--studio`.
+A drawing becomes bodies in one press: `object.path.extrude` turns a closed path into one body in
+place and a contour set into one body per ring, in one revision, the node keeping the first ring
+(X100, ADR 0205, ADR 0220). The final render is a path tracer whose studio is a setting of the
+render and not the document — three lobes, direct light sampled by emitted power, Owen-scrambled
+Sobol and Russian roulette, written and tested in Rust (Y2, ADR 0213) — and the frame carries a
+`Surface` on every drawable, whose `Lighting::environment` `render.final` fills from its own
+settings.
 
 ## Next
 
-Nothing is scheduled: 36 open tasks wait in `## Next`.
+Nothing is scheduled: 31 open tasks wait in `## Next`.
 
 ## Index
 

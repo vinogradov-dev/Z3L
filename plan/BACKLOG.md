@@ -321,17 +321,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J11** an agent process owns the model loop and reaches the window over the same channel
-  Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an
-   agent they already run: the process owns the model loop, the editor owns the document and
-   the tools.
-  Shape: A backend that starts a configured command, speaks ACP over its stdio and hands it the
-   channel endpoint and token; the conversation is rendered from the protocol's own messages;
-   the tools stay the server's, so a process cannot do more than the panel that started it.
-  Done: A test with a scripted ACP process runs one turn and asserts one undo entry and the
-   panel's rendering of a tool call and its refusal; a process that dies mid-turn leaves the
-   document as the last completed batch left it.
-  `files: app/src/main.rs,crates/text/src/messages.rs`
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
    becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
@@ -720,6 +709,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J11** an agent process owns the model loop and reaches the window over the same channel
+  Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an
+   agent they already run: the process owns the model loop, the editor owns the document and
+   the tools.
+  Shape: A backend that starts a configured command, speaks ACP over its stdio and hands it the
+   channel endpoint and token; the conversation is rendered from the protocol's own messages;
+   the tools stay the server's, so a process cannot do more than the panel that started it.
+  Done: A test with a scripted ACP process runs one turn and asserts one undo entry and the
+   panel's rendering of a tool call and its refusal; a process that dies mid-turn leaves the
+   document as the last completed batch left it.
+  `files: app/src/main.rs,crates/text/src/messages.rs` — `c426c9f`
 
 - `[x]` **J10** a preview shows what the agent built, without a device on the client
   Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
