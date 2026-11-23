@@ -45,6 +45,19 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
+  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
+   scenario starts from — still builds its standard parts from a raw `panel.create` with a
+   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
+   command replaced.
+  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
+   carries a word a person understands instead of four numbers, and the scenarios keep their
+   numbers because the stance is the same one they hand-wrote.
+  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
+   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
+   finding-free inspection.
+  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs`
+
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -105,33 +118,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
-- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
-  Why: Measured 2026-11-21: the workshop directory this machine reads
-   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
-   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
-   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
-   mm, and neither exists in either place, so a recipe that names them can only run against the
-   fixture in `app/tests/recipes/catalogue/`.
-  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
-   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
-   starter package the build reads, so a recipe names a row a fresh machine has too.
-  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
-   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
-   against the default directory rather than a fixture copy.
-  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
-- `[ ]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
-  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
-   scenario starts from — still builds its standard parts from a raw `panel.create` with a
-   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
-   command replaced.
-  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
-   carries a word a person understands instead of four numbers, and the scenarios keep their
-   numbers because the stance is the same one they hand-wrote.
-  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
-   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
-   finding-free inspection.
-  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs`
-
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
