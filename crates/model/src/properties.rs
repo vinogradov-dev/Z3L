@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,7 +35,7 @@ pub const SYSTEM_PROTOTYPE_PARAMETERS: &str = "prototype.parameters";
 ///
 /// Physical values use the domain units; a bare number is never a property value. `Structured` is
 /// the escape hatch for nested prototype parameters, which are free-form by design.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PropertyValue {
     /// A boolean flag.

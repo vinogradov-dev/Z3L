@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::{NOTHING_SCHEDULED, Session, Summary, TaskStatus};
+use crate::{NOTHING_SCHEDULED, PRIMARY, Session, Summary, TaskStatus};
 
 /// The session-start block: the state line, the head commit, the session note while one runs, and
 /// the current task with the next three.
@@ -35,6 +35,10 @@ pub fn render_with_detail(summary: &Summary, detail: Option<&str>) -> String {
         render_session(&mut text, session);
     }
     render_streams(&mut text, summary);
+    if let Some(stream) = summary.stream_checkout() {
+        // Silence here would read as "the gate checked everything", and it cannot check this one.
+        let _ = writeln!(text, "  base: the primary checkout's rule; this is the `{}` stream", stream.key);
+    }
     if summary.interrupted {
         // The one fact `AGENTS.md` §1.1 otherwise asks the reader to derive from `base`, `HEAD` and
         // the note's steps.
@@ -42,9 +46,12 @@ pub fn render_with_detail(summary: &Summary, detail: Option<&str>) -> String {
     }
     let scheduled = state.current().is_some();
     if !scheduled {
-        // The order is empty: saying so is the one fact the reader needs, and no parked task is
-        // marked with the arrow that means "work on this".
-        let _ = writeln!(text, "-> {NOTHING_SCHEDULED}: `## Now` is empty, the backlog keeps the work");
+        // The plan's own order is empty: saying so is the one fact the reader needs, and no parked
+        // task is marked with the arrow that means "work on this". The sentence names the stream it
+        // speaks for, because `## Now` can hold another checkout's `[~]` task: a reader told the
+        // section is empty looks for the work in `## Next` and misses the task in progress.
+        let _ =
+            writeln!(text, "-> {NOTHING_SCHEDULED}: no `{PRIMARY}` task is in `## Now`, the backlog keeps the work");
     }
     let current = state.current().and_then(|id| summary.tasks.iter().position(|task| task.id == id));
     let from = current.unwrap_or(0);
@@ -150,11 +157,12 @@ mod tests {
                 session,
             }],
             head: head.map(str::to_owned),
+            branch: None,
             interrupted: false,
         }
     }
 
-    /// A primary stream beside a declared one, the shape a plan with four checkouts prints.
+    /// A primary stream beside a declared one, the shape a plan with several checkouts prints.
     fn declared() -> Summary {
         let mut list = summary("idle", Some("fedcba9"), None);
         list.streams[0].live = None;
@@ -278,6 +286,31 @@ mod tests {
         for line in ["  now: -\n", "  blocked: -\n", "  run: -\n"] {
             assert!(text.contains(line), "an empty field is still named: {text}");
         }
+    }
+
+    /// The shape measured in a stream checkout at `0d77dce`: the plan's own state line is idle while
+    /// `## Now` holds another checkout's `[~]` task.
+    #[test]
+    fn the_empty_sentence_names_the_stream_and_not_the_section() {
+        let mut list = summary("idle", Some("fedcba9"), None);
+        list.state.task = crate::NO_TASK.to_owned();
+        list.streams[0].live = None;
+        list.tasks = vec![task("J1", TaskStatus::Doing, "Now", "the recipe parser", None)];
+        list.streams.push(StreamState {
+            key: "agent".to_owned(),
+            primary: false,
+            live: Some("J1".to_owned()),
+            note_path: "plan/SESSION.agent.md".to_owned(),
+            session: None,
+        });
+        let text = render(&list);
+        assert!(
+            text.contains("-> Nothing is scheduled: no `app` task is in `## Now`"),
+            "the sentence names the stream it speaks for: {text}"
+        );
+        assert!(!text.contains("`## Now` is empty"), "another stream's task is in `## Now`: {text}");
+        assert!(text.contains("   [~] J1 · the recipe parser"), "the work in hand is still listed: {text}");
+        assert!(text.contains("  stream agent · J1 · doing"), "and its row says who works it: {text}");
     }
 
     #[test]

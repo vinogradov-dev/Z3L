@@ -16,37 +16,41 @@
 //!
 //! Changes when: the ruler gains a method, or the point it measures from changes.
 
-use eframe::egui::{self, FontId, Pos2, Rect, Shape, Stroke, Ui};
+use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
-use model::{Project, Sight, SurfaceKind};
+use model::{Project, Sight};
 use scene::Camera;
 use ui::{Measure, MeasureStage, theme};
 use units::Length;
 
 use crate::gizmo_math::{
-    SnapMode, SnapRequest, SnapTarget, WorkPlane, length_from_millimetres, ray_to, screen_point, snap_point,
+    Aim, PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, screen_point, surface_under,
 };
-
-/// Pointer distance inside which a snapped point draws its marker, in points.
-const SNAP_RADIUS_POINTS: f32 = 10.0;
-/// Half-diagonal of the square that marks the point a click would use, in points.
-const MARKER_SIZE: f32 = 5.0;
 /// Radius of a placed measurement point, in points.
 const POINT_RADIUS: f32 = 3.0;
 /// Gap between the pointer and the length label, in points.
 const LABEL_OFFSET: egui::Vec2 = egui::vec2(14.0, 10.0);
 /// Padding inside the length label, in points.
 const LABEL_PADDING: egui::Vec2 = egui::vec2(5.0, 3.0);
-/// How far inside a product's shell the ray restarts, in millimetres.
+
+/// Everything one pointer frame of the ruler carries besides the document and the pointer response.
 ///
-/// The reserved box around a product is a surface of the probe (ADR 0103), but the maker points at
-/// the boards inside it, not at the near face of the box. A step of a micrometre is enough to leave
-/// the face and small enough to keep every real surface in front of the point.
-const SHELL_INSET_MM: f64 = 1.0e-3;
-/// The product envelopes one ray may step through before the point is taken as it is.
-///
-/// Nested products are the awkward case; the bound keeps a pathological document from spinning.
-const MAX_SHELLS: usize = 4;
+/// The camera and the rectangle it draws in, the workspace's snap kinds, the chrome under the
+/// pointer and the keyboard travel together: a frame reads them once, and the ruler's signature was
+/// already too long for clippy without them (U116).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MeasureInput {
+    /// The camera the ruler measures through.
+    pub(crate) camera: Camera,
+    /// The viewport rectangle the ruler draws in.
+    pub(crate) rect: Rect,
+    /// Which snaps the workspace allows.
+    pub(crate) kinds: model::SnapKinds,
+    /// Whether the chrome owns the pointer this frame.
+    pub(crate) pointer_over_widget: bool,
+    /// The keyboard state a click carries.
+    pub(crate) modifiers: MeasureModifiers,
+}
 
 /// The keyboard state a click carries while the ruler runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -64,8 +68,10 @@ pub(crate) struct MeasurePoint {
     pub(crate) point: [Length; 3],
     /// Where that point draws on the viewport.
     pub(crate) screen: Pos2,
-    /// Why the point moved, for the marker.
-    pub(crate) target: SnapTarget,
+    /// What captured it, or `None` for the pointer's own point.
+    pub(crate) kind: Option<model::SnapKind>,
+    /// Whether Shift's axis lock moved it onto a plane axis through the first point.
+    pub(crate) locked: bool,
 }
 
 /// The ruler's live pointer state: the snapped point, or nothing while it waits for one.
@@ -86,24 +92,25 @@ impl MeasureGizmo {
         self.hover
     }
 
+    /// What captured the pointer in the last frame, for the status bar's readout.
+    pub(crate) fn snap_kind(&self) -> Option<model::SnapKind> {
+        self.hover.and_then(|hover| hover.kind)
+    }
+
     /// Applies the pointer to the armed ruler and reports whether the click changed the measurement.
     ///
     /// The pointer is resolved whether or not a click lands, so the value follows the hand before
     /// the second point is fixed. A measured ruler keeps its points, and the next click starts a new
     /// measurement through the atom.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         response: &egui::Response,
-        rect: Rect,
-        camera: Camera,
         project: &Project,
         contact: &dyn geom::Contact,
         editor: &mut ui::Editor,
-        grid: bool,
-        pointer_over_widget: bool,
-        modifiers: MeasureModifiers,
+        input: MeasureInput,
     ) -> bool {
+        let MeasureInput { camera, rect, .. } = input;
         let Some(measure) = editor.measure() else {
             self.reset();
             return false;
@@ -118,7 +125,7 @@ impl MeasureGizmo {
         // The ruler measures what the eye sees: a part switched off is crossed, not stopped at.
         let sight = editor.flags().sight();
         let aim = Aim { camera, rect, pointer };
-        let Some(point) = resolve(project, Some(contact), aim, first, grid, modifiers, sight) else {
+        let Some(point) = resolve(project, Some(contact), aim, first, input.kinds, input.modifiers, sight) else {
             self.reset();
             return false;
         };
@@ -126,7 +133,7 @@ impl MeasureGizmo {
         if !measured {
             editor.measure_hover(point.point);
         }
-        if pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
+        if input.pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
             return false;
         }
         editor.measure_click(point.point).is_some()
@@ -150,7 +157,7 @@ impl MeasureGizmo {
             painter.circle_filled(current, POINT_RADIUS, accent);
         }
         if let Some(hover) = self.hover {
-            paint_marker(&painter, hover, accent);
+            paint_snap_marker(&painter, hover.screen, hover.kind, hover.locked, accent);
         }
         let Some(length) = measure.value() else {
             return;
@@ -167,86 +174,71 @@ impl MeasureGizmo {
 
 /// Resolves a viewport position to the point a click would measure.
 ///
-/// The surface under the ray wins, because a face is a place the person can see; a ray that meets
-/// nothing falls back to the work plane, and there the one resolver applies the grid, the axis
-/// through the first point and Alt. A point that is not a finite micrometre value is no point at
-/// all, so a broken camera or a hostile document resolves to `None` instead of a number.
+/// The surface under the ray is the tool's own reading — the probe steps past a product's reserved
+/// box to the board behind it — and it wins because a face is a place the person can see. A ray that
+/// meets nothing falls back to the work plane, and there the one resolver applies every kind the
+/// workspace allows, the grid, the axis through the first point and Alt's "take the pointer as it
+/// is" (ADR 0051, U116). A point that is not a finite micrometre value is no point at all, so a
+/// broken camera or a hostile document resolves to `None` instead of a number.
 fn resolve(
     project: &Project,
     contact: Option<&dyn geom::Contact>,
     aim: Aim,
     first: Option<[Length; 3]>,
-    grid: bool,
+    kinds: model::SnapKinds,
     modifiers: MeasureModifiers,
     sight: Sight<'_>,
 ) -> Option<MeasurePoint> {
     let Aim { camera, rect, pointer } = aim;
-    let ray = ray_to(pointer, rect, camera);
-    if !modifiers.ignore_snaps
-        && let Some(probe) = surface_under(project, contact, ray.origin(), ray.direction(), sight)
-    {
-        return measure_point(probe, camera, rect, SnapTarget::Surface);
-    }
     let plane = WorkPlane::from_camera(camera);
-    let world = plane.ray_point(ray)?;
-    let depth = (world - camera.eye()).dot(camera.forward());
-    let radius = camera.world_per_point(depth, f64::from(rect.height())) * f64::from(SNAP_RADIUS_POINTS);
-    let anchor = first.map(|point| plane.local(world_point(point)));
-    let snapped = snap_point(SnapRequest {
-        point: plane.local(world),
-        anchor,
-        ends: &[],
-        mode: if grid { SnapMode::Grid } else { SnapMode::Free },
-        axis_lock: modifiers.axis_lock && anchor.is_some(),
-        end_radius: radius,
-        ignore_snaps: modifiers.ignore_snaps,
-    });
-    measure_point(plane.world(snapped.point), camera, rect, snapped.target)
-}
-
-/// Where the hand is: the camera, the viewport it draws in and the pointer on it.
-///
-/// The three travel together because one resolver reads them as one place — the pixel and the two
-/// values that turn it into a ray (AGENTS §1.5), so the sight and the modifier set stay the only
-/// other inputs a resolution has.
-#[derive(Clone, Copy, Debug)]
-struct Aim {
-    camera: Camera,
-    rect: Rect,
-    pointer: Pos2,
+    let face = if modifiers.ignore_snaps {
+        None
+    } else {
+        PlaneSnap::at(camera, rect, pointer, plane)
+            .and_then(|snap| face_under(project, contact, snap.ray.origin(), snap.ray.direction(), sight))
+    };
+    let Some(snap) = PlaneSnap::at(camera, rect, pointer, plane) else {
+        return face.and_then(|point| measure_point(point, camera, rect, Some(model::SnapKind::Face), false));
+    };
+    let anchor = first.map(world_point);
+    let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
+    // The ruler measures what the eye sees, so it takes the candidate where it is: a corner 300 mm
+    // above the floor is a place of its own, not a shadow, and the mode never reaches it (U119).
+    let target = model::SnapTarget::Free;
+    let answer =
+        project.snap(snap.request(kinds, target, anchor, &[], modifiers.axis_lock && anchor.is_some(), face), sight)?;
+    measure_point(answer.point, camera, rect, answer.kind, answer.locked)
 }
 
 /// The first surface the ray really meets, stepping past the near face of a product's reserved box.
 ///
 /// A product envelope is a probe surface (ADR 0103), but from outside the piece it is the first
 /// thing the ray meets, so a ruler that took it would report the front of the reserved box while
-/// the person points at a shelf behind it. The ray restarts a micrometre inside the envelope and
-/// looks again, at most [`MAX_SHELLS`] times, so the boards inside win. Every other surface — a
-/// panel, a body, the far envelope face of the product the point is now in — is the answer.
-fn surface_under(
+/// the person points at a shelf behind it. [`surface_under`] steps past it and answers the point of
+/// the face, which is the place this ruler measures.
+fn face_under(
     project: &Project,
     contact: Option<&dyn geom::Contact>,
     origin: DVec3,
     direction: DVec3,
     sight: Sight<'_>,
 ) -> Option<DVec3> {
-    let mut from = origin;
-    for _ in 0..=MAX_SHELLS {
-        let probe = project.probe(from, direction, sight, contact)?;
-        if probe.hit.kind != SurfaceKind::Shell {
-            return Some(probe.face.point);
-        }
-        from = probe.face.point + direction * SHELL_INSET_MM;
-    }
-    None
+    let contact = contact?;
+    surface_under(project, contact, origin, direction, sight).map(|probe| probe.face.point)
 }
 
 /// One world point in document units and on screen, or nothing when it is not representable.
-fn measure_point(world: DVec3, camera: Camera, rect: Rect, target: SnapTarget) -> Option<MeasurePoint> {
+fn measure_point(
+    world: DVec3,
+    camera: Camera,
+    rect: Rect,
+    kind: Option<model::SnapKind>,
+    locked: bool,
+) -> Option<MeasurePoint> {
     let point =
         [length_from_millimetres(world.x)?, length_from_millimetres(world.y)?, length_from_millimetres(world.z)?];
     let screen = screen_point(camera, rect, world)?;
-    Some(MeasurePoint { point, screen, target })
+    Some(MeasurePoint { point, screen, kind, locked })
 }
 
 /// A stored point back in world millimetres, the boundary the geometry works in.
@@ -263,29 +255,6 @@ fn draw_point(camera: Camera, rect: Rect, point: [Length; 3]) -> Option<Pos2> {
 fn midpoint(first: Option<Pos2>, current: Option<Pos2>) -> Option<Pos2> {
     let (first, current) = (first?, current?);
     Some(first + (current - first) * 0.5)
-}
-
-/// The marker that says what the next click would use, drawn before the click so the snap is never
-/// invisible (ADR 0051).
-fn paint_marker(painter: &egui::Painter, hover: MeasurePoint, ink: egui::Color32) {
-    // A surface point is exact and reads solid; a grid or axis point is a construction, so it is an
-    // outline; a free point promises nothing and keeps the thinnest stroke.
-    let (stroke, filled) = match hover.target {
-        SnapTarget::Surface => (Stroke::new(1.6, ink), true),
-        SnapTarget::Grid | SnapTarget::Axis => (Stroke::new(1.4, ink), false),
-        SnapTarget::End | SnapTarget::Free => (Stroke::new(1.2, ink), false),
-    };
-    let center = hover.screen;
-    let corners = vec![
-        Pos2::new(center.x, center.y - MARKER_SIZE),
-        Pos2::new(center.x + MARKER_SIZE, center.y),
-        Pos2::new(center.x, center.y + MARKER_SIZE),
-        Pos2::new(center.x - MARKER_SIZE, center.y),
-    ];
-    if filled {
-        painter.add(Shape::convex_polygon(corners.clone(), stroke.color, Stroke::NONE));
-    }
-    painter.add(Shape::closed_line(corners, stroke));
 }
 
 /// The length next to the pointer on a readable background, kept inside the viewport.

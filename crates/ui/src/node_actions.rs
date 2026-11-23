@@ -201,7 +201,7 @@ pub fn entries(subject: Subject, source: &MenuSource<'_>) -> Vec<Entry> {
     // The window's four gestures, beside the view entries because they write no document either:
     // the mode is view state, so a node's row menu is where a maker reaches it without leaving the
     // piece in hand (U113). Empty space and the root draw no entry of their own here: a mode acts on
-    // a selection, and the status bar's band is always one press away.
+    // a selection, and the header's band is always one press away (U115).
     if node.is_some() && std::env::var("Z3L_NO_MODES").is_err() {
         for (index, mode) in TransformMode::ALL.into_iter().enumerate() {
             entries.push(Entry {

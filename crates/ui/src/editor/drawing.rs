@@ -17,6 +17,7 @@
 use engine::{EditScope, Session};
 use model::{
     DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
+    PrimitiveShape,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -47,10 +48,10 @@ fn body_name(profile: &model::Path, lang: Lang) -> String {
 /// 0139). A cone reads the same circle as its base and starts sharp, so `height` — the ribbon's
 /// height, or the one the pull has reached — is the distance it rises; the top radius is the pull's
 /// own number and is typed there (ADR 0140).
-fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<Primitive, PrimitiveError> {
+fn drawn_primitive(kind: PrimitiveKind, radius: Length, height: Length) -> Result<PrimitiveShape, PrimitiveError> {
     match kind {
-        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS),
-        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS),
+        PrimitiveKind::Sphere => Primitive::sphere(radius, DEFAULT_SEGMENTS, DEFAULT_BANDS).map(|body| body.base()),
+        PrimitiveKind::Cone => Primitive::cone(radius, Length::ZERO, height, DEFAULT_SEGMENTS).map(|body| body.base()),
     }
 }
 
@@ -376,8 +377,8 @@ impl Editor {
 
     /// Closes the running ring and commits it as one node.
     ///
-    /// This is the only operation behind *Close*, whichever surface asked for it: the ribbon, the
-    /// status bar and a click on the first draft point all end here (ADR 0052). Closing and
+    /// This is the only operation behind *Close*, whichever surface asked for it: the ribbon's
+    /// Draft cell and a click on the first draft point all end here (ADR 0052, U115). Closing and
     /// committing belong together, because a closed draft that never reached the document is a ring
     /// the user already finished and cannot edit.
     ///

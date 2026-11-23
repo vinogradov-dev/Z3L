@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn a_broken_banding_is_a_diagnostic_not_a_load_error() {
         let broken = r#"{
-            "schema_version": 28,
+            "schema_version": 32,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn machining_outside_the_core_is_a_diagnostic() {
         let broken = r#"{
-            "schema_version": 28,
+            "schema_version": 32,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -384,7 +384,7 @@ mod tests {
 
     fn project_with_through_cutout(x: i64, y: i64, width: i64, height: i64) -> Project {
         let value = serde_json::json!({
-            "schema_version": 28,
+            "schema_version": 32,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -428,7 +428,7 @@ mod tests {
 
     fn project_with_contour_cutout(points: &[[i64; 2]], depth: serde_json::Value) -> Project {
         let value = serde_json::json!({
-            "schema_version": 28,
+            "schema_version": 32,
             "revision": 0,
             "next_id": 20,
             "root": {

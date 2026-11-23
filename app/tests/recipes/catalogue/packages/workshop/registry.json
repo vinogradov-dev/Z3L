@@ -1,0 +1,11 @@
+{ "version": 1,
+  "properties": [
+    { "code": 1, "slug": "thickness", "label": "Thickness", "type": "length", "min_um": 1000, "max_um": 1000000 },
+    { "code": 2, "slug": "width", "label": "Width", "type": "length", "min_um": 1000, "max_um": 1000000 },
+    { "code": 3, "slug": "color", "label": "Decor", "type": "text", "max_chars": 48 }
+  ],
+  "kinds": [
+    { "code": 1, "slug": "sheet-material", "label": "Sheet material", "accepts": [1,2,3], "required": [1], "traits": ["sheet","nestable"] },
+    { "code": 2, "slug": "edge-banding", "label": "Edge banding", "accepts": [1,2,3], "required": [1,2], "traits": ["banded","bought"] }
+  ],
+  "families": [] }

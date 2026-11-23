@@ -1,15 +1,19 @@
 //! Test support: the fixtures every crate builds its tests from.
 //!
 //! Compiled for this crate's own tests and, through the `testing` feature, for `testkit`,
-//! which re-exports [`millimetres`], [`open_path`], [`cube_mesh`] and [`sample_project`]. It is the
-//! one place those four are defined (C7): a crate's tests may not reach back into `testkit`, because a
-//! dev-dependency on a crate that already depends on this one would compile this crate a second time
-//! and every model type would come in two incompatible versions.
+//! which re-exports [`millimetres`], [`open_path`], [`cube_mesh`], [`sample_project`],
+//! [`sample_product_project`] and [`cross_rings`]. It is the
+//! one place those fixtures are defined (C7): a crate's tests may not reach back into `testkit`,
+//! because a dev-dependency on a crate that already depends on this one would compile this crate a
+//! second time and every model type would come in two incompatible versions.
 //!
 //! Nothing here is product code; the feature is off in a release build.
 
-use crate::{ClassCode, Container, Envelope, Id, Mesh, Panel, PanelNominalSize, Path, Placement, Project};
-use units::Length;
+use crate::{
+    ClassCode, Container, Contour, ContourSegment, Envelope, Id, Mesh, Panel, PanelNominalSize, Path, Placement,
+    Project,
+};
+use units::{Degrees, Length};
 
 /// Whole millimetres as an exact length; the unit every fixture is written in.
 #[allow(clippy::expect_used)]
@@ -69,4 +73,44 @@ pub fn sample_product_project() -> (Project, Id) {
         .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
         .expect("a product beside the sample nodes");
     (project, product)
+}
+
+/// The two rings of the owner's `cross.z3l` intersection, as that file stored them (schema 31).
+///
+/// The drawing was a boolean's result written back into document units, so each ring's arc end is
+/// derived from a rounded centre, radius and angles and misses the line it meets by 4.6, 6.7, 10.1
+/// and 12.4 µm. That is inside the joint tolerance the document judges a stored ring by (ADR 0072)
+/// and far outside the nanometre the geometry layer welds at, so the fixture is what a ring looks
+/// like when it is closed for the document and open for an exact reader (X103). The two rings are
+/// separate pieces of the same drawing, which makes the union of them a contour set of two.
+#[allow(clippy::expect_used)]
+pub fn cross_rings() -> [Contour; 2] {
+    let point = |x: i64, y: i64| [Length::from_micrometres(x), Length::from_micrometres(y)];
+    let line = |start: [i64; 2], end: [i64; 2]| {
+        ContourSegment::line(point(start[0], start[1]), point(end[0], end[1])).expect("a stored line")
+    };
+    let arc = |center: [i64; 2], radius: i64, start_angle: i64, sweep: i64| {
+        ContourSegment::arc(
+            point(center[0], center[1]),
+            Length::from_micrometres(radius),
+            Degrees::from_millidegrees(start_angle),
+            Degrees::from_millidegrees(sweep),
+        )
+        .expect("a stored arc")
+    };
+    let lower = Contour::new(vec![
+        line([-341_635, -670_708], [341_634, -670_708]),
+        line([341_634, -670_708], [341_634, -275_209]),
+        arc([-107_616, -1_505_250], 1_309_514, 69_936, 30_358),
+        line([-341_635, -216_816], [-341_635, -670_708]),
+    ])
+    .expect("the stored lower ring");
+    let upper = Contour::new(vec![
+        line([341_634, 283_109], [341_634, 670_708]),
+        line([341_634, 670_708], [-341_635, 670_708]),
+        line([-341_635, 670_708], [-341_635, 428_500]),
+        arc([159_222, 1_104_075], 840_987, -126_552, 49_080),
+    ])
+    .expect("the stored upper ring");
+    [lower, upper]
 }

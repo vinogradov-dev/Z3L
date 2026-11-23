@@ -8,7 +8,43 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 `[gizmo]` manipulation, `[types]` properties and furniture types, `[engine]` commands and history,
 `[perf]` frame and picking cost, `[assistant]`, `[ui]` panels, toolbars and icon artwork, `[design]`
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
-`[release]` a gate that has to run before the first release, `[vendor]`.
+`[vendor]`.
+
+- `[assistant]` `openssl-sys` is the one counted exception to the C-vendoring rule: the assistant's
+  transport is `ureq` over the operating system's own TLS, and on Linux that is the system OpenSSL.
+  `cargo xtask layers` allows the crate while the resolved graph leaves its `vendored` feature off and
+  fails the moment a dependency turns it on, so what is forbidden is building OpenSSL from the C
+  sources inside the crate, not binding the library the system already carries (J14, ADR 0189). It
+  leaves when a maintained pure-Rust TLS provider exists whose crypto is neither `ring` nor
+  `aws-lc-rs`; until then the vendored build is the breach, and the feature is the switch.
+
+- `[assistant]` A turn of the assistant panel advances one step per frame but asks for no frame of
+  its own (`Chat::is_busy`, `App::serve_chat`), so a turn that is not stopped from outside still waits
+  for the pointer between two calls: the channel was given its ring in X111, and the panel's own turn
+  was not (X122, ADR 0225). Ask for the next frame while a turn is in flight, the way a landed call
+  does.
+
+- `[plan]` The first two lines of `plan/map.md` are `148` and `p` — the stray tail of a pipeline
+  that wrote the file in an older session, left above the preamble. They are not part of any row and
+  the gate does not read this file (X111).
+
+- `[object]` A fit is the largest rectangle **through the pointer**, searched in the section's own chord
+  polygon. A pointer standing in an arc's outward bulge is outside that polygon, so no rectangle of it
+  contains the hand and the plan falls back to the largest rectangle of the shape, which puts the part
+  somewhere else: on `/home/alx/skaf.z3l` 97 of 884 sampled points of the L were such (the arc's sliver,
+  up to 274 mm deep). The shape mode is exact there; the fit needs the search to run on the ring's arcs
+  rather than their chords (N35, ADR 0204).
+
+- `[gizmo]` A frame that keeps a ring answers its section exactly, but the niche's **box**, its corner
+  list and the void tool's wireframe are the box of the ring's *chords*, so a frame with a deep bulge —
+  the owner's arc is 274 mm deep — reports a smaller void than it reserves and the overlay leaves the
+  bulge out. The cell's own ring would say it; the corners are a plane-only enumeration today (N34,
+  ADR 0203).
+
+- `[gizmo]` The niche tool draws the cell's **box**, so in a cut-corner or drawn-ring frame its
+  wireframe reaches into the space the frame does not reserve and the callout prints the bounds of the
+  shape rather than the shape (N29, ADR 0201). Draw the cell's own prism ring when a maker needs the
+  niche tool to read the space the fill does.
 
 - `[design]` `app` is a binary root without a library, so a second binary cannot share the shell's
   rules: `z3l directory` is a mode of the one program, because a second `[[bin]]` would write the rule
@@ -38,12 +74,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   lying across the board's thickness at the same height cuts the footprint instead of moving the
   free axis (X73, ADR 0175). `TooSmall` is the honest answer today; a fill that steps over a hidden
   slab is a tool of its own.
-
-- `[release]` The product name leaves the code before the first release: R1 is the measured
-  four-commit procedure in `plan/rename.md`, deferred out of the work order until then so a release
-  does not wait for the whole order. Run `cargo xtask task take R1` and the four commits first.
-  Nothing is released yet, so the file format and the settings directory change outright and no
-  compatibility path is needed.
 
 - `[view-state]` Selection and open containers still live in `ui::Editor` and the view camera in the
   shell, although ADR 0029 places them in the session. Cameras and lights are document nodes with
@@ -93,8 +123,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   transform as well as the mesh). One buffer per unique mesh plus a per-drawable transform in a
   storage buffer or an instance attribute would turn a move into a small write; a uniform slot per
   drawable cannot hold a scene, because a uniform binding is capped at 64 KiB.
-- `[engine]` Command specs expose only an id and a label; there is no parameter schema for a model, a
-  CLI or generated documentation.
 - `[engine]` History records one entry per command. A drag of a whole selection is one command, but a
   task made of several commands (a future assistant task, for example) cannot yet be grouped into one
   step.
@@ -138,11 +166,15 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[gizmo]` The orientation widget is hidden in a viewport smaller than 124 pt wide plus margins
   (148 pt), or 148 pt tall plus margins; there is no menu fallback for the six views or the roll
   ring yet.
-- `[gizmo]` The screen-space overlays over the viewport — the contour grips, the drawing draft and
-  the size label — still carry fixed dark-theme colours, so on the light workspace a near-white grip
-  and the pale draft line read weakly against the paper. They are `egui` paint, not frame ink, so
-  they are the leftover of X8 (ADR 0087). `cargo xtask ui-rules` reads `crates/ui/src` only, so the
-  shell's gizmo inks are outside it until this entry is paid; the rule then covers them too.
+- `[gizmo]` The screen-space overlays over the viewport that this entry still owns — the drawing
+  draft, its preview and its phantom, the box tool's size label and its backing panel — carry fixed
+  dark-theme colours, so on the light workspace the pale draft line and the near-white size label
+  read weakly against the paper. They are `egui` paint, not frame ink, so they are the leftover of
+  X8 (ADR 0087). The contour overlay is paid: its four inks are theme functions (ADR 0218), and the
+  colour rule now reads the shell, with the modules that still owe an ink named one by one in
+  `SHELL_INK_DEBT` in `xtask/src/ui_rules.rs` — `box_gizmo`, `document`, `draw_gizmo`,
+  `extrude_gizmo`, `gizmo`, `gizmo_math`, `rotate_gizmo` and `scene_gizmo`, all under `app/src/`.
+  Paying one takes its name out of that list, and the list cannot grow.
 - `[gizmo]` An extrusion pull previews its new height as a wireframe prism, not a shaded solid. A
   solid preview needs the evaluation cache to accept a previewed height without a document write.
 - `[panel]` The core outline at a line-arc or arc-arc joint still joins per-segment offsets with a
@@ -171,6 +203,19 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[panel]` Nothing in the editor shows or edits a material's stock block or price: the catalogue is a
   file the shell loads, and until a catalogue editor exists the workshop edits the JSON by hand.
 - `[vendor]` `vendor/truck-shapeops` is updated by hand when `truck` moves; see `vendor/AGENTS.md`.
+- `[ui]` The header is one fixed row: at the narrowest window (640 pt) in Russian the band, the four
+  view switches and the gear leave `Файл` as the last left-hand control that fits, so *Save*, *Undo*
+  and *Redo* and the whole tab row are clipped away (they keep their keys and the File menu). The
+  band is always visible by the owner's decision (U115). A responsive header — hide the wordmark,
+  then the tab row, then the dividers by measured width, and never a control that is the only way to
+  an action — is its own task and needs the owner's shape.
+
+- `[ui]` A widget inside an `egui::Area` is missing from the accessibility tree: the frame's
+  `accesskit_update` carries the root ui's widgets only, so the tool card's ✓ and ✕ — and every other
+  floating surface built as an area — carry no name a screen reader can read (found while aiming a
+  test at the card's buttons, U115). Give those surfaces an accessible parent when `egui` exposes
+  one, or draw the card in a layer the tree walks.
+
 - `[ui]` The panel card is the last inspector surface that still stacks a header per group: thirteen
   of them on one panel node (name, dimensions, nominal size, resolved, material, shape, outline,
   bowed edges, bevels, banding, machining, diagnostics), every one open by default, so a 700 x 500
@@ -303,6 +348,20 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   path that exists. It is declared `Api` in `crates/ui/src/inventory.rs` today; either a surface takes
   it or the command goes, and deleting it is the smaller change (U94).
 
+- `[engine]` `panel.fill` is the one command over the niche measurement, and no surface runs it: the
+  three fill cells stay the empty-space gesture, which paints a ghost through the parts the person has
+  switched off (`Sight`, ADR 0175) and writes that ghost through `panel.create`. The command measures
+  every part in the way, because a caller has no sight to hand in, so routing the gesture through it
+  would make the click create a part the ghost did not show when a hidden part is inside the void. One
+  path for both needs the hidden set in the command's parameters, which is view state in a write
+  (ADR 0226); a caller that wants the command's answer asks `query niche` first (N37).
+
+- `[engine]` `object.cuboid.create` names the box by the word the ribbon prints, and no surface runs
+  it: the box cell is the rectangle gesture (ADR 0138), so the cell cannot dispatch three typed
+  sides, and the palette has no field to ask for them. The command line and the assistant are its
+  doors, which is the caller the cell could not serve; a ribbon face that types the three sides
+  would be a dialog the ribbon does not have yet (X105).
+
 - `[ui]` A key is data (`KEYS` in `crates/ui/src/inventory.rs`) but a *person* cannot yet reassign
   one: the table is a const, so the Settings page reads the defaults and draws no field. Remapping
   needs the table to become a value the workspace settings carry — a per-id override merged over the
@@ -310,11 +369,17 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   walking the merged table rather than the const. It waits for the owner's word and for a Settings
   section that can hold it (U96).
 
-- `[gizmo]` A drawing point is taken from the work plane only: the draw gizmo snaps to draft ends, the
-  grid and the axes, and never to a face the pointer aims at, so a sketch point cannot yet come from a
-  face-plane tangency the way the ruler's surface probe does (V5). The sphere's three-point method
-  already takes any point and asks nothing about where it came from, so the missing piece is the snap
-  itself — one surface probe shared with the ruler and a marker of its own.
+- `[gizmo]` A sketch tool hands the snap resolver no face, so the `face` kind never captures for a
+  drawing point: the point lands at the footprint of the corner or the edge the pointer names, and
+  the ruler's own surface reading (which steps past a product's reserved box) is not shared with it
+  (V5, U116). The atom already ranks a face the tool measured; the missing piece is one probe the
+  drawing tools would have to ask before they hand it in. Add it when the owner asks to draw on the
+  face under the pointer rather than on the work plane.
+
+- `[gizmo]` The fill and the niche ghost keep the niche atom's cursor rule (`ui::pointer_point`) and
+  do not read the snap resolver: the point they name is the *space* the pointer is in, so a snap that
+  moved it by the tolerance would name the same cell and change nothing on screen (U116, ADR 0199).
+  Revisit if a fill ever needs the pointer's *place* along its free axis as a snapped coordinate.
 
 - `[perf]` Measured on 2026-11-17 in a headless run (`app/src/scene_build.rs`, the probe
   `an_edit_costs_the_walk_of_the_tree_and_not_the_vertices`, dev profile with opt-level 2): an edit
@@ -356,12 +421,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   replaced — or the edge pass learns the plate as a second occluder, which wants the plate's depth in
   a buffer a line can test against.
 
-- `[plan]` `cargo xtask task take <ID> --at top` refuses while `## Now` already holds work: it leaves
-  `STATE:` alone, and the gate then reports that the state does not name the first unfinished task. An
-  owner-directed defect has to be filed with `task add --at top` instead, which files it in `## Now`
-  rather than in `## Bugs`. The far end of the order still takes `--at end`, which needs no state
-  change; the fix is to point `STATE:` at the new head in the same write, as `add` does.
-
 - `[plan]` `cargo xtask file <reference>` takes the *whole* body of the file, so a session that means
   to append one entry passes its own text and silently replaces every entry the file held: one session
   did exactly that to `plan/questions.md` and committed the single line it meant to add, and the file
@@ -369,3 +428,121 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   and `plan/BACKLOG.md` is refused outright, so the verb that owns the reference files has no append
   form at all. An `--add` that appends one entry through the same gate, or a guard that refuses a body
   far shorter than the file it replaces, closes it.
+- `[object]` `object.collapse` builds a body through the analytic backend, which answers exactly one
+  extrusion; a body with a boolean step is refused with `UnsupportedConstructive`, so a maker who
+  wants the cut baked as a mesh cannot have it until the command path can reach the geometry kernel.
+  The command signature carries the project, the directory, the params and the contact adapter, and
+  an evaluation service beside the contact one is the seam that closes it: one factory installed by
+  the shell, one ADR, and the same seam serves the CLI, which has no kernel today either (W1,
+  ADR 0197).
+
+- `[plan]` `cargo xtask task note` lifts the body's first line into the heading `# <ID> — …` and
+  keeps that line in the body, so a note that names its subject in its first line shows the sentence
+  twice. Strip the first line from the body before it is written when it is the heading (X95).
+
+- `[render]` The frame carries one key light and up to eight point lights, so the final render traces
+  no area light: a window, a softbox or a strip is a point or nothing. Y2 samples the point lights by
+  emitted power through an alias table and weights a light sample by the power heuristic, but every
+  light in the frame is a delta emitter, so that weight is one and the BSDF sample never competes for
+  the same path. A rectangular emitter is L2's (the document gains the object, the frame carries it);
+  until it lands, multiple importance sampling has nothing to combine.
+
+- `[render]` A tinted pane seen through glass reads above the hand-summed series of its internal
+  reflections: 3, 8 and 21 percent in red, green and blue for a 400 mm slab at 40 degrees, while the
+  clear pane is exact and a matched-index slab reproduces Beer-Lambert to five decimals. The
+  discrepancy grows with the tint, so it points at a further internal path or a path length the series
+  does not model rather than at the absorption law (Y2, `plan/notes/Y2.md`).
+
+- `[render]` Glass casts a black shadow: a pane is a geometric occluder for every shadow ray, so a
+  floor lit through a window is in shadow rather than lit by the window. Closing it needs a light that
+  transmits, which is L2's area emitter and a shadow ray that knows what it crossed.
+
+- `[ui]` The render place has no preview of the last image and no status line of its own: the picture
+  is written and named, and the status bar still describes the node the selection points at while the
+  page is open. The preview needs a texture the shell registers for the page, and the status row needs
+  a zone the place owns; both are the place's next increment.
+
+- `[scene]` The authored camera of `crates/project/tests/golden/scene.z3l` sits at the origin looking
+  along `-Z` while the model it is meant to see stands in `+Z`, so a render from the scene's own camera
+  is black and `z3l render` needs `--camera fit`. The fixture's camera is the defect, not the render:
+  the golden file is regenerated by `crates/project/tests/make_golden.rs` when the schema changes, and
+  its camera placement belongs to that generator.
+
+- `[plan]` A field label is found wherever a word starts, not only where a line starts, because a lead line
+  closes with `— rules: B1`. The cost is that a body whose sentence carries a label word is read as two
+  fields: P19 said `… to run its four commits: plan/rename.md …` and the half after the colon became a
+  `Commits` field, which a later `task set --field Done` rewrote on its own line (P21 measured this). A
+  re-wrap by the writer can produce the same split by landing a label word on a line break, so the entry
+  format and the parser do not agree about what a label is.
+
+- `[mesh]` The arrangement welds at a nanometre (`VERTEX_TOLERANCE = 1e-6` mm) while the document's
+  joint rule allows tens of micrometres (ADR 0072), and `Contour::to_geometry` now closes the
+  difference for every stored ring. A caller that hands `geom::union_regions` a ring built directly
+  in the geometry layer with a joint gap is still outside the contract, and what it gets is not even
+  a consistent refusal: a single gap is bridged when the neighbouring edge's supporting line crosses
+  the arc's circle (measured on X103: a 600 mm sector with a 10 µm gap unions correctly), and a ring
+  with a gap at each side of its arc loses every piece, which is how the owner's `cross.z3l` answered
+  "the rings do not meet". The boolean should refuse an open operand with a sentence instead of
+  repairing one gap and dropping the rest.
+
+- `[assistant]` The inspector's `shelf_fit` has no bearing check: ADR 0191's "bearing under 30 mm"
+  is a fact about the shelf's support — a pin, a cleat, a groove — and the document has no hardware
+  entity to measure it against. The width fit and the loose warning ship now; the clause joins the
+  set when the hardware catalogue does (J9, M8).
+
+- `[assistant]` `sheet_fit` allows both quarter turns of a part because grain is not document data
+  (ADR 0216): a material's grain arrives with the decor the shell decides, not with the panel. The
+  day grain is stored the rule reads it and drops the turn the grain forbids (J9).
+
+- `[types]` The hanging rail's row `20.06` names `10.02` as its host, and `10.02` is not a class of
+  the registry (the cornice's row `20.03` names it too), so `node.property.set` refuses to class a
+  rail in a cabinet. The inspector reads a rail a loaded scene already carries, and the fixture sets
+  the class on the document directly; fixing the row's host is a registry change and an owner
+  decision (`plan/questions.md`, J9).
+
+- `[assistant]` A front's mounting form — overlay, inset or half-overlay — is carried by the hinge
+  class and not by the door, so `door_gap` reads the opening as the product's width and a pair's
+  outer edges as flush. An inset front in a case can draw a false warning until the form is document
+  data (`plan/questions.md`, J9).
+
+- `[assistant]` The assistant panel lists six findings and an "and N more" line; a row selects no
+  node and a suggested fix is not a button. The tool answer carries every finding and every command,
+  so the model can act on the list a person cannot yet click (J9).
+
+- `[plan]` A task that has been started cannot go back into the order: `task defer` refuses a `[~]`
+  entry, `task reopen` takes only a done one, and `task drop` deletes the entry with its note, so a
+  session that starts a task and finds it blocked (J12, 2026-11-23, whose premise the owner retired in
+  the same turn) can only close it as done — which is a lie — or move the marker by hand, which the
+  gate validates and does not see. Add the verb that returns a started task to `## Next`: one marker
+  write, the entry moved like `defer` moves it, its `plan/SESSION.<key>.md` removed, in one gated
+  write.
+
+- `[engine]` A piece cannot be put into a frame it is not a child of. Measured by the acceptance test
+  (J13, scenario 5): `product.placement.set` on a product whose box would land inside another
+  product's envelope is refused — "`Распашной шкаф 800×460×2200` would come to rest inside `Ниша`" —
+  and nothing reparents an authored piece: `product.create` takes the root or a plain group as its
+  parent, `node.group` makes a group out of siblings and `node.ungroup` the reverse. The owner's
+  sentence "поставь его в нишу 820 × 2140 × 580" therefore ends in a refusal, and the 60 mm by which
+  the piece is taller than the niche is arithmetic the model does, because no rule measures a piece
+  against a frame it is not part of. What would land it: a `node.reparent` command with the write
+  guard's containment rule unchanged, or a "put this piece in that frame" operation that also records
+  the intent, and either one is the owner's decision.
+
+- `[assistant]` The panel's model cannot see the scene. The tool server draws a picture
+  (`render_preview`, ADR 0228) and a process that owns the loop may ask for it over the channel, but
+  the chat wire offers no such tool: its answer would have to travel on the OpenAI wire as an image,
+  which the port does not carry (J29 lists `command_list`, `query` and `inspect` and stops there).
+  A model in the panel therefore proves a closed cabinet, a door gap or a mirror by `query parts`,
+  `query bounds` and `inspect`, and never by looking. It leaves when the wire carries one picture and
+  the port answers it — the `Previewer` the shell already holds is half of that.
+
+- `[assistant]` A call an agent process makes lands in the scene in front, not in the tab that started
+  it. Each tab owns its chat and its own backend (`Document::chat`, ADR 0233), but a process reaches the
+  document through the window's one channel — `z3l mcp bridge` presents `channel.json`'s token and
+  copies the process's tool calls to the socket — and `Call` names no tab, so `App::answer_channel`
+  answers `self.tabs.active_mut()`. A turn in a scene behind therefore cannot pause its process, and a
+  batch that process lands edits the front document; the endpoint kind pauses honestly, because its
+  whole turn is driven by `serve_chat`. What would land it: the bridge carries the tab it was spawned
+  for, `Call` gains that field, and the window answers that tab instead of the active one — or one
+  channel per tab, which costs a socket and a token file each. Either is a change to the tool server's
+  contract for every client, so it needs its own task and record (J24).

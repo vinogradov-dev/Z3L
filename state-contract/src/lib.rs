@@ -75,11 +75,23 @@ pub struct Summary {
     pub streams: Vec<StreamState>,
     /// The `HEAD` commit, filled in by whichever caller resolved it; `None` outside a checkout.
     pub head: Option<String>,
+    /// The branch that commit is on, filled in like [`Summary::head`]; `None` when `HEAD` is detached.
+    pub branch: Option<String>,
     /// Whether the session looks cut short: `doing`, a note with open steps, and commits past `base`.
     pub interrupted: bool,
 }
 
 impl Summary {
+    /// The stream this checkout is, when its branch is `stream/<key>` of a stream the plan declares.
+    ///
+    /// The checkouts beside the primary are named that way, and a checkout that is not one of them —
+    /// the primary on its own branch, a detached `HEAD`, a plan read outside a repository — answers
+    /// `None`, which leaves every rule that asks about a stream exactly as it was.
+    pub fn stream_checkout(&self) -> Option<&StreamState> {
+        let key = self.branch.as_deref()?.trim().strip_prefix("stream/")?;
+        self.streams.iter().find(|stream| !stream.primary && stream.key == key)
+    }
+
     /// The primary stream: the plan's own checkout, whose task `STATE:` names.
     pub fn primary(&self) -> Option<&StreamState> {
         self.streams.iter().find(|stream| stream.primary)
@@ -154,7 +166,8 @@ pub struct State {
 pub const NO_TASK: &str = "-";
 
 /// What `## Next` must say while no task is scheduled, so a fresh session reads the empty order
-/// instead of looking for a task id that is not there.
+/// instead of looking for a task id that is not there. The session-start block opens with the same
+/// sentence ([`render`]), so the two cannot drift apart.
 pub const NOTHING_SCHEDULED: &str = "Nothing is scheduled";
 
 impl State {
@@ -232,6 +245,22 @@ pub fn check(root: &Path) -> Result<Summary, Vec<String>> {
     check_with(root, &ProcessGit::new(root))
 }
 
+/// The stream a checkout serves, when its branch is a declared one beside the plan's own.
+///
+/// The branch names the checkout — a worktree of `stream/<key>` — and the `STREAMS:` line of
+/// `plan/STATUS.md` names the key. A branch that neither starts with `stream/` nor is declared — the
+/// primary on `dev`, a detached `HEAD`, a plan read outside a repository — answers `None`, which
+/// leaves every rule that asks about a stream exactly as it was. The tool's version of the rule is
+/// AGENTS.md §6.2: `plan/` has one writer, and a stream checkout owns only its own session note and
+/// its research notes (P26).
+pub fn stream_checkout(root: &Path, git: &dyn Git) -> Option<String> {
+    let branch = git.branch()?;
+    let key = branch.trim().strip_prefix("stream/")?;
+    let status = std::fs::read_to_string(root.join("plan/STATUS.md")).ok()?;
+    let streams = Streams::parse(&status).ok()?;
+    streams.iter().find(|stream| !stream.is_primary() && stream.key == key).map(|stream| stream.key.clone())
+}
+
 /// [`check`] with the git facts supplied by `git`, so tests need no repository.
 pub fn check_with(root: &Path, git: &dyn Git) -> Result<Summary, Vec<String>> {
     let status = read(&root.join("plan/STATUS.md"), "plan/STATUS.md")?;
@@ -251,7 +280,7 @@ pub fn check_with(root: &Path, git: &dyn Git) -> Result<Summary, Vec<String>> {
     if !stray.is_empty() {
         return Err(stray);
     }
-    let plan = PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: None };
+    let plan = PlanText { status: &status, backlog: &backlog, sessions: &sessions, notes: None, references: None };
     check_text(root, &plan, git)
 }
 
@@ -268,6 +297,9 @@ pub struct PlanText<'a> {
     pub sessions: &'a [(String, String)],
     /// `plan/notes/` as `(file name, text)`, when the caller changed it; `None` reads the disk.
     pub notes: Option<&'a [(String, String)]>,
+    /// The reference files the change writes, as `(path, text)`; a path supplied here is checked as
+    /// it will be, and only a path the change leaves alone is read from the disk (P27).
+    pub references: Option<&'a [(String, String)]>,
 }
 
 /// Checks a plan given as text against the workspace under `root`: the same rules [`check_with`]
@@ -284,19 +316,22 @@ pub fn check_text(root: &Path, plan: &PlanText<'_>, git: &dyn Git) -> Result<Sum
     if let Some(summary) = summary.as_mut() {
         // One git call answers both the `base` rule and the head line the block prints.
         summary.head = git.head();
+        summary.branch = git.branch();
         let primary = summary.primary().map(|stream| stream.note_path.clone()).unwrap_or_else(|| NOTE.to_owned());
         let primary_note = note_text(plan, &primary);
         summary.interrupted = session_interrupted(&summary.state, primary_note, summary.head.as_deref(), git);
         violations.extend(workspace_violations(root, summary, git, plan.notes));
         // The reference files are the plan too: a stale map row or an undeclared debt tag rots it.
-        if let Ok(map) = std::fs::read_to_string(root.join("plan/map.md")) {
+        // The text the change writes wins over the copy on disk, so a `file` write is checked
+        // against the tree it produces rather than the one it replaces (P27).
+        if let Some(map) = reference_text(plan, root, "plan/map.md") {
             violations.extend(validate::map_violations(&map, |path| root.join(path).exists()));
         }
-        if let Ok(debt) = std::fs::read_to_string(root.join("plan/debt.md")) {
+        if let Some(debt) = reference_text(plan, root, "plan/debt.md") {
             violations.extend(validate::debt_violations(&debt));
             violations.extend(validate::reference_violations("plan/debt.md", &debt));
         }
-        if let Ok(questions) = std::fs::read_to_string(root.join("plan/questions.md")) {
+        if let Some(questions) = reference_text(plan, root, "plan/questions.md") {
             violations.extend(validate::reference_violations("plan/questions.md", &questions));
         }
     }
@@ -335,6 +370,14 @@ fn read(path: &Path, name: &str) -> Result<String, Vec<String>> {
 /// The text of one stream's note as the plan being checked holds it.
 fn note_text<'a>(plan: &'a PlanText<'_>, path: &str) -> Option<&'a str> {
     plan.sessions.iter().find(|(note, _)| note == path).map(|(_, text)| text.as_str())
+}
+
+/// One reference file as the plan being checked holds it: the text the change supplies, or the disk's.
+fn reference_text(plan: &PlanText<'_>, root: &Path, path: &str) -> Option<String> {
+    if let Some((_, text)) = plan.references.and_then(|files| files.iter().find(|(candidate, _)| candidate == path)) {
+        return Some(text.clone());
+    }
+    std::fs::read_to_string(root.join(path)).ok()
 }
 
 /// A note file in `plan/` that no stream declares: a renamed stream leaves one behind, and a plan
@@ -486,6 +529,13 @@ fn base_freshness(summary: &Summary, git: &dyn Git) -> Vec<String> {
     };
     let base = summary.state.base.as_str();
     if base == head {
+        return Vec::new();
+    }
+    // The rule is the primary checkout's: it says an idle plan describes the tree that checkout has.
+    // A stream worktree holds that stream's own commits and is forbidden to write `plan/`, so its lag
+    // is the design and not a defect; the primary judges it after the merge, and until then this
+    // checkout could only be told to write a file it must not touch (P23).
+    if summary.stream_checkout().is_some() {
         return Vec::new();
     }
     let Some(paths) = git.changed(base, head) else { return Vec::new() };

@@ -3,7 +3,7 @@
 //! Development-only: nothing in the product may depend on this crate.
 //!
 //! A helper lives here when more than one crate's tests need it. `millimetres`, `open_path`,
-//! `cube_mesh`, `sample_project` and `sample_product_project` are defined in
+//! `cube_mesh`, `sample_project`, `sample_product_project` and `cross_rings` are defined in
 //! `model::testing` and re-exported here, because that is the only crate that can define
 //! them for both itself and everyone else (C7).
 #![forbid(unsafe_code)]
@@ -16,17 +16,22 @@
     clippy::unreachable
 )]
 
+pub mod acp;
+
 use std::io;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 
 use catalog::{Currency, Directory, Money, Starter};
-use model::{ItemId, PanelNominalSize, PanelRect};
+use model::{Id, ItemId, PanelNominalSize, PanelRect};
+use serde_json::{Value, json};
 use units::Length;
 
 /// The fixtures every crate's tests start from, defined once in `model::testing`
 /// (C7): a crate cannot re-export them back into `model`, because the dev-dependency
 /// cycle would compile the model twice and its types would not match.
-pub use model::testing::{cube_mesh, millimetres, open_path, sample_product_project, sample_project};
+pub use model::testing::{cross_rings, cube_mesh, millimetres, open_path, sample_product_project, sample_project};
 
 /// A unique, empty scratch directory under the session temp root.
 ///
@@ -39,6 +44,137 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&directory);
     let _ = std::fs::create_dir_all(&directory);
     directory
+}
+
+/// A stub endpoint on this machine's loopback: it answers one request with `answer` and hands the
+/// request's JSON body to the test.
+///
+/// A client that speaks HTTP is proved without a network, a key or a provider: the listener takes a
+/// port the operating system chooses and the thread answers the first connection with a fixed
+/// completion, so a test asserts both what the client asked and what it did with the answer. The
+/// returned string is the base URL a client is pointed at (`http://127.0.0.1:<port>/v1`).
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint(answer: Value) -> (String, Receiver<Value>) {
+    let (url, requests) = stub_seen(200, answer.to_string());
+    let (sender, bodies) = mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(request) = requests.recv() {
+            if sender.send(request.body).is_err() {
+                break;
+            }
+        }
+    });
+    (url, bodies)
+}
+
+/// The same stub, but the test reads the whole request: its body and the headers the client sent.
+///
+/// The headers are part of the wire a gateway may require (a routing or session header), so a test
+/// proves they travel instead of trusting the builder that set them.
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint_request(answer: Value) -> (String, Receiver<Request>) {
+    stub_seen(200, answer.to_string())
+}
+
+/// The same stub, answering one request with `status` and `body` in place of a completion.
+///
+/// It is how a refusal from a provider is proved: `complete` must carry the provider's own sentence
+/// into the panel instead of losing it with the status code.
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint_status(status: u16, body: impl Into<String>) -> (String, Receiver<Request>) {
+    stub_seen(status, body.into())
+}
+
+/// What the stub read from one request: the JSON body and every header, names lowercased.
+#[derive(Debug)]
+pub struct Request {
+    /// The JSON body the client sent.
+    pub body: Value,
+    /// The headers in the order the client sent them, each name lowercased.
+    pub headers: Vec<(String, String)>,
+}
+
+/// One loopback listener that answers the first request with `status` and `answer` and breaks.
+#[allow(clippy::expect_used)]
+fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+    let port = listener.local_addr().expect("the test reads the port it took").port();
+    let (sender, requests) = mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let Some(request) = read_request(&mut stream) else { continue };
+            let _ = sender.send(request);
+            let reason = if status == 200 { "OK" } else { "Error" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            break;
+        }
+    });
+    (format!("http://127.0.0.1:{port}/v1"), requests)
+}
+
+/// One HTTP request, read off the socket by its own `Content-Length`.
+fn read_request(stream: &mut TcpStream) -> Option<Request> {
+    let mut raw = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let read = std::io::Read::read(stream, &mut buffer).ok()?;
+        if read == 0 {
+            return None;
+        }
+        raw.extend_from_slice(&buffer[..read]);
+        let head_end = raw.windows(4).position(|window| window == b"\r\n\r\n")? + 4;
+        let head = String::from_utf8_lossy(&raw[..head_end - 4]).into_owned();
+        let length: usize = head
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then_some(value.trim())
+                    .and_then(|value| value.parse().ok())
+            })
+            .unwrap_or(0);
+        if raw.len() >= head_end + length {
+            let body = serde_json::from_slice(&raw[head_end..head_end + length]).ok()?;
+            let headers = head
+                .lines()
+                .skip(1)
+                .filter_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+                })
+                .collect();
+            return Some(Request { body, headers });
+        }
+    }
+}
+
+/// One completion's answer that renames `panel` through one `command_batch` tool call.
+///
+/// It is the shape an OpenAI-compatible endpoint answers with, so a test of the wire and a test of
+/// the window drive the same answer through the same parser.
+pub fn batch_answer(panel: Id, name: &str) -> Value {
+    let arguments = json!({
+        "steps": [{ "command": "node.rename", "params": { "node": panel.get(), "name": name } }]
+    });
+    json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": format!("Renaming the side to {name}."),
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": { "name": "command_batch", "arguments": arguments.to_string() },
+                }],
+            }
+        }]
+    })
 }
 
 /// The package number the sample fixtures' directory uses.

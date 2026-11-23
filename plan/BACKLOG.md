@@ -35,7 +35,9 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:
 `T` — the semantic classes: the registry table, its traits and the editors it gates
 `U` — the UI: toolbars, drawing tools, view controls and icon resources
 `V` — primitive parameters
+`W` — solid booleans between bodies
 `X` — a defect in behaviour that already shipped
+`Y` — the final render: the tracer, the materials it reads and the image it writes
 
 A defect is filed under `## Bugs` with an `X` id next to the feature that owns it. Its entry states
 the observation, the expectation and the suspected cause, and never a guess at a fix that has not
@@ -43,8 +45,262 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
+  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
+   a shop has no place where a material is edited once and referenced by its boards. A format a
+   session invents from scratch will not be the one a joiner uses, so it takes the commonly
+   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
+   of pictures beside it.
+  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
+   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
+   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
+   whole. The library is one portable file in the workshop's user settings beside the settings
+   file (library.json) with an atomic save and a readable refusal for every refusal, and a
+   textures folder beside it: a picture is an ordinary file at a relative path that a person
+   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
+   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
+   it hands it the directory's, and the crate is registered in xtask's layer map and in
+   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
+   nothing draws.
+  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
+   empty name, a decor with no size and a picture that is missing are refusals a person can
+   read, never a panic; a replaced picture changes the frame's decor without restarting the
+   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
+   is green.
+  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src`
+
+- `[ ]` **O16** a catalogue record refers to a library material instead of describing it
+  Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
+   colour, a texture reference, roughness, metallic. The owner's model is the other way round:
+   materials live in their own library (Y8) and a nomenclature record refers to one. Two
+   descriptions of one material disagree on the first order, because the panel would name the
+   record oak while the render read an inline block and drew another wood.
+  Shape: An optional material reference on the nomenclature item envelope, the stable id the
+   library hands out; the wire schema and its golden file in the same change (ADR 0096: before
+   the first release the format has no past); a view::material reader beside board and banding;
+   and section 7 rewritten, with the Appearance block retiring and a reference replacing it. A
+   record whose material is gone is a diagnostic over a record that still resolves, the way an
+   absent catalogue item already is. A panel, a band and a hardware item refer the same way:
+   what differs between them is their kind, not how they speak about a material.
+  Done: Tests: a record with a material answers its id and one without answers none; a record
+   naming a material that is not there is a diagnostic and still resolves; the golden file
+   matches the current schema; a zero id is refused; cargo xtask ci is green.
+  `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
+
+- `[ ]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
+   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
+   material and left the mapping unwritten, so the viewport and the final render show something
+   the workshop does not buy, and they disagree with the catalogue record on the first order.
+  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
+   panel's board from its material record, a band from its own, hardware as a conductor with
+   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
+   tint its record names. A record with no material keeps the placeholder tone, because a
+   workshop that has not filled the catalogue must still see a board and not a black rectangle.
+   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
+   exposure and the filmic curve stay the command's settings.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
+   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
+   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
+- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
+  Why: Measured 2026-11-21: the workshop directory this machine reads
+   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
+   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
+   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
+   mm, and neither exists in either place, so a recipe that names them can only run against the
+   fixture in `app/tests/recipes/catalogue/`.
+  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
+   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
+   starter package the build reads, so a recipe names a row a fresh machine has too.
+  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
+   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
+   against the default directory rather than a fixture copy.
+  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
+- `[ ]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
+  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
+   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
+   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
+   states in its own module comment ("the only place where placement coordinates meet
+   floating-point millimetres"). The published schema shows `format: double` for the
+   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
+   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
+   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
+   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
+   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
+   numbers back as given.
+  Shape: The unit travels with the value, decided once for every command that takes a
+   placement: either the translation enters the surface as `Length` like every other length and
+   the model converts at its own float boundary (where the module already says the conversion
+   belongs), or the schema states millimetres in the field description and the answer echoes
+   the placement it stored, in the unit the caller sent. Not both, and not silence.
+  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
+   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
+   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
+   authored through the surface and read back agrees on every coordinate.
+  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs`
+- `[ ]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
+  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
+   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
+   answered an empty list for every one of them. docs/domain/products.md §2 promises the
+   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
+   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
+   materials, the core and machining only, so the one check that would have caught a whole
+   build being wrong said nothing, and the mistake survived a full build, a cut list and a
+   hand-written overlap check.
+  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
+   product envelope is one issue naming the node and the axis it leaves by, in the same answer
+   that lists the panel problems; a part flush with a face and a part a millimetre past it are
+   different sentences, and a part inside reports nothing.
+  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
+   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
+  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md`
+- `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
+  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
+   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
+   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
+   landed at the top of the board (z = 2182) and the part grew downward. The model states the
+   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
+   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
+   `panel.create` takes a placement as it is, and neither the schema nor any check says which
+   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
+  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
+   created by a command has its origin at a corner of its base face, decided once for every
+   command that creates a part, so the horizontal and the upright placement cannot disagree
+   about which end is the origin. The fill stance then stops being the only place the rule is
+   written.
+  Done: A test creates an upright panel by command and asserts its origin is a base corner of
+   the part; a test asserts a placement whose origin is not on the base face is refused with a
+   sentence naming the anchor rule; the wardrobe fixture has every origin at the bottom.
+  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
+- `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
+  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
+   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
+   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
+   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
+   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
+   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
+   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
+   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
+   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
+   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
+   view was left behind, so the person reads it as a camera that moves by itself. The same
+   stale target is why a standard view does not centre the model (X121) and why the
+   orthographic height was left at the scale of the earlier oversized build (X120).
+  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
+   the model outside the current frame refits and the status bar says so, and once the person
+   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
+   and gets the place a person looks for it among the view controls.
+  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
+   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
+   centre; the frame-all control is reachable from the view controls and by its key.
+  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs`
+- `[ ]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
+  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
+   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
+   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
+   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
+   so the promise its own comment makes - "the distance that shows the same height" - is broken
+   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
+   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
+   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
+   coming back from a kilometre takes about twenty-eight notches and reads as movement by
+   micrometres.
+  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
+   height cannot be shown in perspective the view refits the scene or says why instead of
+   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
+   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
+   explicit escape.
+  Done: A test switches a large orthographic height to perspective and asserts the visible
+   height at the target is unchanged, or that the answer says the view was refitted; a test
+   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
+   notches; a test asserts no projection switch leaves the camera clamped at the cap.
+  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs`
+- `[ ]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
+  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
+   центрируется на центр сцены". Measured: `Layout::apply_preset`
+   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
+   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
+   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
+   the same. So the target is whatever the view had before, and in this tab that is the empty
+   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
+   coming from Blender numpad or a view cube expects a standard view to centre the model, and
+   the older X119 is what put a meaningless target behind it.
+  Shape: A standard view centres the scene: the preset writes the direction, the projection and
+   the target, and the distance frames the scene bounds in that direction, keeping the size the
+   person had chosen when they had already framed this view by hand. ADR 0049 records the
+   exception it makes to "a preset moves the direction only", so the next reader does not
+   reinstate the old rule.
+  Done: A frame test asks for the top view of a model standing away from the origin and asserts
+   the model bounds are inside the frame and its centre lands on the view centre; a test
+   asserts a view the person framed by hand keeps its size through a preset; a test asserts
+   orbiting after a preset keeps the new target.
+  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs`
+- `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
+  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
+   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
+   `App::gesture_in_flight()` is false in the same frame. `App::assistant`
+   (`app/src/main.rs:926`) passes `gesture_in_flight()` as the `busy` the panel reads,
+   `Chat::field` picks the Stop button from that flag, and `Chat::body` draws the working line
+   from `is_busy()`, so the two halves of the panel disagree about what is happening. The row
+   says Send exactly while the turn runs, and pressing it does nothing because `Chat::begin`
+   refuses a second turn, while Stop appears only while a piece is carried or a question waits,
+   which is when `serve_chat` has already paused the turn. ADR 0187 puts the stop between calls
+   and the module comment says Stop stands where Send was while the agent works; the screen
+   shows neither.
+  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was and
+   disables the field while a turn is in flight, so the panel has one meaning at a time. A
+   gesture still pauses the turn at the frame boundary, but it no longer decides what the row
+   offers.
+  Done: A frame test holds a backend that never answers so the turn stays in flight, asserts
+   the panel draws Stop and not Send and that the field is disabled, presses Stop and asserts
+   the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
+   no turn in flight, which still draws Send.
+  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
+- `[ ]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
+  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
+   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
+   batch is one operation a person takes back with one undo, so the document moves once and the
+   answer says so. Suspected cause: each landed command bumps the revision on the batch's
+   working copy, and the install keeps the last number, so the count of commands is visible
+   where the count of operations is meant.
+  Shape: Decide that one batch is one revision, install the copy with the original revision
+   plus one, and have the batch answer carry the entries it left beside the revision it moved
+   to; the alternative — documenting that a command writes two changes — leaves the invariant
+   unobservable from outside, which is why the run could not check it.
+  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
+   answer says one entry (one unit test on Session::batch).
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs`
+- `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
+  Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
+   of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
+   file that lost half of them reads as a shorter file. Expected: a reference file that is
+   append-only refuses a body that drops an entry already in it. Suspected cause: validates the
+   body it is given and never compares it with what it replaces, so the only evidence of a
+   deletion is a diff nobody was shown.
+  Shape: A reference file the plan calls append-only (debt, and questions alongside it) is
+   written only when every entry it holds is in the new body; a refusal names the entries that
+   would leave, and a whole-file rewrite stays the reset a person asks for with a flag.
+  Done: A body that omits an entry the file already holds is refused with that entry's opening
+   words, and a body that adds one is written (one unit test over ).
+  `files: state-contract/src/cli/write.rs,plan/debt.md`
 ## Next
+- `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
+  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
+   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
+   and there is no card, no record and no path from one to the other, so every build starts
+   from the same defaults.
+  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
+   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
+   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
+   card that names a material the catalogue does not hold is a readable refusal.
+  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
+   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
+   refused with the material named; the document carries the card reference, not the card.
+  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
+
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
    dissolve targets and the card, and no task may cite a decision that does not exist. Four
@@ -105,7 +361,2064 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/mesh/src/lib.rs`
+- `[ ]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
+  Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
+   and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
+   gesture with a different class — the cell differs only in the class whose fill trait names
+   the size pair (ADR 0099), they share both build rows and the ghost — so the ribbon asks the
+   person to name the class before the part and grows a cell per class. The class cannot be
+   changed after the click either: panel.create takes it and no command rewrites it, so a wrong
+   class costs a delete and a redraw, and the two builds and a repeat count have no home of
+   their own (ADR 0110 put the build in the cell, the count does not exist).
+  Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
+   furniture.panels.points, whose method list carries three points and n points from its own
+   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
+   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
+   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
+   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
+   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
+   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
+   query over the void's shape and coordinates that gives the interface nothing, so the
+   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
+   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
+   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
+   Overlay wall), the build (largest fit or the niche shape — the word stays niche) and the
+   count (evenly, from its own task). The class a new part is born with is the role its plane
+   implies, from the rule of its own task, and a key of the menu overrides it, as the class
+   picker writes a class on a node. Before the click the keys are the tool card's rows (ADR
+   0119); after it the same keys are the node context menu through one new command
+   panel.build.set, which rewrites class and mode from the same niche in one undo entry and
+   refuses a node that is not a panel. ADR 0110 is superseded by one record that says the cell
+   is the object and the build is its property.
+  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
+   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
+   pinned-variant table and the tests that walk the method lists; the niche still answers from
+   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
+   class, the build and the count before the click and the context menu offers them after it; a
+   new part is born with the role its plane implies and a menu key overrides it;
+   panel.build.set is one undo entry, re-derives the outline from the niche and refuses a
+   non-panel; a stale pin is dropped on load; the context menu is one Popup declared in the
+   module that owns it; cargo xtask ci is green.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs`
+- `[ ]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
+  Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
+   that board laid over the frame — placed from the niche's start point by one thickness, its
+   sizes grown by a lap all round, one lap default out of the project's settings (the factory's
+   numbers, 14 mm usually). N28 answered the earlier question the other way — the tool creates
+   the plain frontal fill and the mounting is a property edited later — and the owner has now
+   made the mounting a creation key, so the board needs a placement rule and a lap, neither of
+   which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
+   position, and the outline is the section itself.
+  Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
+   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
+   answer: all four), clips the grown section by whatever stands proud of the face so the lap
+   runs over the frame's edge and never over a part that is in the way, places the board one
+   thickness off the niche's start point along the normal so it covers the frame's face instead
+   of filling the opening, and stores the four laps on the panel so the card can edit them. The
+   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
+   edge rather than being buried in it, and a begun board whose section the clip empties is
+   refused with a sentence. The lap default is a project value, not a workspace one: the
+   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
+   numbers, whose home is O2's standards file, and until that file lands the build falls back
+   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
+   test that names the plane it places on, because the owner's rule — start minus the thickness
+   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
+   row and one lap field per edge; the ADR says the lap is document data and the default is the
+   project's.
+  Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
+   inner face lies on the niche's start plane and whose body stands proud of the frame's face;
+   a part standing in front of that face clips the lap to the part's own edge and the board is
+   never buried in it; one click is one panel.create and one undo entry; the four laps are
+   stored on the part and the card edits them; a project file without the setting answers 14 mm
+   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
+   green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
+  Why: The owner: with the cursor moving along the panel plane's normal in the positive
+   direction the number of panels grows and their spacing stays even, the count moving on a 1
+   mm quantum; typing the side distance to the neighbour fixes that distance and leaves the
+   remainder at the far end; the count is never more than the boards that fit without crossing,
+   whatever the niche allows. Nothing today makes more than one panel per click, and the niche
+   already answers the span the row needs.
+  Shape: One operation, designed before it is coded (design-operation). Intent: a maker fills a
+   section with N equal boards in one gesture. Input: the fill is armed, the evenly key chosen;
+   the first click creates the board under the pointer and holds it as the row's anchor, the
+   hand moving along the panel plane's normal then names the span, and every 1 mm of travel
+   re-plans the row, so the count steps on whole millimetres; a second click commits and Esc
+   drops the row. The plan is a pure query beside fill_plan (Project::fill_row): the count is
+   the last board whose near face does not cross its neighbour and whose far face is inside the
+   span, and the span is the niche's free length unless the hand names a shorter one. Feedback:
+   every board's ghost draws at once, the count and the two side distances live in one plate at
+   the hand (ADR 0119), and the status bar names the count. A typed side distance fixes the
+   gap, the row keeps its pitch from the anchor and the leftover span stays free at the far
+   end. Commit is one session batch (J4), so the whole row is one undo entry. Edge: no open
+   product, a span narrower than one board, a gap wider than the span, and a pinned gap that no
+   longer divides the niche all answer with the sentence that says which.
+  Done: A drag along the normal gives the same count as Project::fill_row answers and never
+   crosses the boards; a 1 mm move changes the count by at most one; a typed gap keeps the
+   pitch and leaves the remainder at the far end; the row commits as one undo entry and one
+   Escape restores the document; a cancelled row leaves no node and no revision; the ghost and
+   the created boards are the same outlines; cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs`
+- `[ ]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
+  Why: The owner: a point tool that names points in space, the first three fixing the plane, as
+   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
+   rather than one — a board by three points, which builds the standard four-corner panel, and
+   a board by n points, which is finished by the checkbox, so a count above four only ever
+   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
+   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
+   different faces, cannot be drawn at all: the work plane is chosen before the first point,
+   which is the wrong order for this tool. The class the board takes is the role its plane
+   implies, because there is no niche here to name it.
+  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
+   asked for. Three points: the first two are one edge and the third fixes the width, its
+   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
+   as a ghost from the third click and the board commits on the third click — a true rectangle,
+   which classify_outline calls a standard panel, and the only way the program makes a standard
+   board out of a plane it was given. N points: the first point starts the ring, the second
+   gives the direction, the third fixes the plane, every later point is projected onto it, and
+   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
+   triangular contour panel and n points an n-gon; more than four points only ever commit
+   through it, which is the owner's simplification. The points come from the snap resolver, not
+   from a work plane, so the first click may stand on a face, an edge or a corner, and the
+   plane is the one the first three points span — collinear points are refused with the
+   sentence the card shows, never a plane guessed from the first two. The class a created board
+   carries is the role its plane implies, from the rule of its own task, and a menu key
+   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
+   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
+   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
+   mean two things and hides one meaning behind a key; one tool with an optional finish on the
+   third point asks the maker to guess which commit they are in; a method row says it out loud
+   and the cell's pinned method remembers it (U74).
+  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
+   resolver, the plane fixing on the third point; the three-point method turns three clicks
+   into a rectangle whose fourth corner is the ghost and whose classification is a standard
+   panel; the n-point method closes three points into a triangular contour panel and n points
+   into an n-gon, and a fifth point never commits without Finish; the created board carries the
+   role its plane implies and a menu key overrides it; collinear points are refused with a
+   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
+   node and no revision; cargo xtask ci is green.
+  `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs`
+- `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
+  Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
+   that end, a negative grows it. The overlay wall is the same mechanism read the other way:
+   its lap is a negative trim, so without one field the board would grow a second way of being
+   bigger than its nominal size, and the cutting list would print two stories of the same
+   number. Nothing today can make a board 2 mm shorter at one end than its nominal size: the
+   rectangle panel has a size, a bow and four corner radii, and every edge is exactly where the
+   size says.
+  Shape: Four trims on a standard panel, one per end in the panel's own frame, a Length each,
+   zero by default and stored on the part. The rectangle outline generator applies them —
+   positive inset the end, negative push it out — so the outline, the derived mesh, the bounds
+   and the order package all read one number, and two equal trims on opposite ends leave a
+   rectangle while unequal ones leave a trapezoid the shape classifier already knows.
+   panel.trim.set writes one or more ends in one undo entry and refuses a trim that would leave
+   the board empty; panel.resize keeps the trims as they are, because a resize writes the
+   nominal size and the trim is what the shop does to it. The card gains four scrubbing fields
+   with the unit outside the box and a line that says the manufactured size beside the nominal
+   one. The overlay wall of its own task stores its lap as a trim of the opposite sign instead
+   of a fifth field, and docs/domain/classes.md and the ADR say the trim is document data with
+   a sign convention. The schema bumps and the old loader is deleted in the same change (AGENTS
+   4.5).
+  Done: A board with one 2 mm trim and one -14 mm trim answers the manufactured outline the two
+   numbers name, and the mesh, the bounds and the exported sizes agree; panel.trim.set is one
+   undo entry and refuses a trim that empties the part; a resize keeps the trims; two equal
+   opposite trims classify as a rectangle; the card edits all four and shows the manufactured
+   size; the overlay wall reads its lap through the same field; the schema version moved and no
+   migration code exists; cargo xtask ci is green.
+  `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
+- `[ ]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
+  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
+   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
+   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
+   degrees against the frontal position is a wall. Today a class is a creation parameter and
+   nothing derives one: panel.create takes a class, no command writes it after the click, so a
+   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
+   ring has no role to carry and a maker would have to type one.
+  Shape: One function in model beside classify_outline — the role a plane implies: take the
+   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
+   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
+   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
+   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
+   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
+   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
+   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
+   derived class into panel.create; the niche fill keeps naming its class, because the class is
+   what picks the section pair (ADR 0099); the card shows the role the part carries and the
+   class picker overrides it through node.property.set, which already owns the reserved class
+   key. One record carries the rule, the frame it is measured in and the two ties, because the
+   tie-breaks are a decision and not a rounding.
+  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
+   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
+   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
+   the frontal answers wall; a board drawn by three points on a leaned face is born with the
+   class its plane implies and the card shows it; an explicit class passed to panel.create
+   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
+   green.
+  `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
+  Why: The image the owner points at is lit by one big source the size of a window: shadows
+   that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
+   clips to white. The document carries `Sun` and `Point` only
+   (`crates/model/src/light.rs:23`), and a point light cannot make a shadow soft at one
+   distance and hard at another, nor a visible bright pane. Without a rectangular emitter the
+   final render (Y1–Y4) has nothing to sample by solid angle, and every interior it renders
+   stays flat.
+  Shape: A third light kind: a rectangle with a size in the document's own units beside the
+   placement, colour and watts the other kinds carry, created and edited by one command and
+   drawn in the viewport as a translucent pane with an outline so it is selectable and still
+   out of the way. The viewport shades it as a source; the final render samples it by solid
+   angle with next-event estimation and multiple importance sampling (Y2), and a pane the
+   camera sees contributes its own emission. A new variant is a new layout with no migration
+   (ADR 0096).
+  Done: Tests: the command creates, resizes and removes one, the document round-trips the new
+   kind, an unknown kind is a readable load error, picking returns its id, and the emitted
+   power to radiance conversion has a unit test; the traced image against analytic irradiance
+   is Y2's test, not this one; `cargo xtask ci` is green.
+  `files: crates/model/src/light.rs,crates/scene/src/lib.rs,crates/engine/src`
+- `[ ]` **Y5** the final camera has a lens: an aperture, a focus distance and a sample on the disc
+  Why: The image the owner points at reads the way it does because of depth of field: a narrow
+   focus band across the miniature furniture and everything else melted. Behind that sit the
+   three things the plan already carries — bounce light, contact shadows and a denoised
+   estimate — so the one capability the picture has and Y1–Y4 do not is the lens. A pinhole
+   camera renders a product sharp, which is what a catalogue image usually wants; an aperture
+   is what turns the same scene into an atmosphere shot, and it costs one more sampler
+   dimension pair rather than a second renderer.
+  Shape: The camera gains an aperture radius and a focus distance, with a target point the
+   viewport can show, and the sampler spends one more dimension pair on a concentric disc
+   around the lens origin; a zero aperture is exactly today's pinhole and costs nothing. The
+   denoiser's guide already carries camera distance (Y4), which is what keeps the blur from
+   smearing across the focus band. The viewport does not change: a lens is a setting of the
+   render command, never view state.
+  Done: Tests: a zero aperture renders identically to the pinhole (a golden comparison); a wide
+   aperture at a 2 m focus blurs a point at 1 m by the thin-lens circle of confusion within 2%;
+   a shallow-focus render of the fixture reaches the reference noise level at a sample count
+   written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
+   green.
+  `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
+- `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
+  Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
+   features }` cannot store a profile with holes, although the kernel Profile and a panel core
+   already do. A maker who pulls the frame between two nested rings is told the area has a hole
+   and cannot become a part.
+  Shape: The profile becomes outer plus holes: the payload's wire form, its validation, the
+   extrusion compiler, the mesh and the golden file change together, with schema 30 and no
+   migration (ADR 0096). The area command stops refusing and hands the face's holes to the body
+   it creates.
+  Done: A test extrudes an annulus into one body whose profile carries the hole, the golden
+   file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
+   `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
+- `[ ]` **Y6** the Render place shows the image as it is traced, and keeps the last one
+  Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
+  step by step where that is possible, and the render grows step by step toward a product a
+  workshop can use. V-Ray and Blender are references a session looks at, never specifications
+  it copies (AGENTS §1.3, §4.6): this entry is one step of that road, not a parity programme.
+  Today the place reports a percentage and a path — `Stage::Done { path, width, height,
+  samples }` in `crates/ui/src/render_page.rs` — the PNG is written once at the end and a
+  person leaves the application to see it. ADR 0211 deferred exactly this: "a preview of the
+  last image ... needs a texture the shell registers, which is why it did not come with this
+  record", and `plan/debt.md` `[ui]` records the same gap: no preview, no status line of its
+  own. A plate that takes minutes shows no sign of life, cannot reveal a wrong exposure or a
+  wrong camera before it finishes, and leaves nothing to look at when it does.
+  Shape: The quality bar is decomposed into our own words, never copied: the image is the
+  surface, the numbers are a rail, the row under the picture says how far the render is, and
+  the picture is still there when the run ends. (1) The page becomes image-first: the picture
+  fills the room the shell gives the place, fitted to the image's aspect ratio and letterboxed
+  against the panel ink, with the numbers column kept as a rail beside it; the split and its
+  metric are chosen against `.pi/skills/ui-design/references/checklist.md` and recorded in an
+  ADR, and ADR 0211's decision that the render is a place and not a modal stands. (2) The
+  tracer moves from strip-major to sample-major — one sample over every strip, then the next,
+  with the device accumulators held for the whole run — so the first checkpoint shows the
+  whole frame at a low sample count and every later one refines it, where today a strip is
+  finished before the next one starts and only the end of the run has pixels. (3) A checkpoint
+  hands back a display-sized picture and not the accumulator: a small compute pass averages
+  the accumulation into a buffer capped at 1024 on its longer side, because a full 8192-side
+  accumulator would move 256 MB across the bus per checkpoint; the shell tone-maps it with the
+  curve the file already uses, `Image::from_accumulation` then `to_rgba8`, so dragging the
+  exposure re-tones the last snapshot instead of waiting for another run. (4) A bounded
+  mailbox and not a queue: the worker publishes at most one snapshot the shell has not taken,
+  on a checkpoint interval chosen so a 2480 × 3508 plate publishes about four times a second,
+  and a snapshot nobody read is replaced rather than kept. `ui` still sees no `wgpu`: `final`
+  hands a `Snapshot { width, height, samples, pixels: Vec<u8> }`, the shell registers and
+  updates an `egui` texture (`register_native_texture`, as `app/src/document.rs` already does
+  for the viewport) and the page draws it by `TextureId`. (5) The place owns its status row —
+  resolution, samples done and total, elapsed and estimated time, destination — which closes
+  the second half of the `plan/debt.md` `[ui]` entry. (6) The last snapshot survives the end
+  of a run, a cancel and a trip to another document; a change of exposure re-tones it, while a
+  change of size or samples needs a new run and the page says so. (7) A camera move or an edit
+  made while the plate is drawn changes nothing: the frame was cloned at the press (ADR 0211).
+  Done: Tests: a device test traces 128 × 128 at 16 samples and asserts at least three
+   snapshots arrive with strictly increasing sample counts, each at the requested size, and
+   that the last one is the finished image's pixels to the code value; a second test asserts
+   the mailbox holds at most one unread snapshot, so a slow reader loses pictures rather than
+   growing memory (a counter, not a wall clock); a cancel keeps the last snapshot on the page
+   and writes no file; a page test drives the place with `RawInput` at two window sizes and
+   asserts the picture is letterboxed inside the room, fitted and centred, and that the paint
+   names the texture the shell gave it; an exposure change re-tones the last snapshot with no
+   second run (a shell test on the tone map); the status row prints resolution, samples,
+   elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
+   is green.
+  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
+- `[ ]` **J25** the program knows its providers and lists their models instead of asking the person for a header
+  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
+   preset fills the address, a Go endpoint routes by model family, and the model list comes
+   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
+   product surface instead of a free-text endpoint.
+  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
+   address) with base URLs and the Go protocol table by model family; a model list from `GET
+   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
+   provider names are data and one wire still serves the ordinary case; the protocol matrix is
+   derived from the model name, not a second adapter per provider.
+  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
+   model reaches its family's wire; the person never types a header; the key is not in
+   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
+- `[ ]` **J26** a simple request feels long because nothing says what the agent is doing
+  Why: The owner says a simple request takes long and the panel does not say what the agent is
+   doing. The OpenAI backend waits for one whole completion, the panel shows one static
+   "working" line, and the only feedback is the final answer.
+  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
+   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
+   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
+   shows the work instead of a spinner.
+  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
+   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
+   the progress line; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs`
+- `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
+  Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
+   entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
+   although the task calls them part of the piece. The class registry names them (20.06 is the
+   hanging rail) and the domain says a fitting is a piece mounted on a part.
+  Shape: The catalogue's starter carries the rows a workshop buys — a leg of a diameter and a
+   height, a rail of a diameter and a length — with the class that makes them fittings, so a
+   build names a row and gets a part in the cut list and a line in the price instead of a solid
+   nobody counts. The acceptance recipe then names them the way it names a board.
+  Done: The recipe's four legs and its rail appear in the parts table and in the order
+   package's price rows, and the prompt no longer says the hardware is drawn simply (one
+   scenario test over the recipe).
+  `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
+
 ## Done
+
+- `[x]` **X130** the assistant's no-key test reads the developer's own environment, so the gate fails on a machine that is configured
+  Why: Measured 2026-11-23 in this checkout: `cargo xtask ci` fails at test in an ordinary
+   developer shell. `a_workspace_with_no_key_answers_the_sentence_instead_of_asking`
+   (`crates/mcp/src/openai.rs:987`) builds `OpenAi::new(endpoint, None)` and expects the no-key
+   sentence synchronously, but the backend reads `Z3L_AGENT_KEY` from the process environment
+   (`openai.rs:94`), and with the variable set it posts to 127.0.0.1:9 on the worker instead,
+   so `take()` answers `None` and the test panics with "the answer is there at once". The same
+   tree passes with `env -u Z3L_AGENT_KEY`, so the gate is green only on a machine whose owner
+   has not configured the assistant it belongs to.
+  Shape: The key source is a value the backend is constructed with rather than the process
+   environment read inside it: the test names an empty folder and an absent variable, and the
+   refusal is asserted without touching the environment another test in the same process can
+   see. The pure `key_from` tests stay as they are, and a test asserts the refusal both with
+   and without the variable set.
+  Done: `cargo xtask ci` is green in a shell where `Z3L_AGENT_KEY` is exported, and the no-key
+   test passes in that shell and in one without it.
+  `files: crates/mcp/src/openai.rs` — `73308d6`
+
+- `[x]` **J24** each tab has its own assistant conversation, backend and undo space
+  Why: The owner asked that every tab have its own agent and its own space. The document and
+   session are already per tab, but `Chat` is one field on the shell, so the conversation,
+   backend and turn are shared by every tab. Switching tabs keeps the same conversation and can
+   steal the turn.
+  Shape: Move the chat into the tab payload (or a tab wrapper): each tab owns its conversation,
+   backend, turn, edit scope and session id. The settings, consent list and panel position stay
+   workspace-level; the panel draws the active tab. A background turn pauses (its request stays
+   in flight) until its tab is active, so switching never loses an answer; the shell applies
+   settings to every tab.
+  Done: Two tabs hold two conversations and two backends; a message sent in one is not in the
+   other; switching tabs neither drops nor mixes the turn; the panel draws the active tab;
+   settings changes reach every tab; the existing chat tests are updated; `cargo xtask ci` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,app/src/tabs.rs,app/src/frame_tests.rs` — `6a0cbc0`
+
+- `[x]` **P27** a `file` write of `plan/map.md` is checked against the copy on disk, so a stale row lands
+  Why: `check_text` reads `plan/map.md` from the workspace it is handed instead of from the
+   text being written, so `cargo xtask file plan/map.md --stdin` validated the old map and
+   wrote a row naming `crates/mcp/src/openai.rs` before that file existed on the branch. The
+   next verb then refused, and `--repair` cannot fix it: the write that would needs the same
+   stale copy to compute the same violation (J14).
+  Shape: The reference files enter the checked plan the way the notes already do — `map`,
+   `debt` and `questions` as text supplied by the change, read from the workspace only when the
+   change does not touch them — so a write is checked against the tree it produces, not against
+   the one it replaces.
+  Done: A test writes a map row naming a path the workspace does not hold and the write is
+   refused with the row named; the same row written beside a tree that holds the file passes.
+  `files: state-contract/src/lib.rs,state-contract/src/cli/write.rs,state-contract/src/validate.rs` — `7463bdf`
+
+- `[x]` **P28** a stream checkout cannot keep its own session note, because the primary leaves it uncommitted
+  Why: Measured 2026-11-23 (J15): the primary ran `task start J15`, which wrote
+   `plan/BACKLOG.md` and `plan/SESSION.agent.md` into its own working tree and committed
+   neither. From the `stream/agent` worktree the same task's `cargo xtask task step J15 --now …
+   --resume …` answers `cannot read plan/SESSION.agent.md: No such file or directory`, so the
+   session working the task can never keep its own note true. AGENTS.md §6.2 promises the
+   opposite — "the stream keeps that note true from its own worktree with `task step`" — and
+   `own_task_refusal` in the tool allows exactly that verb. Suspected cause: the note is a
+   working-tree file of another checkout, and a stream sees only what is committed on its
+   branch, so an uncommitted start cannot reach it.
+  Shape: Two shapes. (a) `task start` writes the note and the primary commits it before the
+   stream merges `dev` in, so the note travels as history from the moment it exists. (b) `task
+   step` writes the note from the backlog entry when it is absent, filling the four fields the
+   gate requires, so the verb never fails on a file another checkout owns. (b) keeps one writer
+   and needs no extra commit; (a) keeps the note in history and is the smaller change to the
+   tool.
+  Done: From a `stream/<key>` checkout with no `plan/SESSION.<key>.md`, `task step` on the
+   stream's own live task answers and `cargo xtask plan` passes; a `state-contract` test covers
+   the absent note; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,state-contract/src/cli/mod.rs,AGENTS.md` — `0b1d00f`
+
+- `[x]` **J16** a parameter refusal repeats the payload and never says what shape to send
+  Why: Measured 2026-11-21: a `params` value that arrived as a JSON string was answered
+   `invalid parameters for product.create: invalid type: string, expected struct
+   ProductCreate`. The sentence repeats the payload, names a Rust type a caller cannot see, and
+   never says that `params` must be an object. The tool schema declares `params` as free-form,
+   so a caller may legitimately send a string and be told nothing it can act on.
+  Shape: The refusal names the field and the shape to send, in the words the caller used, and
+   the schema for `params` states that it is an object whose keys a command own schema
+   describes.
+  Done: A test sends a string where an object belongs and asserts the refusal names the field
+   and the shape; a test sends an object with an unknown key and asserts the key is named.
+  `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs` — `de989a9`
+
+- `[x]` **J29** the chat reads the schema, the scene and the catalogue, so a model builds instead of guessing
+  Why: The panel's model had two tools and no parameter schema: six refusals out of eight
+   answers on a cabinet recipe, each one taking the whole batch back. Its own calls never
+   entered the history either, because this model's content is null and the wire replayed the
+   words alone, so it planned the same build again; and a turn ended only on a reply with no
+   call, so a model that always calls one ran to twelve requests.
+  Shape: The wire offers command_list, query and inspect, answered by mcp::reads::MessageDoor
+   over the same functions the tool server publishes; the conversation keeps one assistant
+   message per answer with its tool_calls and one tool message per answer, tied by the wire's
+   id; a turn ends on an answer that names no call; a repeat of a landed batch is answered
+   instead of run again; query gained materials, the workshop's catalogue. ADR 0232 supersedes
+   J14's ruling.
+  Done: A turn that reads a schema and then dispatches lands its batch, and the history it
+   reads back holds its call and the answer tied by the wire's id (unit test over Scripted);
+   the panel and a foreign client read one command_list answer, byte for byte (unit test over
+   MessageDoor); query materials answers a row per record with the id a command takes and its
+   thickness (engine test).
+  `files: crates/mcp/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/reads.rs,crates/mcp/src/tools.rs,app/src/chat.rs,crates/engine/src/read.rs,crates/engine/src/guide.rs,docs/decisions/0232-the-chat-offers-the-tools-the-door-publishes.md` — `c877192`
+
+- `[x]` **J28** the parameters a caller sends inside a string are parsed instead of refused
+  Why: command_run answered «invalid type: string …, expected struct ObjectCuboidCreate» for
+   params sent as a JSON string: the data was right and only the envelope was wrong, and the
+   sentence named nothing the caller got wrong about the command.
+  Shape: RunRequest::params and StepRequest::params read the string form by parsing it, and
+   leave a string that is not JSON alone so the command still names exactly what it received.
+  Done: A run and a batch step whose params is a JSON string dispatch the value the string
+   encodes, and a string that is not JSON still reaches the command as itself (one unit test).
+  `files: crates/mcp/src/tools.rs` — `c877192`
+
+- `[x]` **J27** the panel draws Stop while the turn runs, so the agent can be stopped
+  Why: A person watching «the agent is working» had no button to stop it: the panel took the
+   shell's gesture for the turn's own state, so a working turn drew Send and a click on it was
+   refused in silence.
+  Shape: Chat::field reads the two facts where each one lives: the turn (Chat::is_busy) decides
+   Send or Stop, and the gesture the shell hands in only postpones the next message.
+  Done: A frame with a turn in flight draws Stop and never Send, and an idle panel draws the
+   opposite (one frame test).
+  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs` — `c877192`
+
+- `[x]` **X127** the model guesses the placement shape and builds one box from nine bodies
+  Why: A request for one cube spent the turn's calls on four refusals (`size_um`, missing
+   `placement`, missing `rotation`, a map where an array belongs, length 3 where 4 belongs),
+   then created nine bodies and hit the 12-call limit. The request held the static guide but
+   not the shape of a `placement`, and the prompt did not say a box is one body.
+  Shape: The guide gains a `placements` row with the object shape, both arrays, the identity
+   and the rule that it is not a bare array; the system prompt states the same and that one box
+   is one `object.cuboid.create`, never one body per face. Tests hold the guide shape and the
+   prompt line.
+  Done: The guide and the system message state the placement object and the one-box rule; a box
+   no longer needs a guessed schema; the prompt line is asserted in the request test; `cargo
+   xtask ci` is green.
+  `files: crates/engine/src/guide.rs,crates/mcp/src/openai.rs` — `c0d5a63`
+
+- `[x]` **X126** the panel cannot copy the conversation, and Stop leaves the answer in flight
+  Why: The owner could not stop a turn and could not hand the conversation to a reader without
+   retyping it. The panel had a Stop in the field, but OpenAI inherited the trait's no-op
+   cancel, so the worker answer was still the turn's; the transcript had no copy affordance and
+   the working line did not say which request was in flight.
+  Shape: A Copy button beside Send puts the transcript in the system clipboard with each
+   speaker named; the working line names the request number; OpenAi implements cancel by
+   dropping the answer in flight, so the turn ends on the frame the person presses Stop. The
+   copy sits in the field row, so the panel keeps the height it opens at.
+  Done: Stop ends the turn on the next frame and the in-flight answer is discarded; the panel
+   shows the request number; Copy writes a speaker-labelled transcript; a test proves the
+   copied text and the cancellation; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/text/src/messages.rs` — `c0d5a63`
+
+- `[x]` **X125** the model asks for an id and units the window already knows, and the person gets questions instead of a cube
+  Why: The model asked the owner for the root id, for the side order and about micrometres
+   before it would create a cube. The request held the static guide and no live scene, and the
+   prompt told it to ask. `object.cuboid.create` already takes the root as parent and one
+   command creates the box, so the missing fact was the id, not a command.
+  Shape: `engine::scene_brief` reads the root id, the open product and a bounded node list; the
+   shell sets it on the conversation before each message and the OpenAI request appends it to
+   the system message. The prompt states the house convention: millimetres in width × depth ×
+   height, convert to micrometres silently, a free body belongs under the root, act on the
+   numbers and ask only what neither the brief nor the convention answers.
+  Done: The system message carries the live root id and the conventions; a frame test sees them
+   in the stub request; a message can create a cuboid under the root without asking; the
+   engineer test names the root and the open product; `cargo xtask ci` is green.
+  `files: crates/engine/src/guide.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,app/src/chat.rs` — `7f95005`
+
+- `[x]` **X124** a gateway that routes on a header makes the person configure the provider
+  Why: The go gateway answered 400 MissingSessionID while the same curl worked: it routes on
+   `x-opencode-session`, and the app asked the person to configure that header in Settings. A
+   provider quirk is the program's knowledge, not a user field; the owner met the raw field and
+   asked for it to disappear.
+  Shape: Remove the extra-headers field and its settings schema. Recognise an OpenCode Go
+   address by name and path, keep one stable id per chat and send it as `x-opencode-session`;
+   another endpoint is sent no such header. The refusal already carries the provider's
+   sentence, so a new quirk that the program does not know is readable. Provider presets and a
+   model picker stay for the next task.
+  Done: No settings field asks for headers; a Go endpoint receives the chat's stable session
+   header; a plain endpoint receives none; the key is never sent as a header; `cargo xtask ci`
+   is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs` — `7f95005`
+
+- `[x]` **X123** the Delete key does nothing while the assistant panel is open
+  Why: The owner could not delete an object with Delete after a chat. The shell counted
+   `chat.open` as a modal, and the modal gate skips every shortcut, so Delete, Save and Undo
+   did nothing while the assistant panel was open. A frame test with the panel open and one
+   tree row selected reproduces it.
+  Shape: The panel is a window, not a modal: it keeps Escape and the tool keys for
+   `handle_keys`, but the shell shortcuts (Delete, Save, Undo, tab keys) run whenever no text
+   field has focus. A focused chat input still owns its keys.
+  Done: Delete removes a selected node while the assistant panel is open; the existing one-node
+   and multi-selection Delete tests still pass; a regressed panel cannot silence the shell
+   keys; `cargo xtask ci` is green.
+  `files: app/src/main.rs,app/src/frame_tests.rs` — `7f95005`
+
+- `[x]` **J23** a gateway that routes on a header answers 400, because the client sends none and drops the provider's reason
+  Why: The owner's go endpoint answered 400 in the panel while the same curl worked: the curl
+   sent `x-opencode-session`, the app sent no such header. Measured against the endpoint with a
+   fake key: without the header it answers 400 `MissingSessionID`; with it, 401 `Invalid
+   credential`. The panel showed only "answered HTTP 400" because the body was discarded, so
+   the reason was invisible. The wire has no way to add a header.
+  Shape: The Assistant settings gain an optional `Name: value` per-line header field, sent on
+   every completion; `Authorization` is refused because the key keeps its two homes. The field
+   is data, so no provider name enters the code (ADR 0189). A non-2xx status is read before it
+   becomes a sentence: the provider's `error.message`, folded and capped, reaches the panel;
+   the key never does. The testkit stub keeps the headers it read and can answer a status, so
+   both promises have a test.
+  Done: A typed header reaches the request through the page, the shell and the backend; a 400
+   shows the provider's own sentence in the panel; `Authorization` is refused; the key is never
+   in a refusal; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs,crates/testkit/src/lib.rs` — `680c6bf`
+
+- `[x]` **J22** an address that cannot be sent to is named before a message leaves, and the assistant page leads with it
+  Why: The owner pasted a URL into the address that was already in Settings and the only answer
+   was the endpoint's 404; the field accepted it and the panel said "no model" or sent it.
+   Measured: the stored value was two URLs joined (`https://…/openaihttps://…/openai/v1/v1`),
+   the single address answers 401 and the doubled one 404, so the program sent exactly what it
+   held. A beginner has no way to tell a base URL from the completion URL, and the page led
+   with the agent process.
+  Shape: The settings rule names the clause under the field and `endpoint_to_ask` returns none
+   while it stands: one absolute http(s) address, no second scheme, a host, no
+   `/chat/completions`. The Assistant page leads with the address, puts the process under an
+   advanced heading, states what happens next, and widens the modal and its fields so a long
+   URL is visible. The panel repeats the clause instead of the generic "no model" sentence.
+   Provider presets stay out: ADR 0189 forbids a provider name in a type, a match arm or a
+   default, so that is an owner question.
+  Done: A doubled or otherwise unusable address is named in Settings and in the panel and sends
+   nothing; a local and a cloud address still pass; the page is taller and its fields fill the
+   column; a headless frame test sees both sentences; `cargo xtask ci` is green.
+  `files: crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs,app/src/main.rs` — `9576f93`
+
+- `[x]` **J21** an https endpoint panics on the request thread, because ureq defaults to Rustls and nothing selects native-tls
+  Why: Filed from the owner's run: `https://opencode.ai/inference/openai/v1` with a model never
+   answered, and the panel read "the assistant's request ended without an answer". The log
+   carries ureq's panic `uri scheme is https, provider is Rustls but feature is not enabled:
+   rustls`. The workspace enables `native-tls` (ADR 0189), but ureq's `TlsProvider` defaults to
+   Rustls and is never selected automatically, so every https endpoint killed the worker thread
+   and closed the answer channel.
+  Shape: `OpenAi::new` builds the shared agent with
+   `TlsConfig::builder().provider(TlsProvider::NativeTls)`; a test reads the agent's own config
+   and asserts the provider, so the missing selection fails before a request; a live probe
+   against an https host ends in an HTTP sentence, not a panic.
+  Done: An https endpoint is reached and reports a reply or an HTTP status, never the TLS
+   panic; the regression test passes with the provider set and fails without it; `cargo xtask
+   ci` is green.
+  `files: crates/mcp/src/openai.rs` — `642f73f`
+
+- `[x]` **J15** command_list answers in short rows, and a schema only for the id that was asked
+  Why: Measured 2026-11-21: one `command_list` answer is 40 151 tokens, because every command
+   carries its full JSON Schema with its doc comments inline. A reader that cannot hold the
+   answer slices it, and a sliced schema reads as a fact: one session saw `sphere` and `cone`
+   in `PrimitiveShape`, stopped at the slice and concluded the registry has no box at all,
+   never seeing `object.extrude.create`.
+  Shape: The list carries one short row per command (id, label, what it creates, whether it
+   runs here, one sentence of refusal) and the full schema is answered for one id on request,
+   from the same registry table. A test asserts the list stays inside a byte budget and that
+   the per-id answer is byte for byte the schema `command_run` validates against.
+  Done: A test asserts the list answer is under the budget and holds every command id; a test
+   asserts the per-id schema equals the one the run refuses against; an unknown id is a refusal
+   naming the ids that exist.
+  `files: crates/mcp/src/tools.rs,crates/mcp/src/server.rs` — `20abaaa`
+
+- `[x]` **J14** the OpenAI-compatible backend, its consent screen and the key's two homes
+  Why: ADR 0189 names the wire and the key, and J7 ships only the scripted backend: no HTTP
+   client, no consent screen and no key handling exist, so a person cannot talk to a real model
+   yet.
+  Shape: The OpenAI-compatible client behind ChatBackend in `crates/mcp` (`ureq` plus the OS
+   TLS, one counted `openssl-sys` exception proven by a test over the resolved graph), a worker
+   thread so no frame waits, the consent card naming what leaves the machine and remembered per
+   endpoint, `Z3L_AGENT_KEY` then `agent-key` at `0600` and never `settings.json`, and the
+   endpoint and model as settings data with no provider name in code.
+  Done: A test with a local stub server runs a turn end to end and asserts one undo entry and
+   that changing `base_url` and `model` alone reaches the stub; the key is found in the
+   environment and in the file, and a log line, an error sentence and `settings.json` never
+   carry it; the first request of an endpoint asks for consent once and a cleared consent asks
+   again; `xtask layers` passes with the vendored-feature test green.
+  `files: crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,app/src/main.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,crates/testkit/src/lib.rs,xtask/src/main.rs` — `2bb4426`
+
+- `[x]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
+  Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
+   done, and a tool surface can pass every unit test and stay unusable — wrong units, a refusal
+   nobody can act on, an answer of nine hundred lines.
+  Shape: One integration test that starts the server the way a client does, plays the model
+   with a scripted fixture and runs the five scenarios: build a cabinet 800 x 2200 x 560, check
+   it, make it 900 wide, copy it and change the doors, put it in a niche 820 x 2140 x 580.
+   Every assertion goes through `inspect`, the file or `render_preview`, never into the
+   document directly. The first scenario has a recorded form already: the wardrobe in
+   `app/tests/recipes` (38 commands, its own scene, its own catalogue rows) is what a correct
+   build looks like, so the test drives the server to that document and compares the cut list
+   rather than the transcript.
+  Done: The five scenarios pass, each asserting one undo entry per turn, the count of mutating
+   calls and that `undo` restores the document the scenario started from; the scripted model
+   needs no network and no key; the scripted model reads nothing from this repository - only
+   the tool schemas, the answers and the refusals - because a released build ships no prose
+   (J19); `cargo xtask ci` is green.
+  `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs` — `f1d4f04`
+
+- `[x]` **J11** an agent process owns the model loop and reaches the window over the same channel
+  Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an
+   agent they already run: the process owns the model loop, the editor owns the document and
+   the tools.
+  Shape: A backend that starts a configured command, speaks ACP over its stdio and hands it the
+   channel endpoint and token; the conversation is rendered from the protocol's own messages;
+   the tools stay the server's, so a process cannot do more than the panel that started it.
+  Done: A test with a scripted ACP process runs one turn and asserts one undo entry and the
+   panel's rendering of a tool call and its refusal; a process that dies mid-turn leaves the
+   document as the last completed batch left it.
+  `files: app/src/main.rs,crates/text/src/messages.rs` — `c426c9f`
+
+- `[x]` **J10** a preview shows what the agent built, without a device on the client
+  Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
+   of the assistant unless a person asks for one; nothing renders without a device today, so a
+   headless test and a remote client have no way to see what they built.
+  Shape: An offscreen render of the session's scene to an image the tool returns and the panel
+   shows, sized by a parameter and capped in bytes and in size; the renderer stays `render`'s
+   and the device stays the shell's, so `mcp` asks for a frame it is handed rather than owning
+   a `wgpu` context.
+  Done: A test renders the golden scene at two sizes and asserts both dimensions and a
+   non-empty body; a request with no session is a refusal; the byte cap and the size cap are
+   enforced, and no request can start a download of a scene larger than its cap.
+  `files: crates/mcp/src,app/src/preview.rs,crates/render/src/lib.rs,crates/final/src/image.rs,app/src/main.rs` — `fa133fb`
+
+- `[x]` **J9** the inspector finds the seven mistakes, and the model explains them
+  Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
+   that does not fit, a rail through a door and a part longer than the sheet — and a model
+   cannot be trusted to see them. A rule can, and a rule can be tested with a fixture that
+   fails before it passes.
+  Shape: One pass returning `Finding { code, severity, nodes, text, suggested_commands }` for
+   `envelope_out`, `body_overlap`, `shelf_fit`, `rail_place`, `edge_band`, `door_gap` and
+   `sheet_fit`, every number read from the workshop profile and each rule reusing the
+   derivation that owns its answer. It is exposed as `inspect` on the tool surface and as a
+   list the panel shows; the model explains it and never computes it.
+  Done: Seven fixture pairs — one scene that finds each code and one that does not — pass;
+   every finding names document ids and carries a command list; changing one profile value
+   changes that rule's verdict and no other.
+  `files: crates/model/src/project,crates/engine/src/session.rs,crates/param/src` — `f842b17`
+
+- `[x]` **J19** the tool surface carries the words a released agent has: the sides, the units and the class names, because no README ships with the binary
+  Why: The owner, 2026-11-21: "как будет решать задачу понимания агентом о чём речь, когда
+   человек говорит о левой и правой стороне? когда выйдет релиз, у него не будет readme и
+   других инструкций". Measured: the four tools carry every word an agent gets at release -
+   `command_list` publishes a JSON Schema built from the types and their doc comments, and
+   `command_run`, `command_batch`, `query` and `ui_inspect` publish answers and refusals - and
+   none of them names a side: `Side` and `OpeningView` live in `crates/model/src/side.rs`, the
+   class rows with their names and fill axis pairs live in `crates/model/src/class.rs`, and
+   both reach a caller only through this repository. A session with the binary alone therefore
+   has coordinates and nothing else, which is how the first wardrobe came out mirrored (X118),
+   built at a thousand times its size (X115) and standing on the wrong end (X117).
+  Shape: The surface is the dictionary, because a released build ships no prose: every word a
+   caller must know to be correct travels with the tool that needs it. The sides are one answer
+   about the document - front +Y, up +Z, left +X with the face each one is, for the open
+   product - the class rows answer with their names and axis pair so a shelf and a post are
+   10.11 and 10.10 and a door 10.20, units are stated on every length field, and a refusal that
+   sees a caller put a part on the wrong side says which axis the side is. A command that means
+   a side takes the side, not a coordinate.
+  Done: A test plays a scripted caller that reads only the tool schemas and the answers - no
+   file of this repository - and resolves "слева пять полок, справа штанга" into parts on the
+   sides the model names; a test asserts every schema that takes a length states its unit and
+   every schema that takes a side spells the frame; a test asserts the refusal for a side that
+   cannot exist names the axis.
+  `files: crates/mcp/src/server.rs,crates/model/src/side.rs,crates/model/src/class.rs` — `ceb9119`
+
+- `[x]` **X114** a caller over the channel cannot save the scene it changed, so an agents work lives only in a dirty tab
+  Why: Measured 2026-11-21: every batch over the window channel answers `"write": "window",
+   "written": false`, and ADR 0005 and ADR 0188 keep it that way on purpose - the tab is dirty
+   and the persons Save is the write. An agent that built a wardrobe therefore owns nothing it
+   made: the document lives in one dirty tab, and a closed window loses it. The owner asked for
+   an agent that works without a person, and saving is the one step only a person can take
+   today.
+  Shape: The channel can save the scene it changed, through the same writer the headless server
+   already uses (`SceneSink`), with the persons act where a path is not decided yet: a save to
+   the open path, or a refusal naming why it cannot, and never a silent write into a new file.
+  Done: A test saves a scene over the channel and asserts the file reads back with the revision
+   the answer named; a test asserts a scene with no path refuses the save with a sentence that
+   says what to do; a test asserts no batch writes a file unless the caller asked for the save.
+  `files: crates/mcp/src/server.rs,app/src/main.rs,crates/mcp/src/tools.rs` — `067bb27`
+
+- `[x]` **X112** a created frame is closed, so the first part after it is refused
+  Why: Owner report 2026-11-21: after a frame is created it is closed, and the owner had to say
+   so twice. Measured: `product.create` created node 3 of an empty scene and the very next
+   question answered `open_product: null`, so `query niche` refused with `the point is outside
+   every product` and `panel.create` stayed disabled - a part is born only inside the open
+   product (ADR 0098). ADR 0100 says a frame is created, opened and drawn, so the create step
+   and the open step are one act for a person and two for a caller. A caller has to ask whether
+   the frame it just made is open, and the answer is no.
+  Shape: Creating a product leaves it open, in one act, as ADR 0100 words it: the frame is
+   made, opened and ready for the first part, so a sequence of commands works without a person
+   in between. A caller still reads the open product from the answer rather than assuming it.
+  Done: A test creates a product over the channel and asserts `open_product` names it, then
+   creates a panel inside it without any other step; a test asserts that opening another
+   product closes the first, because one product is open.
+  `files: crates/engine/src/product_cmds.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs` — `5253024`
+
+- `[x]` **N37** the three fill cells have no command, so only the window can make a post, a shelf or a wall
+  Why: Measured 2026-11-21: `furniture.panels.post`, `.shelf` and `.wall`
+   (`crates/ui/src/toolbars/spec.rs:936`) are `ToolKind::Fill { class: VERTICAL_PANEL |
+   HORIZONTAL_PANEL | BACK_PANEL, mode: Fit }`: the gesture measures the niche under the
+   pointer (`Project::niche`) and dispatches one `panel.create` with the outline, the size, the
+   placement and the class. The registry holds no fill id, so a caller that is not the window
+   has to rebuild the measurement itself and hand-write a placement with a quaternion for every
+   part, which is the arithmetic the three cells exist to remove; a copy of that arithmetic can
+   also disagree with the ribbon about the class axis pair.
+  Shape: one fill command for a caller: the parent, the point, the class and the mode in, and
+   the measured part out; the niche measurement stays where it is in `model`, so the ghost, the
+   report row and the command read one void. Session notes: the command is a caller's door, not
+   the ribbon's — the three cells keep their gesture and write its ghost through
+   `panel.create`, because the ghost is planned through the person's sight while a command
+   measures every part in the way (the reason is in `plan/debt.md`). The open product moved
+   from the command to the interface (ADR 0226), which is what lets a caller write into a
+   closed frame at all, so X112's premise is gone. The dry run is the session's own, not a
+   command parameter.
+  Done: a test fills an empty cabinet with a post, a shelf and a wall through `panel.fill` and
+   asserts each class, the documented stance and the void's own size; a second test pins the
+   free place and shows the class's word made unique; a dry run names the part it would make
+   and writes nothing, and the same step then makes that part; a point outside every product is
+   the query's own sentence; a void of another product, a class whose traits carry no fill pair
+   and a workshop with no board are each refused and record no history.
+  `files: crates/engine/src/panel_cmds,app/src/fill_gizmo.rs,crates/ui/src/toolbars/spec.rs` — `47af686`
+
+- `[x]` **X111** the window paints nothing until the pointer enters it, and a served command waits for that pointer
+  Why: Owner report 2026-11-21: after a command was dispatched over the window channel nothing
+   appeared; the cube showed up only when the pointer was moved onto the window. The document
+   had already changed — the tree reported node 2, the revision had moved to 1 and the tab was
+   dirty — so the frame the person saw was the old one. The same wait explains the measurements
+   filed before: a dry run took 83 s and 53 s, the landing call 196 s, while the queries
+   answered in about a second, and the answer to the landing call was `the window did not
+   answer: it is busy with a gesture no assistant may interrupt`. The window repaints on input,
+   so a call from the channel waits for a pointer event that only the person brings.
+  Shape: A batch that lands from the channel asks for a frame in the same call instead of
+   waiting for the next input, and the answer comes from the frame that landed it; the request
+   path states which frame answered it. A headless session has no pointer at all, so the wait
+   must not exist there either.
+  Done: A frame test dispatches a command with no input event and asserts the scene was rebuilt
+   and a repaint was requested in the frame the call returned; a timing test asserts a served
+   call answers without any pointer event and inside a budget written beside it.
+  `files: app/src/main.rs,crates/mcp/src/server.rs,crates/mcp/src/chat.rs` — `e689433`
+
+- `[x]` **P25** two plan writers in one checkout race, and the gate calls the result correct
+  Why: Measured 2026-11-21: two `cargo xtask task add` writes started in parallel in one
+   checkout both read the same backlog, both computed the next free id (X107) and the last one
+   to write replaced the other entry; the plan gate then reported `plan: ok` because nothing
+   was duplicated or missing by its rules, and the lost entry had to be filed again by hand.
+   The tool did take `plan/.lock`, but only inside `apply`, after the verb had read the backlog
+   and computed its id: the lock serialised the two renames and nothing before them, and the
+   cycle a writer owns is read, splice, validate, write.
+  Shape: One writer per checkout enforced by the tool, not by the rule text: a lock file beside
+   the plan that a write takes for its read-modify-write cycle and releases, and a second
+   writer that waits or refuses with a sentence naming the lock.
+  Done: A test starts two writes on one root and asserts that both land (or one is refused with
+   the lock named) and that neither entry is lost; a test asserts the lock is gone after a
+   normal write and after a refused one.
+  `files: state-contract/src/cli/write.rs,plan/BACKLOG.md` — `bc65ddc`
+
+- `[x]` **X110** nothing answers what a body is, so a caller cannot check what it built
+  Why: Measured 2026-11-21: right after a body was created, `query box` answered `node 2 is not
+   a product; box reports the box a product reserves`, and no other query reports the bounds,
+   the size or the mesh of an object. An agent that has just built a 200x300x600 body cannot
+   read back what it built; only the screen shows it, and the agent has no screen.
+  Shape: One query answers a node own box in the frame the answer names: a panel, a body, a
+   product and a container alike. `box` keeps its product meaning and the new answer is not a
+   second spelling of it.
+  Done: A test builds a body, a panel and a product and asserts the box each one answers,
+   including a turned node; a node with no geometry is a refusal the reader can act on.
+  `files: crates/mcp/src/server.rs,crates/model/src/project/query.rs` — `645ef9c`
+
+- `[x]` **X108** the assistant window grows by itself while it is open
+  Why: Owner report 2026-11-21: after the chat window was opened it slowly widened by itself,
+   with no drag and no resize. `Chat::show` sets `default_size`, `min_width(WIDTH)` and
+   `resizable(true)` while the transcript and the field ask for the width their own content
+   reports, so the host can grow frame after frame. Not reproduced in a test yet; the
+   observation comes from the owner looking at the open panel.
+  Shape: Reproduce it headlessly first: drive an `egui::Context` with a long transcript line
+   and a long input for a hundred frames and compare the window rect of the first frame with
+   the last. The fix is whatever the measurement names; a guess at a width is not accepted
+   before the number exists.
+  Done: A frame test opens the panel, feeds a long transcript line and a long input, runs a
+   hundred frames and asserts the window rect is the same in the first and the last frame; the
+   note records the rect the tree draws today.
+  `files: app/src/chat.rs,crates/ui/src/theme.rs` — `e29e269`
+
+- `[x]` **X107** a batch that landed answers as a refusal, so no caller can tell a write from a lost call
+  Why: Measured 2026-11-21: `object.extrude.create` over the window channel created node 2 (the
+   tree reports it, the revision moved from 0 to 1, the tab became dirty) and the answer was
+   `the window did not answer: it is busy with a gesture no assistant may interrupt`. Nothing
+   in the answer says the edit landed, so a caller that retries builds a second body, and a
+   caller that trusts the refusal reports a failure that did not happen. The wait behind that
+   sentence is the one X111 names: the window repaints on input, so a call from the channel
+   waits for a pointer event, and the call gives up before the person brings one.
+  Shape: The answer separates what landed from what is unknown: a call that changed the
+   document reports the ids it created even when the window UI thread was busy with a gesture,
+   and a call that moved nothing says so with the window own sentence and no created ids.
+  Done: A test drives a served session whose door is busy and asserts the answer names what
+   landed and what the caller must not repeat; a test asserts a refusal with no content change
+   carries no created ids.
+  `files: crates/mcp/src/server.rs,app/src/main.rs` — `b9c06f5`
+
+- `[x]` **X106** the plan/build switch is reachable only by Ctrl+J, and a plan answer does not say where it is
+  Why: Owner report 2026-11-21: there is no plan/build switch in the interface, and the owner
+   could not find one. Measured: the assistant panel is opened only by `shortcuts.assistant`
+   (`app/src/main.rs:1435`), bound to `Ctrl+J` (`crates/ui/src/inventory.rs:241`), and no menu,
+   ribbon or palette row draws `assistant.open`. The registry answer carries `mode: plan` and
+   the batch report leaves a caller to tell the person where the switch is; the owner found it
+   alone, by accident.
+  Shape: One row draws `assistant.open` where a person looks for a panel (menu entry, label,
+   key and icon per place-capability), and the plan-mode answer states in one sentence that
+   nothing was written and where the switch is; the switch itself stays the person act (ADR
+   0190).
+  Done: A frame test opens the assistant from the entry it belongs to and finds the two
+   segments; a plan-mode answer carries the sentence naming the place and the key; a caller
+   reading only the answer can tell a switch a person operates from a tool.
+  `files: crates/ui/src/inventory.rs,app/src/main.rs,crates/mcp/src/report.rs` — `a7b81ad`
+
+- `[x]` **X105** the parallelepiped is a ribbon gesture, and no command names it
+  Why: Measured 2026-11-21: `model.primitives.cuboid` (`crates/ui/src/toolbars/spec.rs:731`) is
+   a ribbon cell that arms `ToolKind::Body(DrawTool::Rectangle)`, and the registry has no box:
+   `PrimitiveShape` (`crates/model/src/primitive.rs:327`) is `Sphere | Cone`, so
+   `object.primitive.create` cannot make one. The closest command, `object.extrude.create`,
+   takes a closed `Contour` of four segments with stable ids plus a height. A session asked for
+   a 200x300x600 body found nothing by that name, read `panel.create` disabled (no open
+   product), and built the wrong entity before it found the extrusion.
+  Shape: Give the shape one name in the registry: either a `Cuboid` variant of `PrimitiveShape`
+   carrying width, depth and height and accepted by `object.primitive.create`, or
+   `object.cuboid.create` that builds the same body from three lengths. The ribbon cell then
+   draws the command it arms (place-capability), so the word on the button and the id in the
+   registry are one thing.
+  Done: Tests: a cuboid built by command with three different sizes is one body with the
+   expected bounds and one undo entry; a size outside the range is a typed refusal;
+   `command_list` names the shape a maker reads on the cell.
+  `files: crates/model/src/primitive.rs,crates/engine/src/object_cmds.rs,crates/ui/src/toolbars/spec.rs` — `400aac0`
+
+- `[x]` **P24** the status block says `## Now` is empty while a stream works in it
+  Why: Why: The session-start block says `-> Nothing is scheduled: `## Now` is empty, the
+   backlog keeps the work` while a declared stream's own task sits in `## Now`. Measured in
+   z3l-wt/render at `0d77dce`: `## Now` holds `[~] Y1`, the block prints that sentence, and the
+   line under it lists the same `[~] Y1`. The sentence speaks for the plan's own stream — which
+   is correct, no `app` task is scheduled — but names `## Now`, which is the whole file's
+   section and is not empty. A reader who trusts the sentence looks for the work order in `##
+   Next` and misses the task in progress.
+  Shape: Shape: The sentence names what it is about: the plan's own stream, not the file's
+   section (`Nothing is scheduled: no `app` task is in `## Now`, the backlog keeps the work`) —
+   or the empty case says there is no task at all, and the stream rows below carry the rest.
+   One string, the same in the block and in the gate's `NOTHING_SCHEDULED` prefix, with a test
+   that puts a stream's `[~]` task in `## Now` and asserts the sentence is true of what it
+   claims.
+  Done: Done: A test renders the block for a plan whose `## Now` holds only a declared stream's
+   `[~]` task and asserts the sentence does not claim `## Now` is empty; the gate's prefix and
+   the block still agree; `cargo xtask ci` is green.
+  `files: state-contract/src/status.rs,state-contract/src/lib.rs` — `2cdb1bf`
+
+- `[x]` **X104** a union that simplifies a circle into one arc produces a ring the document cannot store
+  Why: Observation: a union that meets a whole circle cannot be stored at all. With a drawn
+   circle (four 90° arcs) and a disjoint rectangle, `contour.boolean.union` answers "ring 0 of
+   a contour set is not a valid ring: a contour needs at least three segments, got 1"; the same
+   happens with two disjoint circles and, from the scene, when a drawing carries a circle
+   beside another ring. Expectation: a union of a circle and a shape is a drawing of two rings,
+   and of two circles is two rings. Suspected cause, measured: `simplify_loop` merges
+   consecutive pieces on one circle, so the four arcs become one 360° arc, and
+   `Contour::assemble` refuses a ring of fewer than three segments — the boolean produces a
+   ring the document cannot store.
+  Shape: Keep a closed ring storable: either `simplify_loop` never merges a ring down to one
+   segment, or a single closed arc is a legal contour. The second is the smaller rule and the
+   one that names the shape honestly; the first keeps every stored ring looking like the figure
+   it was drawn from. The test is the round trip of a stored one-arc ring through the file and
+   the mesh.
+  Done: A test unions a circle with a disjoint rectangle and stores two rings, another
+   round-trips a one-arc ring through the file, and the union of two disjoint circles creates a
+   drawing of two rings; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs` — `5d9d89d`
+
+- `[x]` **X103** a stored drawing with a joint gap the document allows is open to the geometry layer, so it cannot be combined and has no areas
+  Why: Observation: a contour drawing that has been stored once is a dead operand. In
+   /home/alx/cross.z3l (schema 31) the object "Пересечение 1" holds two rings whose consecutive
+   segments miss each other by 4.6, 6.7, 10.1 and 12.4 µm — the rounding
+   `ContourSegment::from_geom` does at storage, which the document accepts on `2 µm + radius ×
+   1.746e-5` (ADR 0072). `contour.boolean.union` over those two rings answers "nothing to
+   create: the rings do not meet, so nothing is left", and `object.area.extrude` answers "the
+   point is not inside any area" for every point, because `partition_regions` starts with
+   `union_regions`. Expectation: a joint the document accepts is a joint to the geometry layer,
+   so a stored drawing combines and its areas are non-empty. Suspected cause, measured:
+   `geom::boolean` welds vertices at `VERTEX_TOLERANCE = 1e-6` mm and never closes a joint gap
+   of a few micrometres, and `model::Contour::to_geometry` builds the ring with
+   `new_with_joint_tolerance` — so the ring is legal for the document and open for the boolean.
+   A control probe with a 3 µm gap reproduces it: the same ring unions fine at 0 µm, loses its
+   disjoint partner at 3 µm and leaves nothing when two such rings are unioned.
+  Shape: One rule for a joint: the gap the document is allowed to store is the gap the boolean
+   welds, so `collect_edges` welds at the operand ring's own joint tolerance instead of one
+   nanometre — or the conversion closes the joint before the ring reaches the geometry layer,
+   and then the boolean keeps its nanometre. The tested round trip decides which: every stored
+   ring the document accepts must be closed for `union_regions`.
+  Done: A test unions two rings whose joints are `2 µm + radius × 1.746e-5` apart and gets both
+   pieces, another unions the two rings of the cross.z3l intersection and gets one object, and
+   `object.area.extrude` on that object reaches both caps; `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/model/src/contour.rs` — `47085b2`
+
+- `[x]` **X101** an older scene file answers the schema sentence, not a field error
+  Why: Opening `/home/alx/scene.z3l` (schema 27) with this build answers 'invalid scene JSON:
+   missing field `tool` at line 117', not the schema sentence: the schema check lives in
+   `ProjectWire::try_from`, but the tree is deserialized before it runs, so a file from an
+   older layout fails on a field that did not exist yet and the one readable sentence ADR 0096
+   promises never appears. Every schema bump makes this worse: 29 added a required field, so
+   every older scene dies with a parse error.
+  Shape: The schema number is read before the body is parsed: the document is deserialized into
+   a value, `schema_version` is checked against the current one, and only then is the tree read
+   into the typed document. A file with any other number answers 'unsupported schema version N;
+   this build supports M' whatever its layout, and the same check guards the top-level
+   envelope's `format` and `format_version`. The reader keeps one parse pass over the value, so
+   the cost is one JSON tree, not two parses.
+  Done: Tests: a document body with no fields at all but an older `schema_version` is refused
+   with the schema sentence and not with a field error; the same file with the current number
+   is refused with the field error, because the layout is genuinely broken; every existing
+   scene-file test still passes and the golden still round-trips. `cargo xtask ci` is green.
+  `files: crates/model/src/project/wire.rs,crates/model/src/project/mod.rs,crates/model/src/project/error.rs,crates/model/src/project/panel_cmds.rs,crates/project/src/lib.rs,crates/project/tests/scene_file.rs,docs/domain/scene-file.md` — `79795cf`
+
+- `[x]` **X100** a contour set is extruded one body per ring
+  Why: An intersection of three rings can leave two separate pieces, which the operation stores
+   as a contour set, and nothing extrudes one: `object.path.extrude` takes a `Path`, so the
+   Extrude cell goes off for a contour set and a maker who has just built a shape out of three
+   drawings cannot turn it into a body. The same wall stops a union that leaves two pieces and
+   any set a file carries.
+  Shape: A set is extruded one ring at a time, into one body per ring, all in one command and
+   one undo entry: the profile each body owns is that ring, its height is the typed height, and
+   the created bodies land beside the set in its frame. The set itself is consumed like any
+   other source; a set is never a single body with two profiles, because the kernel's extrusion
+   takes one ring and a solid of two disconnected pieces is not a part a shop cuts. The cell
+   enables on a set as it does on a ring, and the extrude's height stays the session's typed
+   default. The alternative — refusing forever and waiting for G4's areas — leaves a result
+   nobody can use.
+  Done: Tests: an extrusion of a two-ring set creates two constructive bodies, each owning its
+   ring and the typed height, in one revision and one undo entry; the set is consumed; a ring
+   and a set behave the same in the ribbon's readiness; a set whose ring is too detailed for a
+   mesh cap is refused with the ring's own sentence; the panel path is untouched. `cargo xtask
+   ci` is green.
+  `files: crates/engine/src/object_cmds.rs,crates/param/src/solid.rs,crates/model/src/contour.rs` — `8e5e5cb`
+
+- `[x]` **X99** an armed boolean shows which ring is the base
+  Why: The base ring of an armed boolean is the frame the result is born in, and nothing on
+   screen says which ring that is: a plain click on the second ring replaces the selection, so
+   the first loses its highlight while it is still an operand, and a Shift-click makes the
+   last-picked ring the primary and the brightest. The maker sees two rings that look like one
+   selection and cannot tell which one the subtraction cuts into.
+  Shape: While a boolean is armed the base ring draws in an ink of its own — a second accent
+   that means 'this is the frame' rather than 'this is selected' — and every operand keeps the
+   ordinary selection ink. The scene frame carries the two inks per shape (the shell knows the
+   arm and the base), the theme owns both colours and their contrast values (the icon role inks
+   are the second owner, ADR 0090), and the status bar or the card names the base by its object
+   name so the words and the picture agree. The base keeps its ink while the pointer hovers it,
+   and the pair reads the same in the tree row.
+  Done: Tests: an armed boolean draws the base ring in the base ink and its operands in the
+   selection ink, and the ink is asserted headlessly on the frame's own shape list; dropping
+   the mode returns every ring to the selection ink; the base ink has a measured contrast
+   against the viewport's background in every theme; the base's name is on the card. `cargo
+   xtask ci` is green.
+  `files: crates/ui/src/theme.rs,crates/ui/src/editor/boolean.rs,app/src/document.rs,app/src/scene_build.rs` — `283bac5`
+
+- `[x]` **X97** the contour edit's old shape and its working copy are almost one colour
+  Why: The owner, in contour edit mode: the shape the edit started from and the working copy
+   are almost one colour, so a change cannot be read at a glance. Measured: `BASE_COLOR` is
+   `from_rgba_premultiplied(150, 150, 150, 160)`, which is a near-white grey (about 239 on 255)
+   at 63 % — brighter than the draft it should sit behind — and `DRAFT_COLOR` is `from_rgb(120,
+   200, 255)`, a bright blue. Two high-value inks whose hue differs and whose value does not,
+   beside a grip ink of 240 grey and the renderer's own selection cyan `SELECTION_LINE_COLOR` =
+   (0.15, 0.85, 1.0): four inks in the same family on one shape. On the light workspace both
+   are pale over paper, which the `[gizmo]` entry in `plan/debt.md` already records for the
+   whole screen-space overlay.
+  Shape: Give the two roles a name and a value rule instead of two hand-picked numbers: the
+   shape the edit started from is the quiet one — dim, thin, behind — and the working copy is
+   the loud one, the action accent; both come from `crates/ui/src/theme.rs` so the light
+   variant is a palette decision and not a second guess, which also pays the contour part of
+   the `[gizmo]` debt entry and leaves the draft line and the size label in it. Colour alone
+   should not carry the whole difference: a stroke weight and a dash are the second signal, and
+   the pair must separate from each other, from the grip ink, from the renderer's selection
+   cyan and from the plate's own material — a bright beech board and a dark one. Decide the two
+   ends of the rule before the first line is drawn: the quietest a base may be and still read
+   on paper, and the loudest a working copy may be and still let the material show through.
+  Done: The two inks are two functions of `crates/ui/src/theme.rs` — no colour literal is left
+   in `app/src/contour_gizmo.rs` for them — and a headless test over both palettes asserts
+   their luminance separation from each other, from the grip ink and from
+   `SELECTION_LINE_COLOR`; an offscreen render in the dark and the light theme over a light and
+   a dark material shows the base reading as behind the working copy; `cargo xtask ui-rules` is
+   green with the contour module no longer an exception, and `cargo xtask ci` is green.
+  `files: app/src/contour_gizmo.rs,crates/ui/src/theme.rs,xtask/src/ui_rules.rs,app/src/ui_shots.rs,docs/decisions,plan/debt.md` — `01eff80`
+
+- `[x]` **P21** a field label typed in another case lands as written, and the gate reads it as correct
+  Why: Observation, from a session filing a task: `cargo xtask task set Y1 --field shape --body
+   …` wrote ` shape: …` into plan/BACKLOG.md, with the label in the case it was typed, and
+   `cargo xtask plan` answered `plan: ok` over it. The entry format writes `Shape:`, so the
+   file now carries a label the format does not use, and only a reader notices. Expectation:
+   the label is written in the spelling the format declares, or the write is refused; the gate
+   does not accept a label in a case the entry format never writes. Suspected cause:
+   `edit::set_field` (state-contract/src/edit.rs:204) hands the argument as typed to
+   `field_lines`, while `known_label` (state-contract/src/edit.rs:219) and `parse::label_of`
+   (state-contract/src/parse.rs:139) compare case-insensitively, so every check agrees with
+   every spelling.
+  `files: state-contract/src/edit.rs,state-contract/src/parse.rs` — `7da482a`
+
+- `[x]` **X96** the along-contour move only travels one way, so a segment can be shortened and never lengthened
+  Why: The owner, in contour edit mode with the card's *Along contour* switch on: a corner can
+   only slide toward the far end of its segment, so a ring can be shortened but never
+   lengthened — the drag stops at the opposite node and the typed length has one direction. The
+   expectation is that an along move travels both ways: the corner passes its segment's end,
+   the segment grows, and the neighbour that shares the corner follows. The clamp is measured:
+   `ContourEdit::move_corner_with(Along)` calls `clamp_to_extent`, and `geom`'s
+   `Line::clamp_to_extent` pins the parameter to `[margin/length, 1 - margin/length]` while the
+   arc variant pins the sweep to the sweep it already has, so a corner can never leave its
+   segment; `app/src/contour_gizmo.rs` treats reaching the far end as a collapse, which is what
+   a shortening drag was built for.
+  Shape: Separate the two rules the one clamp carries: the corner slides on the segment's
+   supporting line or circle with no bound, the segment takes the new end, and the joint
+   reconciles the neighbour it shares the corner with — a line keeps a non-zero length and an
+   arc keeps a representable sweep, and a corner that would put either past what the document
+   can hold is refused the way `join_corner` already refuses a mismatch. The collapse of a
+   segment to nothing stays what a typed `0` and a drag to the far end mean. The typed number
+   keeps the one meaning it already has — the distance from the fixed far end — so a smaller
+   number shortens and a larger one lengthens the same corner, and its two ends are the
+   segment's own: zero is the collapse, and the top is the arc's sweep plus
+   `MAX_ARC_EXTENSION`, never a full turn, while a line's ceiling is the coordinate box the
+   document stores. The card's switch stays the only control.
+  Done: Tests: a model test moves a corner past its own end on a ring and on an open chain, on
+   a line and on an arc, and the segment grows while the ring stays valid; the drag toward the
+   far end still stops one margin short and a typed zero still records the collapse; a headless
+   frame test drags a corner outward with the along switch on and the side grows frame after
+   frame; the typed number is the distance from the fixed far end, so a smaller one shortens
+   and a larger one lengthens the same corner, and a number past what the segment holds is a
+   sentence naming both ends; `cargo xtask ci` is green.
+  `files: crates/geom/src/segment.rs,crates/model/src/contour_edit.rs,crates/ui/src/contour_grips.rs,crates/ui/src/contour_edit.rs,app/src/contour_gizmo.rs,app/src/frame_tests.rs` — `93288fa`
+
+- `[x]` **U122** the creation menu has artwork for every key it offers
+  Why: The class and build menu the owner asks for is a list of six keys — Post, Shelf, Wall,
+   Overlay wall, Evenly, By the area shape — and a menu row without a glyph is a placeholder
+   among glyphs, the finding U84 and U117 both came from. crates/ui/src/icons.rs carries post,
+   shelf, wall and void, the wavy contour panel and the cut shape panel (U117); a plain board,
+   an overlay board, a row of boards and the largest rectangle inside a section have no drawing
+   at all, and the plain Panel cell needs the plain isometric plate that panel.svg carried
+   before U117 turned that file into the contour panel.
+  Shape: Four masters under assets/icons/scene/. board.svg is the plain isometric plate on the
+   canonical basis, drawn anew rather than copied back: face in the result tone, two passive
+   thickness bands, the same plate the post and the shelf are. overlay.svg is the frontal board
+   lying over the frame's face with one lap edge emphasised and the frame's edge passive behind
+   it, so a lap reads as a lap and not as a second board. row.svg is three boards in a row with
+   two equal gaps, both gaps the same width so the row says evenly. fit.svg is the shaped
+   section in the passive tone with the largest rectangle inside it in the result tone. Each
+   follows assets/README.md — the 24 grid, the one scene ink, fill-opacity in the two bands, no
+   element outside the allowed list — and each gains its name in the scene row of the theme
+   table and its constant in the icons! list.
+  Done: The four files load and rasterise at 16, 22 and 26 px; the theme-table test and the uri
+   count agree with the icons! list; every drawn icon holds the 2.25..21.75 footprint and the
+   10..40 % coverage band; the glyphs read beside post, shelf, wall and void at 16 and 26 px;
+   cargo xtask ci is green.
+  `files: assets/icons/scene/,assets/README.md,crates/ui/src/icons.rs` — `eb01de7`
+
+- `[x]` **U121** the work plane is the face under the first click, so a 3D sketch has a plane it can contain
+  Why: The owner's decision in U119: a sketch in the 3D snap must draw on the plane of the face
+   under its first click, and that is a task of its own. Today WorkPlane::from_camera freezes
+   world XY (z = 0) for every view but an axis-aligned orthographic one, so a 3D sketch can
+   capture only a candidate exactly on that plane; plan/debt.md records that the drawing tools
+   hand the resolver no face at all (V5, U116).
+  Shape: The draft asks the probe for the surface under the pointer while it is armed and, in
+   the 3D mode, takes that face's plane as its plane; the first click freezes it, exactly as
+   the camera plane is frozen today. The preview edge and the marker stand on the frozen plane,
+   the plane is drawn as a faint guide while the draft is open, and a click on empty space
+   keeps the camera plane. The face is the one the ruler already measures (it steps past a
+   product's reserved box). The 2.5D mode keeps today's reading: the plane is where it is, and
+   a candidate above it answers with its foot.
+  Done: Tests: a sketch started on a board's top face stores its points in that face's plane;
+   its own corners capture in 3D; a sketch started on empty space keeps the camera's plane; the
+   frozen plane does not follow the camera mid-draft; one offscreen shot of the guide and the
+   marker on the face plane; cargo xtask ci is green.
+  `files: app/src/draw_gizmo.rs,app/src/gizmo_math.rs,crates/model/src/project/snap.rs` — `b0c2980`
+
+- `[x]` **P19** the plan still sends a session to take the rename that already landed
+  Why: R1 closed at `d4a56f3`: the name has one home (`theme::PRODUCT_NAME`), the format is
+   `furniture.scene` and the crates are bare. But `plan/rename.md` still opens with "R1 waits
+   for the release … Take it back with `cargo xtask task take R1`", the `[release]` entry in
+   `plan/debt.md` still says to run the four commits first, and `AGENTS.md` §1 and §9 still
+   send a reader to the file. A session that believes either does work already in the tree, and
+   the plan gate cannot see it because every path still exists.
+  Shape: Decide what the file is now — history, which `git log` already keeps, or a record of
+   what the four commits measured — and with the first choice delete it and every reference to
+   it: `AGENTS.md` §1 and §9, the `[release]` entry in `plan/debt.md`, the row in `plan/map.md`
+   if there is one, and the skills that name it, which `cargo xtask skills` checks as
+   backticked paths.
+  Done: No plan file, `AGENTS.md` entry or skill tells a reader to take R1 or to run its four
+  commits — `plan/rename.md` opens as the record of the rename that landed at `d4a56f3`
+  and names them, the `[release]` entry has left `plan/debt.md` with its tag, and
+  `cargo xtask plan`, `cargo xtask skills`, `cargo xtask docs` and `cargo xtask ci` are green.
+  `files: plan/rename.md,plan/debt.md,AGENTS.md` — `c4cbca5`
+
+- `[x]` **P26** a stream checkout writes only its own two plan files
+  Why: A stream worktree writes plan/BACKLOG.md, plan/map.md and the rest of the shared plan
+   files today, so every stream merge meets the same files on both sides: BACKLOG was touched
+   by both sides in twelve of the last twenty-five merges, docs/decisions/README in nine,
+   plan/map.md in six. AGENTS.md §6.2 says plan/ has one writer, the primary checkout on dev;
+   the tool does not enforce it.
+  Shape: The task and state and file verbs refuse a write to a shared plan file when the
+   checkout is a declared stream worktree, and keep task step and task note for the stream's
+   own two files (plan/SESSION.<key>.md and plan/notes/<ID>.md), refusing a step or a note for
+   another stream's task. The branch comes from Git::branch and the declaration from the
+   STREAMS: line; the refusal names the stream, the two files it does own and the primary rule.
+  Done: A write of a shared plan file from a stream/ checkout is refused with a sentence naming
+   the stream and its own two files; step and note still work there for its own task and are
+   refused for another stream's; the primary checkout is unchanged; tests cover all of it and
+   the plan gate stays green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md` — `0fd84bf`
+
+- `[x]` **P18** two decisions carry the number 0104, and the index cannot see it
+  Why: `docs/decisions/` holds `0104-a-ghost-of-a-missing-node-is-shell-paint.md` and
+   `0104-supply-names-four-sources.md`, and `docs/decisions/README.md` lists both rows under
+   one number, so "ADR 0104" in `app/src/box_gizmo.rs`, `crates/model/src/class.rs`,
+   `plan/questions.md`, `PROJECT.md` and four notes names two different decisions. `cargo xtask
+   docs` cannot see it: `state-contract/src/cli/docs.rs` compares numbers only and dedups the
+   index list, so two files that share one number both match and the row count still agrees.
+  Shape: Renumber the supply record to the next free number across its file name, its index row
+   and every reference that means it (the supply one: `crates/model/src/class.rs`,
+   `plan/notes/T1.md`, `plan/questions.md`, `PROJECT.md`), and make the check reject two files
+   with one number and one number listed twice — a scratch directory and a test per case, the
+   way the index check tests its own mismatches today.
+  Done: `cargo xtask docs` fails on a scratch directory holding two files numbered 0180 and on
+   an index that lists 0180 twice; the tree has one record per number and every "ADR 0104"
+   reference names one of them; `cargo xtask ci` is green.
+  `files: docs/decisions/README.md,state-contract/src/cli/docs.rs` — `487bb25`
+
+- `[x]` **Y3** the render reads the catalogue, not a shader graph: decor with grain, banding and hardware
+  Why: Our material is a catalogue record — kind, nominal thickness, decor, grain availability
+  (`PROJECT.md`, ADR 0148) — and a final image has to show the board a workshop buys: the
+  decor at its real texel scale, the grain along the direction the piece is cut, the banding
+  in the colour of its own band, the handle as metal. A shader-node material format would put
+  a foreign vocabulary into the document and be a bigger model than the furniture needs (§4.6,
+  §4.9). Grain direction is one of the open model questions in `PROJECT.md`: the render reads
+  whatever the document stores when that question is answered, and this task does not decide
+  the storage.
+  Shape: The frame's ability, and not the mapping: a decor value on a drawable — the picture,
+   the millimetres one image width covers and the quarter turns its grain runs by — which the
+   surface's colour multiplies; the viewport samples it through one texture per decor, and the
+   tracer carries the same value as its own table and filters it with its own bilinear, repeat
+   and sRGB-to-linear arithmetic. Grain is the renderer's vocabulary: the document's storage
+   question stays open in PROJECT.md. Exposure and the filmic tone map are the command's
+   settings and were already there; the viewport keeps its own colours. The mapping from a
+   record, its banding and a handle's finish is Y7's.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them, in the viewport and in the tracer's picture; an item that
+   names no decor renders a flat colour rather than black; the exposure field darkens the image
+   monotonically; cargo xtask ci is green.
+  `files: crates/scene/src,crates/render/src,crates/final/src` — `a510037`
+
+- `[x]` **J20** the agent is taught the domain and the tool families before it builds
+  Why: Measured 2026-11-21: a caller sees five tools and a command_list of 64 ids with labels
+     and schemas, and nothing says which world a request belongs to. A nut, a carcass and a scene
+     light look alike to a model, the guide a person carries is only in docs/, and the wardrobe
+     built by hand in app/tests/recipes came out in millimetres where the document wanted
+     micrometres (X115). ADR 0192 answered with Rust recipes (carcass.box, wardrobe.hinged),
+     which the owner rejected on 2026-11-21: a construction must not be hardcoded; the model
+     composes commands and the program teaches it the domain. Nothing in the tree states how a
+     build starts (a product frame), which shapes the frame takes (Footprint: rectangle, cut
+     corners, a drawn ring), which roles the parts play (model::class::registry(), 78 rows with
+     aliases like «стойка») or that a rod has a class row (20.06) and no creation command.
+  Shape: One guide the model reads before its first command: engine::guide() returns one JSON
+   value — the two worlds (furniture: the product frame and the parts inside it; geometry: free
+   bodies), the order of a build from scratch, the frame shapes with a worked radius-corner
+   example, the three stances of ADR 0105 with their rotations, the class registry's roles with
+   their aliases, the units and the four sides — built from the registries so a name cannot
+   drift, plus one family word per command (furniture, geometry, tree, scene). It travels in
+   command_list and as z3l guide.
+  Done: Every registered command carries exactly one family and the guide names only ids the
+   registry holds; the guide lists every assignable class row once with code, label and
+   aliases; a test turns a panel by each stance and holds it to ADR 0105; the guide's
+   radius-corner envelope parses into a Footprint::Cut with a fillet; command_list and z3l
+   guide print the same value; cargo xtask ci is green.
+  `files: crates/engine/src,crates/mcp/src/server.rs,app/src/cli.rs` — `1dcd495`
+
+- `[x]` **J18** a batch step cannot name the id an earlier step creates, so one build is several batches and several undo entries
+  Why: Measured 2026-11-21 while building the wardrobe in the window: a batch step cannot name
+   the id another step creates, and the id is only known after the step runs, so banding a
+   panel needs a second batch and the build becomes three undo entries instead of one - 14
+   creates, 19 bands, 5 bodies. `command_batch` promises one undo entry per call and
+   `BatchStep` carries a command id and a plain params object, so there is no way to write
+   `panel: <the panel line 3 made>`; the CLI recipe has the same hole and the wardrobe fixture
+   gets round it by hard-coding the ids of a fixed scene, which breaks the moment the document
+   already holds anything.
+  Shape: One way for a later step to name what an earlier step made: a name a step gives its
+   created node and a reference a later step resolves against it, resolved as the batch runs,
+   so one build is one call and one undo entry. The reference is a batch concept, not a
+   document one: nothing new is serialized and a saved scene has no placeholders.
+  Done: A test builds a panel and bands it in one batch and asserts one undo entry and one
+   landed document; a test asserts a reference to a step that refused or made nothing is a
+   readable refusal naming the step; a saved scene after a batch holds no reference, only ids.
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/server.rs,crates/mcp/src/tools.rs,crates/mcp/src/report.rs,app/src/cli/recipe.rs,app/tests/recipes/wardrobe-800x460x2200.jsonl,docs/decisions/README.md` — `831a9ef`
+
+- `[x]` **Y2** the tracer converges: three lobes, next-event estimation and a sampler that is not white noise
+  Why: A diffuse-only tracer with uniform sampling needs four to eight times the samples for
+   the same noise, and that gap decides whether a workshop waits a minute or ten. The reference
+   project carries the three pieces that close it — next-event estimation with multiple
+   importance sampling, an Owen-scrambled Sobol sampler whose own measurements put it 25 to 40%
+   ahead of white noise, and Russian roulette — and its shader is 2.5k lines of published
+   technique rather than research.
+  Shape: BSDF evaluation and sampling for diffuse, GGX metal and rough dielectric, the last
+   with the energy-compensation tables a rough conductor needs so it does not darken as
+   roughness rises. The dielectric is refractive: an index of refraction, total internal
+   reflection and a Beer-Lambert absorption per world unit, so a pane or a sphere of tinted
+   glass behaves like glass and not like a shiny film. Glass concentrates light, so the
+   estimator carries one documented clamp on the radiance a single sample may bring, and the
+   bias it costs is measured rather than chosen by feel. Lights sampled by emitted power
+   through an alias table, MIS weights between the light sample and the BSDF sample,
+   Owen-scrambled Sobol in 2D pairs, and Russian roulette past a fixed depth. The sampler and
+   the BSDF maths live in pure Rust beside the shader and are unit-tested, and the shader is
+   their transcription, so a wrong weight fails a test without a GPU.
+  Done: Tests: the white-furnace case renders a diffuse sphere under a uniform environment to
+   that environment's radiance within 1%; a 4096 spp reference and a 200 spp render of the
+   fixture agree within 2% linear RMSE; a pane of tinted glass over a patterned floor shifts
+   the pattern by the thin-lens direction the index of refraction predicts and darkens it by
+   the absorption the thickness and the tint name; the first 8192 sampler points are unique and
+   the distribution test passes; the metal's directional albedo at roughness 1 is within 1% of
+   its table; the clamp's bias is measured against an unclamped reference and written into the
+   note; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/geom/src/lib.rs` — `7491499`
+
+- `[x]` **J17** a product cannot be opened over the channel, so no furniture part can be born
+  Why: Measured 2026-11-21: `product.create` succeeded (node 3, and `query box` reports 800 x
+   460 x 2200 at the origin) and `command_list` then answered `open_product: null`; `query
+   niche` at [400, 230, 1000] answered `no niche at ... the point is outside every product` and
+   `panel.create` stays `enabled: false`, because a part is born only inside the open product
+   (ADR 0098). Opening is a session view operation (`Session::open_product`,
+   `crates/engine/src/session.rs:159`), not a command: the headless CLI opens with `--product`
+   (`app/src/cli/recipe.rs:99`) and the window opens what a person double-clicks, so a caller
+   over the channel has no door at all and every furniture command is unreachable after the
+   frame is made. The CLI is no better for a recipe that makes its own frame: it opens the
+   product before it runs the batch, so `z3l run` on an empty scene answers `panel.create
+   cannot create furniture here: Create a product first` at line 2 of a recipe whose line 1
+   makes the product - which is why the wardrobe recipe in `app/tests/recipes` starts from a
+   scene that already holds the frame.
+  Shape: One way for a caller that is not the window to say which product it works in: a view
+   operation on the same tool surface (a field the batch carries, or a question about the
+   session) that writes no document field, moves no revision and leaves no undo entry, exactly
+   as the session method does, with ADR 0098 keeping one product open. The answer of a batch
+   then names the product it ran in.
+  Done: A test binds a session with no open product, opens one over the channel and asserts a
+   panel lands inside it; a test asserts a scene with two products and none named answers the
+   sentence the CLI already uses; a test asserts opening writes no revision and no undo entry.
+  `files: crates/mcp/src/server.rs,crates/engine/src/session.rs,app/src/cli/recipe.rs` — `a838503`
+
+- `[x]` **Y1** the final render is our own tracer, and it draws the view the viewport shows
+  Why: The owner needs a final render, not a screenshot: one still image at print resolution,
+   from the camera the viewport already shows. The reference project was measured before the
+   road was chosen (`plan/notes/Y1.md`): 18.6k lines, of which about 40% is what a furniture
+   scene needs — the integrator, the sampler and the denoiser — while the part it is clever at,
+   CWBVH compression and mesh streaming, is for scenes of millions of primitives and a whole
+   kitchen is tens of thousands. Taking it as a dependency is permitted by its Apache-2.0
+   licence and still wrong: it would add a third `wgpu` pin beside `render` and `egui-wgpu`,
+   which must bump together (§5), and it would hand the quality tuning to a project with one
+   maintainer. The reason for our own is ownership, not the licence.
+  Shape: New crate `crates/final` at L5, registered in the layer map of `xtask/src/main.rs` and
+   in `PROJECT.md`, the single crate that owns this pipeline and the only place the
+   final-render code lives; it borrows the `wgpu` device the shell already made instead of
+   opening one. Input: the frame's triangles from `mesh` at the current revision, the
+   document's light objects in watts with inverse-square falloff (ADR 0039), the session
+   camera. A binned-SAH BVH2 built in Rust over that triangle soup and flattened for traversal;
+   a compute pass that traces one primary ray per sample and estimates light from the
+   document's quads and points, diffuse only, uniform sampling, a fixed sample count; PNG out
+   through the `image` crate. One command `render.final` carries progress and cancel. Every
+   technique is implemented from its published source, named in the note and in the ADR: the
+   reference project is measured and read for its approach, never copied as text, so no file,
+   comment, test or golden image of it enters the tree and `ATTRIBUTION.md` gains nothing
+   (§4.6). The ADR records the decision and its deliberate limits: no spectral renderer, no
+   volumes, no hair, no displacement, no requirement for hardware ray tracing.
+  Done: Tests: `render.final` writes a PNG of the fixture scene, and the image's camera matches
+   the viewport's to within a pixel at a known point; a second run on an unchanged revision
+   reuses the BVH and a changed revision rebuilds it (a counter, not a wall clock); cancel
+   returns to the idle session and leaves no file; the BVH and the ray maths have unit tests
+   without a GPU; the ADR is filed and listed; `cargo xtask layers` accepts the new crate and
+   `cargo xtask ci` is green.
+  `files: crates/final/src/lib.rs,crates/final/src/gpu/shader.wgsl,app/src/render_place.rs,app/src/cli/render.rs,crates/ui/src/render_page.rs,app/src/header.rs,docs/decisions/0210-the-final-render-is-our-own-tracer-and-a-job.md,docs/decisions/0211-the-render-is-a-place-beside-the-file-menu.md` — `9601198`
+
+- `[x]` **J7** the window has a chat, and a scripted backend runs a turn without a network
+  Why: This is the goal in the owner's words: a person talks to the agent in the application's
+   own window. ADR 0186 puts the panel in the shell and the port in `mcp`, ADR 0189 the
+   endpoint and the key, ADR 0190 the two modes, ADR 0187 the turn — and none of it exists.
+  Shape: `app/src/chat/` draws the conversation, the mode switch and the refusals;
+   `ChatBackend` in `mcp` gets a scripted backend first, so a whole turn runs in a test without
+   a network, and the OpenAI-compatible one second. One edit scope per message, a consent
+   screen before the first request, and the key from `Z3L_AGENT_KEY` or the owner-only file,
+   never from `settings.json`.
+  Done: A frame test drives a turn from a scripted backend and asserts one undo entry, the
+   panel drawing a mutation refused in `plan`, and a cancelled turn leaving no partial write;
+   the surface has its `HOST_OWNERS` row and its inventory entries; `cargo xtask ui-rules` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,crates/mcp/src/chat.rs,crates/engine/src/session.rs,crates/text/src/messages.rs,crates/ui/src/inventory.rs,xtask/src/ui_rules.rs` — `cb37ec6`
+
+- `[x]` **X102** X99 a primitive is an operand of a body boolean
+  Why: A primitive is a solid a maker can see and pick, and it is what a workshop reaches for
+   when a hole is round: the owner selected a sphere, pressed Subtract, and the three cells
+   were dead. They are dead because a boolean operand is a Constructive — a ring swept on Z —
+   and the plan compiler has one way to build a base: sweep a profile. A sphere is a revolve, a
+   cone is two radii and neither is an extrusion, so a primitive cannot be compiled into a
+   SolidPlan at all.
+  Shape: Two roads, and the first is the one to take unless the measurement says otherwise: (a)
+   give the kernel port a way to build a body from the closed triangle mesh the primitive
+   evaluator already produces (mesh::build_primitive_mesh), so param's resolver hands the
+   backend a mesh body for a primitive operand and every primitive becomes an operand of every
+   boolean; or (b) widen SolidPlan with a revolve and a frustum primitive, which is more kernel
+   work and still leaves a mesh cutter unusable. Either way the armed mode reads which body
+   kinds it accepts from what the compiler can build, so the cells are never dead without a
+   sentence.
+  Done: Tests: a sphere subtracted from a block leaves the block with a spherical void of the
+   expected volume; a cylinder primitive cuts a round hole in a slab whose face it starts on;
+   the three Model cells arm on a selection of two primitives and on a primitive beside a
+   constructed body; a primitive target that is cut refuses with a sentence rather than a dead
+   cell while its road is unbuilt
+  `files: crates/param/src/constructive.rs,crates/model/src/object.rs,crates/model/src/primitive.rs,crates/kernel/src/lib.rs,crates/kernel-truck/src/lib.rs,crates/ui/src/editor/boolean.rs` — `ae7d115`
+
+- `[x]` **J6** the local channel attaches an agent to the window a person is looking at
+  Why: ADR 0188 allows a local control channel with a per-run token, and the reason is
+   measured: a stdio child edits a saved file, not the document a person is looking at, so
+   without the channel the agent cannot work in the window the product is about.
+  Shape: `--attach` binds `127.0.0.1` on an ephemeral port, mints 256 bits from the OS CSPRNG,
+   writes the port and the token into an owner-only file in the settings directory and removes
+   it on exit; the setting is on by default and switches it off; the tools are the headless set
+   plus `ui_inspect`; a request without the token is refused before it is read as a command,
+   and a turn still dispatches at a frame boundary.
+  Done: A test with the token reaches `command_list` and one without is refused; the token file
+   is owner-only and gone after a clean exit; a second instance's file does not take the first
+   one's channel; an unauthenticated request never reaches the dispatcher.
+  `files: app/src/main.rs,crates/engine/src/session.rs,app/src/settings_store.rs` — `66e6f83`
+
+- `[x]` **P23** a stream worktree cannot read its own state: the base-lag rule belongs to the primary checkout
+  Why: Why: A stream worktree cannot read its own state. `cargo xtask status` in z3l-wt/agent
+   answers "`STATE: base=72b7164` is not the tree this plan describes: `AGENTS.md` changed
+   since, and `state=idle` means the plan is written" and prints nothing at all; the render
+   worktree answers the same about `base=229b539` after its first code commit. The rule is
+   right where it was written — in the primary checkout, `base` describes the tree that
+   checkout has — and it cannot be judged from a stream checkout, where the commits after
+   `base` are that stream's own work and the plan is deliberately not written there (§6.2: a
+   stream commits code and never `plan/`). `stream/catalog` and `stream/prototypes` pass today
+   only because their plan copies happen to carry a `base` the rule likes. The cost is exact:
+   `status` prints no clock, no streams and no entry, so a session that opens a stream worktree
+   starts by reading files by hand, and a stream's own `task step` is refused because the gate
+   it runs sees that one violation and the write removes nothing.
+  Shape: Shape: The tool reads the checkout it runs in — `git rev-parse --abbrev-ref HEAD`
+   through the `Git` port — and when that branch is `stream/<key>` for a stream the plan
+   declares, the base-lag rule is not applied: it speaks about the primary checkout's tree, and
+   the primary is where it is judged. The skip is said out loud in the `status` and `plan`
+   blocks ("the base-lag rule is the primary checkout's; this is `stream/render`"), because a
+   silently skipped check is a check nobody trusts. The ancestor check stays everywhere: a
+   `base` that is not a commit or not an ancestor of `HEAD` is wrong in any worktree.
+  Done: Done: A test builds a repository whose branch is `stream/render` with a declared
+   `render=Y,L` and one code commit after `base`: `cargo xtask plan` passes there, while the
+   same tree on `dev` still fails the lag rule; the `status` block carries the sentence that
+   says which checkout the rule belongs to; a stream branch whose stream the plan does not
+   declare keeps the old refusal.
+  `files: state-contract/src/validate.rs,state-contract/src/git.rs,state-contract/src/cli/read.rs` — `6c7f854`
+
+- `[x]` **N30** a cutout that splits the panel is refused by the command, not by the drawing
+  Why: A through cutout that crosses the whole core splits the board in two, and nothing writes
+   that is a panel: `PanelPlan::fold` answers `CoreNotOneRegion` only when the body is
+   evaluated, so the command stores the cutout, the revision moves, undo gains an entry and the
+   panel simply stops drawing. The maker reads a vanished board instead of a refusal, and the
+   ghost that previewed the cutout said nothing either.
+  Shape: The rule is the one `panel.outline.set` already keeps: a command validates what it
+   would produce before the document changes. `panel.machining.add` and
+   `panel.machining.update` run the same 2D subtraction on a copy of the panel's core region —
+   `PanelGeometry::core_region` minus the new cutout — and refuse when it leaves more than one
+   piece, with a sentence that names the panel and the split; a blind cutout never reaches the
+   core's full thickness and keeps its own rule. The preview ghost of a fill and the cutout
+   card's add button both read the same check, so the refusal appears where the cutout is
+   chosen.
+  Done: Tests: a cutout that crosses the whole board is refused by `panel.machining.add` and
+   `panel.machining.update` with the panel and the split named, and the revision, the undo
+   stack and the panel's records are unchanged; the same cutout on a panel with a material that
+   reaches only part of the width is accepted; a cutout that removes the core entirely is
+   refused by the same sentence; the golden panel keeps its blind cutout. `cargo xtask ci` is
+   green.
+  `files: crates/engine/src/panel_cmds/machining.rs,crates/param/src/machining.rs,crates/model/src/panel/geometry.rs` — `5d054a2`
+
+- `[x]` **J5** a client we did not write drives the editor, headless
+  Why: ADR 0185 puts the tools over stdio and ADR 0186 puts the transport in a crate of its
+   own; none of it exists — no `mcp` crate, no `rmcp`, no `tokio`, and nothing outside the
+   process can call a command except the command line. A client we did not write cannot reach
+   the editor at all.
+  Shape: `crates/mcp` at layer 7 with the projection of `CommandRegistry::specs()` into the
+   four coarse tools, the row in the layer table that forbids `egui`, `wgpu` and `eframe` in
+   it, and `z3l mcp serve [<scene>]` as the subcommand that speaks stdio and binds nothing. The
+   crate, the layer table, `PROJECT.md` and `AGENTS.md` §3 change in one commit, as ADR 0028
+   and ADR 0186 require. `command_list` says of each command whether it is enabled in this
+   session and, when it is not, the sentence that names the condition, so `CommandSpec` grows a
+   reason beside its predicate: the clause J2 measured and left to the first door that needs
+   both halves.
+  Done: A test drives a served session over stdio through `command_list` and a two-line
+   `command_batch`, and asserts one undo entry and one write; `command_list` carries the
+   sentence that says why a disabled command is disabled, in the command's own words; `cargo
+   xtask layers` accepts the crate and rejects `egui` in it; `z3l mcp serve` on a scene writes
+   the file the way `z3l run` does.
+  `files: xtask/src/main.rs,PROJECT.md,Cargo.toml,app/src/cli.rs,crates/engine/src/commands.rs` — `5403358`
+
+- `[x]` **G4** an area between contours is picked and extruded, the SketchUp way
+  Why: A drawing made of several contours encloses areas between them and inside their holes,
+   and nothing reads an area: a push/pull pointed at the space between two rings sees only the
+   rings, so a maker who drew a frame cannot extrude the opening it leaves.
+  Shape: The regions a contour set already encloses are derived, not stored: the arrangement of
+   `geom::Region` booleans gives the faces of a planar subdivision, and the area under the
+   pointer is the one whose sampled polygon contains the ray hit, exactly as the empty-space
+   tool measures its cell. The hover highlights that region through the session overlay (ADR
+   0093), the click arms a pull, and the pull extrudes the chosen area as its own body with the
+   contour set untouched; the vocabulary of a picked face reuses the one `selection` already
+   has, so an area is a query result and not a document field.
+  Done: Tests: hovering the gap between two nested rings highlights exactly that ring; hovering
+   inside a hole of a set highlights the hole; a click pulls the highlighted area into a body
+   whose profile is that area; a set of one ring behaves as it does today; the overlay moves no
+   revision. The area is derived on read and cached by the set, its revision and its placement.
+  `files: crates/geom/src/boolean.rs,crates/mesh/src/lib.rs,crates/model/src/object.rs,crates/ui/src/draw.rs,crates/param/src/solid.rs` — `229b539`
+
+- `[x]` **P20** the tool files a task where work is collected, and an interjection still takes the order
+  Why: `task add` filed every entry at the end of `## Now`, so a session that collected twelve
+   tasks had to `defer` twelve of them one by one, and a filing session moved the order under a
+   worktree that was working through it. The plan has one writer precisely so that one session
+   cannot disturb another's order, and a verb that starts by doing exactly that fights the rule
+   it serves.
+  Shape: A new entry lands at the end of `## Next`, the section work is collected in before a
+   stream takes it; `--section Bugs` still files a defect and `--at top` still means the
+   owner-directed interjection, which now implies `## Now` because a task at the top of `##
+   Next` is not an interjection. The tool's own warnings, `AGENTS.md` §6.1 and
+   `state-contract/README.md` say the same thing.
+  Done: A test asserts a new task joins `## Next` and leaves `STATE: task=` alone, and another
+   asserts a section named beside `--at end` receives the task; the interjection test passes
+   with no `--section`; `cargo xtask ci` is green.
+  `files: state-contract/src/cli/write.rs,AGENTS.md,state-contract/README.md` — `02b2dc4`
+
+- `[x]` **U120** a round body answers its own places, not the corners of its box
+  Why: The owner: snaps must work on bodies of revolution — a sphere, a cylinder, a cone and
+   the ones that come later. Today Scene::object files a bound box for every geometry and a
+   single centre for a primitive: a cylinder (a drawn circle swept on Z) therefore offers the
+   eight corners of the square around its base, which are points in the air, and its upper rim
+   and axis nowhere; a cone answers its box and its middle, not its apex or its base circle; a
+   sphere answers the box face centres — six points on the surface, but chosen by the world
+   axes rather than by the body. A marker on the corner of a box around a round body names a
+   place no maker can work at, in either snap mode.
+  Shape: A geometry answers its own places: the bounding box leaves the snap scene and each
+   payload files what its parameters describe. A sphere files its centre, its two poles and the
+   equator quadrants of its own frame; a cone files the base centre and rim, the top rim when
+   it is truncated, the apex and the axis; a swept round body files the drawn ring and the same
+   ring lifted by the extrusion height plus the two axis ends; a mesh keeps its bound box and
+   nothing else. The match over PrimitiveKind is exhaustive, so a new primitive is a compile
+   error until it answers its places, and each round answer ships with a test that the point is
+   on the surface (a sphere: the radius of every mark, a cone: inside its radii and height)
+   rather than in the air around it.
+  Done: Tests: a snap on a cylinder lands on a rim circle and on its axis ends and never on a
+   box corner; a cone answers its apex and its base circle; a sphere's marks all lie at its
+   radius; the pointer over the empty air beside a round body captures nothing of it; a future
+   PrimitiveKind cannot be added without its arm.
+  `files: crates/model/src/project/snap.rs,crates/model/src/primitive.rs,crates/model/src/tree.rs,app/src/frame_tests.rs` — `b56d0bc`
+
+- `[x]` **N36** a part never runs through a post the pointer never pointed at
+  Why: Why: The owner, on the same cabinet at `/home/alx/skaf.z3l`: «уже очень хорошо, но
+  посмотри сцену ещё раз. В одном случаи полка прошила стенку». Measured on the file: the post
+  «Стойка» (id 12) stands at x 1792..1817, y 1090..3704, z 2457..3885, and the shelf «Горизонт
+  5» (id 14, z 3212..3237) is the frame's own ring, so it runs through the post over its whole
+  2244 mm width. The post was there before that shelf was planned (id 13, «Горизонт 4», is
+  clipped at x = 1792 exactly). The cause is the probe: every ray is cast from the pointer, so
+  a wall the pointer's own rays never meet is invisible to the cell — a point standing past
+  the post's far end, in the top-left arm, looks along +x above the post and sees nothing. ADR
+  0204 made the shape the frame's whole ring, which is what turned that blind spot into a part
+  through a wall: the piece-only cell of ADR 0203 could not reach the post either, but it also
+  never claimed to.
+  Shape: Shape: A body standing in the space the frame reserves bounds the part, whether or not
+  a ray from the pointer ever met it. After the probe rounds settle, every surface of the
+  surroundings is read in the product's frame: a body whose box does not reach into the cell's
+  own height is no wall of the plan (a shelf below, a board above); a body that stands in the
+  ring and spans the cell from floor to ceiling is a post, a divider or a side wall, and the
+  ring is clipped at the face the pointer stands behind — the rule a hidden body already trims
+  by (X73, ADR 0175) — chosen by `trimmed_ring`: of the body's four faces, the side the
+  pointer stands on wins, and a hand inside the body's own footprint takes the cut that keeps
+  the most of the frame. A body that stands inside the cell without spanning its height is
+  refused as before, because the void is then no one cell. The rounds repeat until a round
+  clips nothing, so a post behind a post is bounded too, and the loop is bounded by the cell's
+  own round budget.
+  Done: Done: `a_part_never_runs_through_a_post_the_pointer_never_pointed_at` — a notched frame
+  with a post in the arm beside the pointer's own: the niche is clipped at the post's face and
+  no point of the Shape plan's outline stands inside the post. On `/home/alx/skaf.z3l`, a
+  scratch probe (deleted): the niche at three heights around the post is 1792 mm wide, the
+  Shape plan runs x 0..1792 and crosses the post nowhere, nothing outside the frame; a sweep
+  of 1771 plans over eight heights found no planned part overlapping any existing panel's box.
+  `the_part_a_shaped_case_creates_stands_inside_its_footprint` now gives each part a fresh
+  case, because a part left standing is material and the next one is measured against it.
+  `files: crates/model/src/project/niche.rs` — `72b7164`
+
+- `[x]` **N35** a niche keeps the whole shape the frame draws
+  Why: Why: The owner, on the saved scene /home/alx/skaf.z3l and the screenshot `Screenshot
+  from 2026-11-21 14-43-28.png`: «Простая панель не все места определяет. Со стороны радиуса
+  вообще не определяется ниша. Фигурная панель не заливает всю форму каркаса. При частичной
+  заливки вместо радиуса скос. Я ожидаю, что фигурная панель сможет заливать всю форму ниши с
+  неважно каким каркасом.» Measured on that file, whose product reserves an L 2244 x 4423 x
+  3885 with a 1746 mm arc on its long side: (a) `ui::pointer_face` entered the product's
+  **box**, so a ray over the corner the arc cut away named a point outside the ring and
+  `Project::niche` answered `Outside` — «со стороны радиуса не определяется ниша»; (b) the
+  cell was seeded from the **convex piece around the pointer** (N34, ADR 0203), so the Shape
+  mode filled one arm of the L and never the frame — 1654 x 2688 in the left arm; (c) a fit
+  searched that piece, so the rectangle was 1654 x 2688 where the frame holds 2087 x 2703 and
+  in a bulge it stood away from the pointer; (d) any fill with a hidden body or a post fell
+  back to the chord polygon and the arc became a chamfer. The owner's expectation is stated:
+  the shape mode takes the whole form of the frame, whatever the frame is.
+  Shape: Shape: The niche keeps **two readings of one frame** (ADR 0204). The **ring** is the
+  space the frame reserves, whole and of any form: `frame_ring` stops at turning a drawn ring
+  counter-clockwise, and the pointer only has to be inside it, so every point of an L answers
+  the same cell, its box is the L's own bounds, and the section — the ring clipped by the
+  walls the probes met, around the pointer — is what a `Shape` part takes, arcs and all. The
+  **piece** is the convex cell around the pointer that N34 read, and it keeps its job: the
+  planes, the corners, the probes and every stance that is not a shelf's are cut from it
+  because they are plane algorithms. `ui::pointer_face` enters the **reserved prism** — the
+  ray's spans inside the footprint ring intersected with the floor-to-ceiling band, from
+  `Region::line_intervals` — instead of the envelope's box, so the cursor finds the space
+  behind a corner the frame never gave away. A fit searches the whole section
+  (`Niche::section_polygon`) and is the largest rectangle **through the pointer**
+  (`search_rectangle` with a point), because the largest rectangle of an L stands in the arm
+  the hand may be nowhere near; every candidate is validated against the whole outline
+  (`band_span` over the outline's breakpoints, `rect_inside` by a Liang-Barsky crossing test),
+  so a band the outline narrows can never pass.
+  Done: Done: `ui::pointer_face` names the point where the ray enters the ring extruded from
+  floor to ceiling, and a test proves a ray over a notch's corner finds the arm behind it
+  while the box's own entry answers `Outside`. On `/home/alx/skaf.z3l` every point of the L
+  answers a niche whose box is 2244 x 4423 and whose `Shape` plan is the whole six-segment
+  ring with its arc, `Fit` and `Shape` both with no outline point outside the frame.
+  `a_notched_frame_reserves_the_whole_shape_it_draws` and
+  `a_point_in_a_bowed_frames_bulge_is_inside_the_void` pin the ring's whole shape and its box;
+  `the_pointer_enters_the_space_the_frame_reserves_and_not_the_box_around_it` pins the entry.
+  A saved panel created before this change keeps the chord it was made with: re-creating it in
+  the Shape mode gives the arc (N33).
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs` — `223e2b1`
+
+- `[x]` **N34** a frame drawn as a contour builds a part, in the convex piece around the pointer
+  Why: The owner, on the saved scene /home/alx/skaf.z3l whose frame is drawn from a contour:
+   «ни одна панель не строится. Во всех видах каркаса должна строиться панель». The ring there
+   is an L — one right turn at (1684, 3703) µm, a 1746 mm arc for its bottom — and
+   `Project::niche` answers `NicheRefusal::Footprint` for every point inside it, measured on
+   the file, so no fill builds in any mode or class. The refusal is N29's rule (ADR 0201): a
+   ring that is not one convex ring reserves no one cell, because a cell is planes only. The
+   owner answers that a frame of any shape must build a part.
+  Shape: The ring is no longer refused. Around the pointer the frame's ring is clipped by every
+   edge's half-plane whose free side holds the point, through a new
+   `Region::clip_half_plane_around` (the exact boolean, so arcs stay arcs), and the cell is the
+   **convex piece of the frame around the pointer**: an L gives its bar for a point in the bar,
+   its column for a point in the column, and the square both arms share for a point in the
+   corner. The plane seed, the exact section, both fill modes and the ghost then read that
+   piece, so every existing rule follows it. A point the ring does not hold is `Outside` as it
+   already was, and a ring still not convex after the clip — an arc bulging into its own shape
+   — keeps `Footprint` with its sentence.
+  Done: Tests: an L-shaped ring gives a cell whose section is the arm the pointer names, a Fit
+   rectangle and a Shape contour inside the frame, and a panel the command creates; a point in
+   the notch is `Outside`; a ring with an inward arc is still a readable refusal; the box and
+   the convex-ring cases keep today's answers; `cargo xtask ci` is green.
+  `files: crates/geom/src/ring.rs,crates/model/src/project/niche.rs,crates/model/src/project/fill.rs` — `8fc6dd7`
+
+- `[x]` **N33** a niche keeps the frame's radii instead of cutting them to chords
+  Why: The owner, on the saved scene /home/alx/skaf.z3l: «Полка, которая должна принять форму
+   ниши, не видит радиусы каркаса». The product there reserves 600 x 560 x 720 with a 200 mm
+   radius on its top-left corner, and the shelf the empty-space tool creates in the Shape mode
+   is a rectangle with a 200/200 chamfer on that corner. Measured on that file:
+   `Project::niche` answers the section as the pentagon (0,0), (600,0), (600,560), (200,560),
+   (0,360) at every height, so `classify_outline` reads a chamfer. The chord is
+   `seed_polygon`'s doing (N29, ADR 0201), which took a curved edge by its chord because the
+   cell is planes only; N29's own Shape promised a rounded corner would come out as the case's
+   own outline, and `classify_outline` already draws radii, so this is the deviation N29's debt
+   entry filed.
+  Shape: The niche keeps the frame's arc. `Cell` holds the exact base ring beside the planes,
+   and a prism's section is that ring clipped by the upright walls through
+   `geom::intersect_regions`, which keeps lines and arcs exact; `NicheShape::Section` then
+   carries a ring with arcs, so `FillMode::Shape` classifies the frame's own radius and the
+   created panel is `Rect` with `CornerFeatureKind::Radius`. The chord planes stay the cell's
+   own walls for the probes, the corners and the largest fit, so nothing that is safe today
+   moves. The ghost draws the outline's own ring rather than the chord polygon — sampled at the
+   shell's display tolerance, the way the frame's footprint already is — so what the maker sees
+   is the radius the history records.
+  Done: Tests: a rounded frame gives a section with one arc of the frame's radius and a Shape
+   plan that is `Rect` with that radius; a panel standing across the arc clips it into a line
+   and a shorter arc of the same radius; the created panel's stored outline carries the radius;
+   the box and the chamfer cases keep today's answers; `cargo xtask ci` is green.
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/geom/src/ring.rs,app/src/fill_gizmo.rs,crates/ui/src/void.rs` — `b61776b`
+
+- `[x]` **N29** the niche starts from the frame's footprint, so a panel in a cut-corner case takes its shape
+  Why: The owner: when the frame's shape is not a parallelepiped, the panel that reads the niche
+  must take the frame's shape, and the niche tool probably needs reworking. The frame reserves
+  a footprint (ADR 0159: a rectangle, cut corners, or a drawn ring), but `Project::niche` seeds
+  its cell from the envelope's six planes
+  (`Cell::envelope(envelope.local_max - envelope.local_min)`), so the cut-away corner or the
+  drawn ring is not a wall: a fill in such a case grows its board into space the frame does not
+  reserve, and `FillMode::Fit` answers a rectangle that is not inside the case. N10's Done
+  never covered a non-box frame.
+  Shape: The cell starts from the frame's own section, not its box: the footprint's ring
+  (`Footprint::outline`) becomes the seed polygon, its edges are planes, and every probe keeps
+  clipping. `Niche::section()` then answers the footprint's section intersected with the walls,
+  so `FillMode::Shape` gives the case's own outline — a cut corner, a rounded corner, a drawn
+  ring — and `Fit` the largest rectangle inside it; `classify_outline` already turns a chamfer
+  or a radius into a standard panel, so a corner cabinet keeps `Rect` with one corner feature.
+  A footprint whose ring is not convex is refused for a fill with a sentence, because the niche
+  is one convex cell (ADR 0106); `NicheShape` gains a case only if a cut whose section varies
+  with height needs one, measured first and recorded in `plan/notes/N29.md`.
+  Done: Tests: a case with one 45-degree cut gives a niche whose section is the cut ring and a Fit
+  rectangle inside it; a drawn-ring case gives the ring; the created panel's world points lie
+  inside the footprint; a non-convex footprint is a readable refusal and never a board outside
+  the case; the box case keeps today's answers; `cargo xtask ci` is green.
+  `files: crates/model/src/project/niche.rs,crates/model/src/project/fill.rs,crates/model/src/container.rs,crates/ui/src/void.rs,app/src/fill_gizmo.rs` — `797d740`
+
+- `[x]` **U127** the three panel classes are named with the shop's own words
+  Why: The owner asks whether the panel classes carry shared names and, if not, to hoist them
+   and call them Стойка, Горизонт, Стенка. They are already hoisted: every row of the registry
+   carries a Message (crates/model/src/class.rs, ClassRow::label), and the three pairs live in
+   one table in crates/text/src/messages.rs, so no surface writes them. What the words say is
+   the defect: «Вертикальная панель», «Горизонтальная панель» and «Задняя стенка» describe an
+   orientation, so a parts list, the class picker and the creation menu read a drawing instead
+   of naming a part the shop names.
+  Shape: The three labels become the shop's own words: ClassVerticalPanel is «Стойка»
+   (Upright), ClassHorizontalPanel is «Горизонт» (Horizontal) and ClassBackPanel is «Стенка»
+   (Back). The aliases keep every synonym the picker searches — боковина, перегородка, полка,
+   днище, крыша, стенка — so nothing is lost from a search. docs/domain/classes.md §10 follows
+   the table, the export golden package is regenerated because the label is a column of the
+   order package, and the UI tests that draw the old words (the picker, the properties card,
+   the scene tree's bracketed class) follow the new ones. The class codes, slugs, traits and
+   hosts do not move: this is the word only.
+  Done: One table holds the three words and every surface prints them; the picker finds
+   «Стойка», «Горизонт» and «Стенка» and still finds боковина, полка and стенка; the tree's
+   bracketed class and the properties card read the new words; the order package's class table
+   carries Upright, Horizontal and Back and the golden matches; the class code tests still pass
+   unchanged; cargo xtask ci is green.
+  `files: crates/text/src/messages.rs,crates/model/src/class.rs,docs/domain/classes.md,crates/export/tests/golden/package/classes.csv` — `0c5e5e7`
+
+- `[x]` **U117** the contour panel and the niche-fit panel have artwork of their own
+  Why: The owner: the contour panel's icon is a shelf whose one side is a wave, and the panel that
+  fits the niche's shape is a board with a bevel and a rounding. Today
+  `furniture.panels.contour` draws `scene::panel.svg`, the same isometric board as the fill
+  cells, and both Shape methods draw the generic `contour::POLYGON`, so a maker cannot tell the
+  free outline from the niche-fit build and the two method rows share a glyph that says neither
+  fit nor shape.
+  Shape: `panel.svg` is redrawn as the wavy shelf — isometric, one long side a wave, the other three
+  straight, one ink and the two tone steps — and a new `panel-shape.svg` draws the bevelled
+  board: one corner cut at an angle, the opposite corner rounded, so both read at 16 pt. The
+  contour cell keeps `scene::PANEL`; `FILL_POST_SHAPE` and `FILL_SHELF_SHAPE` point at the new
+  constant and `contour::POLYGON` leaves the furniture table. Both files follow
+  `assets/README.md`, gain their row in the `scene` theme table, and the icon test that every
+  theme file loads and is non-empty covers them.
+  Done: The contour cell draws the wavy shelf and both Shape rows draw the bevelled board;
+  `POLYGON` no longer names a furniture build; the theme table lists both files; the icon test
+  passes and `cargo xtask ci` is green.
+  `files: assets/icons/scene/panel.svg,crates/ui/src/toolbars/spec.rs,crates/ui/src/icons.rs,assets/README.md` — `032712d`
+
+- `[x]` **N28** a wall fills the niche's width and height, so a back board is born from the gap
+  Why: The owner asks for a wall tool — a furniture panel in the frontal plane — beside the post
+  and the shelf, and answered that overlay or inset («накладная»/«вкладная») is not the tool's
+  question: the tool creates the frontal panel and the mounting is a property chosen later.
+  The fill trait has exactly two pairs today (`10.10`, h+d for a post, `10.11`, w+d for a
+  shelf) and the table's frontal sheet part, `10.12` back panel, carries `fill —` with the
+  editor rule «no void fill», so the board in the frontal plane can only be drawn or typed,
+  never created from the space it closes. The class table is the one statement of that rule,
+  so the request changes the table, not only the toolbar.
+  Shape: A third `Fill::WidthAndHeight`; the `10.12` row gains `w+h` and its editor row becomes «no
+  banding command, offered by the void tool for a width+height fill», with «стенка» among its
+  aliases. A tool `furniture.panels.wall` (label «Стенка» / Wall) sits in the Panels group
+  beside the post and the shelf with the same two methods, Fit and Shape, the same ghost and
+  the same `panel.create` click; its thickness is the material's (the default catalogue's
+  4 mm sheet, O1) and the section is the niche's frontal cut. The creation asks nothing about
+  overlay or inset: the panel is born as the frontal fill and the mounting is a property
+  edited afterwards. One new record amends the trait list of ADR 0097 and the fill rule of
+  ADR 0099, and `docs/domain/classes.md` §7 and §10 change with it.
+  Done: Tests: a bare frame's void gives a frontal panel of the niche's width and height at the
+  material's thickness; Fit and Shape take the same two modes and a splayed case gives the
+  shaped board; the class row's fill is `WidthAndHeight` and its alias answers «стенка»; the
+  tool is one click, one undo entry, the ghost matches the created panel, and no field asks
+  overlay or inset; `cargo xtask ci` is green.
+  `files: crates/model/src/class.rs,crates/model/src/project/fill.rs,crates/ui/src/toolbars/spec.rs,crates/engine/src/panel_cmds/panel.rs,docs/domain/classes.md` — `e1e281c`
+
+- `[x]` **X95** the post's icon reads as a leg, not as a vertical panel
+  Why: Observation, from the owner: the icon of the tool that creates a post must read as a
+  rectangular vertical panel; `assets/icons/scene/post.svg` draws a narrow slab whose top face
+  dominates, so it reads as a leg or a column beside the shelf and the panel. Expectation: a
+  tall rectangular board — the panel face plus its thickness, no top face that turns it into a
+  column — clearly the vertical sibling of the shelf and distinct from `panel.svg` and
+  `product.svg`.
+  Shape: Suspected cause: the drawing was made from the word rather than from the class (`10.10`, a
+  vertical panel with a height+depth fill): its footprint is about 5 mm wide on the 24 grid,
+  and the style guide's tone rule then makes the small top face the loudest shape. The redraw
+  follows the `draw-icon` skill — one ink, the large face in the active tone, the thickness in
+  the passive tone, the 24 grid, a 1.5 stroke — and the reference is the vertical panel the
+  fill tool creates, not a leg. The file, its name and its constant stay, so no code changes.
+  Done: The file redraws as a vertical rectangular panel; it renders at 16 and 20 pt in both themes
+  from the one ink; the theme's file-loading test still passes; the owner confirms the glyph
+  reads as a post beside the shelf.
+  `files: assets/icons/scene/post.svg,assets/README.md,assets/icons/STYLE_GUIDE.md` — `e1f3e72`
+
+- `[x]` **U119** two snap kinds: 2.5D drops the perpendicular onto the tool's plane, 3D gives every tool the point itself
+  Why: The owner's report, three screenshots: the marker of a snap stands on the 3D candidate
+   while the point the sketch stores is its foot on the work plane, so the preview edge and the
+   L and angle plates land 150-180 px away from what the marker names; the contour editor and
+   the vertex editor ask the resolver nothing at all. U116 made the footprint the one answer
+   for every tool and T17 moved only the marker, so the same defect came back as a second
+   report. The owner asked for two snap kinds: a 2.5D snap that drops the perpendicular onto
+   the tool's plane, for work on a top view, and a full 3D snap every tool reads the same way.
+  Shape: One workspace value model::SnapMode (Space is 3D, Foot is 2.5D) beside the kinds, and
+   one request value model::SnapTarget the tool declares: Free (the tool takes the point where
+   it is: the ruler, a vertex edit), Foot (2.5D: a candidate captures from anywhere and the
+   answer is its perpendicular foot), InPlane (3D: only a candidate in the tool's plane
+   captures, and the answer is that point). The resolver applies the target where the candidate
+   is accepted, so the answer is always the point the tool stores and the marker is drawn at
+   the answer: the split of U116/T17 disappears by construction. The sketch and the contour
+   edit declare a plane target from the mode; in 3D a sketch draws on the plane of the face
+   under its first click, so its own figure's corners lie in it. The Snaps group gains one mode
+   cell (two drawings) and the Settings page one row; the value is written to the workspace
+   file like the kinds. Every point-placing tool is tested against the same table: marker
+   screen equals the placed point's screen, the placed point equals the candidate in 3D and the
+   foot in 2.5D, and a tool with no plane is unaffected by the mode.
+  Done: Tests: for the same pointer over a board 18 mm above the planes, the sketch in 3D
+   captures nothing off its plane and the sketch in 2.5D lands on the foot; the ruler answers
+   the candidate in both modes; the marker's screen position equals the placed point's screen
+   position for every tool and mode in the table; the mode cell and its Settings row survive a
+   restart; one offscreen shot of the sketch overlay shows the marker on the end of the
+   preview. The three screenshots of the report stop being reproducible in a frame test.
+  `files: crates/model/src/project/snap.rs,crates/model/src/project/move_query.rs,crates/ui/src/settings.rs,crates/ui/src/toolbars/spec.rs,app/src/gizmo_math.rs,app/src/draw_gizmo.rs,app/src/measure_gizmo.rs,app/src/contour_gizmo.rs,app/src/vertex_gizmo.rs` — `e0ec7e2`
+
+- `[x]` **T17** a snap answers the candidate the eye sees: the near side, scaled to its own depth, marked where it is
+  `files: crates/model/src/project/snap.rs,app/src/draw_gizmo.rs,app/src/gizmo_math.rs,app/src/frame_tests.rs` — `8fdd8ad`
+
+- `[x]` **T16** a master cell turns every snap on or off in one click
+  `files: crates/model/src/project/snap.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,crates/text/src/messages.rs,assets/icons/view/snap-all.svg,app/src/document.rs` — `506e188`
+
+- `[x]` **U116** the snaps are a set: endpoint, midpoint, centre, on-edge, intersection, perpendicular and the grid, each with a marker
+  Why: `view.snaps` holds one switch, the grid, and the U91 note says the endpoint, the axis and
+  the object snaps are what the group waits for; today the drawing and fill tools carry their
+  own 2D snap (draft ends, axis lock, grid) and the move tool carries `SnapSettings` for
+  surfaces, so the same mechanism exists twice and the owner asks for one set of scene snaps
+  every tool reads. Two mechanisms are two copies (ADR 0118).
+  Shape: One atom answers the snapped point and the kind of snap from the pointer's ray: vertex,
+  midpoint, arc or circle centre, a point on an edge or a face, the intersection of two edges,
+  a perpendicular foot and a tangent point in a sketch plane, the grid and the world axes. It
+  reads candidate geometry from `Project` through the existing queries — panel corners, path
+  vertices and segment midpoints, primitive and bounds centres, the probe's face, the frame's
+  corners — and falls back to the ray's own point. Every snapping tool consumes it: the draw
+  gizmo, the fill and niche ghost, the ruler, the move and the box tool. Each kind has a
+  toggle in the View tab's Snaps group (`view.snaps.vertex`, …, beside `view.snaps.grid`) and
+  a row in the Settings page's Snaps section with the N21 tolerance; the marker is one glyph
+  per kind drawn at the snapped point in the theme's ink, and a typed number still outranks
+  the snap. The bar's readout names the kind, and stays after U115.
+  Done: Tests: a click near a panel corner snaps to it and reports the vertex kind; the midpoint,
+  the centre, an edge point, an intersection and a perpendicular foot come from the same
+  resolver; a disabled kind never captures and the tolerance decides; typing a number keeps it
+  and zero returns to the pointer; each kind draws its marker and the toggles survive a restart
+  in the workspace; `cargo xtask ci` is green.
+  `files: app/src/gizmo_math.rs,app/src/draw_gizmo.rs,crates/model/src/project/move_query.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs` — `15f10f8`
+
+- `[x]` **T15** T15 a contour boolean took a body and left a drawing
+  Why: The owner subtracted a cylinder from a block and got a contour instead of a body: he
+   pressed the Sketch tab's cells, which since X98 accepted a body's own profile as an operand
+   — so the operation combined the two profiles, created a drawing ('Вычесть 1') and consumed
+   both bodies. Two groups with one caption ('Booleans') on two tabs made the wrong one look
+   right.
+  Shape: A contour boolean's operand is a drawing: a path object's chain and nothing else, so a
+   body is refused with a sentence that says its kind. The body case is the Model tab's
+   booleans, on solids (ADR 0197). The sketch group is captioned 'Contours', and a body
+   selection makes its cells say where bodies are cut instead of sitting dead.
+  Done: Tests: a body operand is refused and nothing is written; the armed ring mode arms on a
+   drawn ring and not on a body, while the body mode arms on the same selection; the sketch tab
+   captions its group Contours and never the word Booleans
+  `files: crates/engine/src/contour_cmds.rs,crates/text/src/messages.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars/ready.rs,docs/decisions/0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md` — `5722e72`
+
+- `[x]` **T14** T14 a cutter whose face lies on the body's face does not cut
+  Why: The owner's second scene did not subtract at all: the block and the cylinder shared
+   their bottom face — the cylinder was drawn on the block's own surface — and the kernel
+   answers a boolean between bodies that share a face with nothing ('Difference produced no
+   solid'), so the block was a diagnostic and the picture read as 'it does not cut'. The
+   overlap was real; the coincidence was the failure.
+  Shape: A cutter's sweep starts one micrometre below and stops one micrometre above its own
+   ends, the same trade the panel cutouts and the end bevel already make; the body being cut is
+   never extended. The three boolean cells also say what they wait for when the selection is a
+   primitive, instead of a dead cell.
+  Done: Tests: a cutter whose bottom face lies on the body's bottom face cuts, and the same
+   test fails with the overshoot removed; a primitive selection makes the cells name what they
+   wait for
+  `files: crates/param/src/constructive.rs,crates/ui/src/toolbars/ready.rs` — `e2888c1`
+
+- `[x]` **T13** T13 a scene from another build names its schema before its fields
+  Why: A scene from another build reported the first field that moved — 'invalid type: integer
+   6, expected struct BooleanToolWire' — instead of the schema it was written by, so a person
+   upgrading reads a broken field where the answer is a version.
+  Shape: The envelope reads the document as a value, checks its schema_version, and only then
+   parses the tree; the error names the version found, or says it is missing.
+  Done: Tests: a document from another schema whose payload is from the older layout reports
+   the unsupported schema, not a field
+  `files: crates/project/src/lib.rs,crates/project/tests/scene_file.rs` — `d8d296c`
+
+- `[x]` **T12** W3 a body boolean freezes the shape it cuts with and spends its cutter
+  Why: The owner's scene showed why a live tool reference reads wrong: the cutter stayed drawn,
+   so the scene was two overlapping bodies instead of one cut body, and dragging the cutter
+   moved the hole. Both are one decision — a live operand is a second body in everything but
+   name — and the owner ruled for a baked result.
+  Shape: Feature::Boolean carries BooleanTool { name, body, placement } frozen at apply time,
+   so a step is self-contained. The command spends the cutter's node in the same revision and
+   undo entry unless the body is marked a tool (Object::is_tool, now reachable from the object
+   card and object.tool.set); the mark also lets a tool pass through parts, which is how a
+   cutter reaches the body it cuts. Schema 31.
+  Done: Tests: a step keeps the cutter's shape and name through the file; applying spends the
+   cutter in one revision and undo brings it back; a marked cutter survives and cuts a second
+   body; removing a step never returns a spent cutter; a nested shape deeper than
+   MAX_BOOLEAN_DEPTH is refused; a marked tool sinks into a body while an unmarked one may not;
+   a body whose cut leaves no solid is a diagnostic and the scene keeps drawing
+  `files: crates/model/src/object.rs,crates/engine/src/object_cmds.rs,crates/ui/src/editor/boolean.rs,crates/ui/src/object_card.rs,app/src/scene_build.rs,docs/decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md` — `ae81fdd`
+
+- `[x]` **T11** W2 a boolean whose tool misses the body freezes the scene, and a cutter cannot enter the body it cuts
+  Why: The owner's scene froze after a boolean whose tool no longer met the body: one node the
+   kernel refused failed the whole evaluation, so the picture stayed at the last frame that
+   built and a move showed only its handles. The placement guard also refused the move that a
+   boolean needs, because a cutter could not enter the body it cuts.
+  Shape: A node the kernel refuses is a diagnostic on that node and the rest of the scene keeps
+   drawing; the armed boolean refuses a preview that is not a solid; a boolean pair is one
+   shape for the guard and the drag, so the cutter may be carried into the body it cuts.
+  Done: Tests: a body whose boolean leaves no solid is reported and the rest of the scene draws
+   and follows a move; the message goes when the scene builds again; an armed boolean whose
+   result is not a solid refuses Enter and writes nothing; a cutter sinks into the body it cuts
+   while every other part keeps the resting rule
+  `files: app/src/scene_build.rs,app/src/document.rs,crates/model/src/project/move_query.rs` — `5b3cef7`
+
+- `[x]` **J4** a batch is one edit scope, and a dry run is a plan a person reads
+  Why: ADR 0183 gave a recipe one edit scope, all or nothing and a `dry_run` that writes
+   nothing, and ADR 0190 makes the plan a report a person approves; both live in the command
+   line today, keyed to a file on disk, so the assistant cannot use them on the document a
+   person has open. Nor can they describe what a failed batch left behind.
+  Shape: The recipe run becomes a session operation with `atomic` and `dry_run` as parameters,
+   reporting what would be or was created, changed and removed plus the refusals; the CLI and
+   the MCP tool call the one function, so the two answers cannot disagree. A failed step
+   reports what applied and what rolled back, and never claims an atomicity it does not have.
+  Done: A test dispatches a three-step batch and asserts one undo entry restores the document;
+   a batch whose second step fails leaves the document untouched and names the step; `dry_run`
+   reports the three creations while neither the revision nor the history moves.
+  `files: crates/engine/src/session.rs,app/src/cli/recipe.rs` — `528055a`
+
+- `[x]` **W1** a boolean between two bodies is a feature of the constructive object
+  Why: The owner asks for the standard boolean set over bodies. The kernel port has
+  `SolidKernel::boolean`, `SolidPlan` already carries boolean steps (ADR 0041), and
+  `docs/domain/geometry.md` names a boolean with another object as the next feature, but the
+  document's `Feature` holds one `Extrude`, so no body can be cut, joined or intersected from
+  the UI and `model.booleans` stays planned. The owner also asks that the source object work
+  as a reusable tool: the cutter is not spent by the operation and may cut several bodies.
+  Shape: `Feature::Boolean { op, tool }` appended after the extrusion, where `tool` names another
+  constructive object node; the pilot validates a missing tool, a self-reference and a cycle on
+  load with a readable error. The tool node is never consumed: it stays in the tree and may
+  serve several bodies, the result re-derives when the tool moves or changes, and the hidden
+  state keeps an invisible cutter out of the picture, so one cutter cuts many bodies and a
+  second body takes the same tool as a second undo entry; `object.collapse` bakes one body when
+  a maker wants a one-shot result. `param` compiles the list into `SolidPlan` steps against the
+  tool's own plan, and the mesh cache keys on both revisions, so a changed tool re-meshes the
+  result and an unrelated move does not. The schema version moves with the new feature; a file
+  that names an unknown operation is an error, never a silent skip. The three tool cells become
+  live: click the target, click the tool, preview through ADR 0093, Enter applies, Escape
+  cancels, one undo entry; `object.boolean.set` and `object.boolean.remove` are the commands and
+  the object card lists the feature with the tool's name and a remove button.
+  Done: Tests: a union of two overlapping boxes has the union's volume within tolerance, a subtract
+  cuts the tool's volume out and an intersect keeps the overlap; one cutter serves two bodies and
+  moving or editing the cutter re-meshes both, while deleting a target leaves the cutter and a
+  hidden cutter stays in the file; a re-mesh follows a change of either body and not an unrelated
+  move; a missing tool, a self-reference and a three-node cycle are readable errors; the three
+  cells arm the tool and the preview writes no revision; one commit is one undo entry;
+  `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/solid.rs,crates/engine/src/object_cmds.rs,crates/mesh/src/lib.rs,crates/ui/src/toolbars/spec.rs,docs/decisions/README.md` — `4ee1b09`
+
+- `[x]` **J3** a question about the scene is one tool, and its answers are resources
+  Why: `z3l query` answers five questions on the command line (ADR 0183), and a model that
+   shells out for state cannot see what its own last call did. MCP carries both a call and a
+   read, and the read is the half that makes a turn cheap: the tree, the parts table, the
+   diagnostics and the envelope change only when the document does.
+  Shape: The five reports become one `query` tool with a typed selector, and the stable ones
+   also become resources read by URI. Each reuses the derivation that already owns the answer,
+   and the report envelope keeps the query, the file and the revision it read, so a stored
+   answer can say what it is about. Nothing on this surface writes.
+  Done: A test lists the resources and asserts the tree resource equals the same derivation
+   read through `z3l query tree`; an unknown selector is a readable refusal; a query leaves the
+   revision and the history untouched.
+  `files: app/src/cli/query.rs,crates/engine/src/session.rs` — `b5c9d7f`
+
+- `[x]` **X98** a body's profile is a contour a boolean can take
+  Why: The extrude cell rewrites a drawn ring into a body in place (`extrude_object_path` keeps
+   the node and swaps its payload), and a boolean then refuses that node: `ring_in_base` asks
+   `Project::object_path`, which answers `NotAPathObject` for a constructive payload. The
+   maker's whole habit — draw a square, extrude it, draw a circle, cut one out of the other —
+   ends in 'node 2 is not a drawn contour'. `/home/alx/scene.z3l` holds exactly that: two
+   extruded bodies and a cone, and both bodies are refused as operands.
+  Shape: A body owns its profile: `Constructive::path` is the same closed chain a path object
+   stores, and `ContourBooleanPlan` only needs a ring in the base's frame. The operand reader
+   takes a path object or a constructive body and reads `Constructive::path` for the second, so
+   the operation works on the profile wherever the ring lives. The result stays a drawing — one
+   ring or a contour set — because a boolean over profiles is 2D; a boolean over the solids is
+   W1's feature list. The cells' readiness check reads the same helper, so the three cells
+   enable on a body exactly as on a drawing.
+  Done: Tests: a union and an intersection of two extruded bodies store a drawing whose rings
+   match the profiles, and both bodies are consumed or kept by the tool mark; a constructive
+   body and a drawn ring combine in one operation; the cells enable on a selected body and stay
+   off on a primitive, a mesh and a panel; the refusal for a node with no ring names that node.
+   `cargo xtask ci` is green.
+  `files: crates/engine/src/contour_cmds.rs,crates/model/src/object.rs,crates/ui/src/toolbars/ready.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/ribbon.rs,crates/ui/src/editor/boolean.rs` — `f8411d9`
+
+- `[x]` **G3** the three contour booleans run on two closed rings and store one
+  Why: `sketch.booleans` is a planned group: the exact 2D booleans of ADR 0043 exist in
+  `geom::boolean` and the panel core already unions its cutouts through them, but no tool
+  reaches them, so a maker cannot union two drawn figures, cut one ring with another or keep
+  their intersection; the artwork has been in the contour theme since U69, and M71's command
+  bar was built for exactly this previewing operation.
+  Shape: Three commands in `engine` — `contour.boolean.union`, `.subtract`, `.intersect` — take
+  a base ring, one or more rings beside it and a name; the owner's rule decides the rest (ADR
+  0194). The result is a **new object** in the base's container and frame: one ring is a
+  `Path`, several are a contour set (`Geometry::Contours`, a flat drawing that draws one chain
+  per ring). The sources are consumed in the same command and the same undo entry, except an
+  object marked as a **tool**: the mark is a field of the object and a stamp that survives the
+  operation, never a live operand. A hole is an area rather than a ring, so a subtraction
+  whose cutter never crosses the outer boundary creates nothing and says so, as an empty
+  intersection and a result equal to one operand do; a refusal writes nothing. A panel outline
+  is never an operand. The operation is a mode: the three cells arm it, the picks are the
+  selection, the result draws before the commit in place of the base ring through the session
+  overlay (ADR 0093), and `ContourBooleanPlan` is the same calculation without the write, so
+  the frame and the stored object cannot disagree.
+  Done: Tests: a union of two overlapping rings stores one path object and one undo entry that
+  puts both sources back; a subtraction opens a notch into one ring; an intersection keeps
+  only the shared area; a subtraction that would leave a hole, an empty intersection and a
+  pair of rings that never meet are readable refusals that write nothing; an open chain is
+  neither enabled nor stored; rings in different frames land in the base frame and two
+  separate pieces become a contour set; a tool-marked ring survives while an unmarked one is
+  consumed; the plan computes the same geometry the command stores and moves no revision; the
+  three cells draw their icons and arm the mode, a second press drops it, the preview draws in
+  place of the base ring and the card's check or Enter stores one object
+  (`crates/ui/src/editor/tests.rs`, `app/src/frame_tests.rs`). ADR 0194 and the schema are in
+  the change (schema 29: `Contours` and the object's `tool` flag); `cargo xtask ci` is green.
+  `files: crates/geom/src/boolean.rs,crates/engine/src/object_cmds.rs,crates/engine/src/panel_cmds/panel.rs,crates/model/src/object.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/draw.rs` — `658ed5a`
+
+- `[x]` **J2** a command says what it takes, so a model can call it
+  Why: `z3l commands --json` prints an id, a label and what a command creates, and nothing
+   about its parameters (ADR 0183), so a caller writes the parameters from the command's own
+   source and learns them from a refusal; `plan/debt.md` carries the gap. A model cannot
+   discover fifty typed structs that way, and a hand-written field table is what ADR 0185
+   refuses: nothing would check it against the struct it describes.
+  Shape: `schemars` derives `JsonSchema` on the typed parameter structs in `engine`, which is
+   where they live; `CommandSpec` gains the schema beside the id, the label and the creation
+   level, so one accessor feeds the CLI, the documentation and the model. `commands --json`
+   prints it, and the test asserts that every command whose parameters are not the unit type
+   yields a schema whose `required` set is its struct's. `enabled` prints its reason on the
+   same surface, because a disabled command with no sentence is a mystery.
+  Done: `z3l commands --json` prints a schema for every command that takes parameters; a test
+   fails when a struct gains a required field and its schema does not; the `plan/debt.md` entry
+   closes; `cargo xtask ci` is green.
+  `files: crates/engine/src/commands.rs,crates/engine/Cargo.toml,crates/units/src/lib.rs,crates/model/src/contour.rs,app/src/cli/commands.rs,docs/decisions/0195-the-parameter-schema-derives-where-its-type-lives.md` — `3acda02`
+
+- `[x]` **U115** the status bar reports and no longer carries a control
+  Why: The owner: every instrument leaves the bottom status bar and moves to a toolbar or the top,
+  where it stays within reach; the bar reports, it does not act. Today it holds the five-cell
+  transform band, the contour's along/free switch with Apply and Cancel, the draft's Close,
+  Finish and Cancel, the cross that clears the creation parent, the niche and navigation
+  Done, and the snap toggle — nine controls in one thin row, each competing with the readout
+  beside it (and with X94's overlap).
+  Shape: The place of each control is decided by the `.pi/skills/place-capability` rows and places,
+  not by hand: the five transform modes become one band in the header's right cluster beside
+  the ribbon and panel switches, always visible and five keys unchanged; the snap toggle
+  keeps its `view.snaps.grid` row and moves to the View tab's Snaps group, which already
+  draws it, and the bar keeps a readout only; the draft and contour actions move to the armed
+  tool's card and to the command bar M71 built, so the row that names the tool holds its two
+  buttons; the cross of the creation parent moves to the container card; the niche and
+  navigation Done disappear, because Escape already ends both and the hint says so. The bar
+  keeps three zones of text — the armed tool and step, the selection or measured value, the
+  window's readouts — and every moved capability keeps its id, key, label and icon through
+  its row. No new `Place`; no ADR for a reversible move.
+  Done: The bar draws no button, toggle or band in any state; each moved control is reachable from
+  its new place and answers the same key and command; the inventory rows name the places that
+  draw them and `cargo xtask ui-rules` is green; a headless test drives the bar in an armed
+  draft, an armed contour and an idle frame and finds labels only; the status bar's `//!`
+  says what it owns; `cargo xtask ci` is green.
+  `files: app/src/status_bar.rs,app/src/header.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/inventory.rs,crates/ui/src/transform.rs,crates/text/src/messages.rs` — `f24506d`
+
+- `[x]` **X94** the status bar's three zones draw over one another
+  Why: Observation, from the owner: the bottom status bar's zones draw over one another and the
+  row reads as one run of overlapping text and buttons. Expectation: each zone stays inside
+  its own rectangle — the command on the left at its natural width, the centre elided, the
+  right readouts at their reserve — and no shape is painted under another.
+  Shape: Suspected cause: `status_row_ui` splits the row into `row - right` and `right`, but the
+  left zone draws the five-cell transform band and up to three buttons at their natural width
+  inside a fixed `allocate_ui_with_layout` width, and only `hint()` truncates its own label,
+  so an armed contour or draft can paint past the split; the right zone is a separate
+  allocation starting at the same edge. The 1024 px test asserts that each zone drew
+  something and never that a shape stayed inside its rect. The cause is confirmed by a test
+  before the fix.
+  Done: A regression test drives the row at the narrowest window in both languages with a draft, a
+  contour edit and a long selection armed, and asserts that no drawn shape crosses the
+  boundary between zones; the bar still draws its three zones at 1024 px; `cargo xtask ci` is
+  green.
+  `files: app/src/status_bar.rs,crates/ui/src/theme.rs` — `342c9dd`
+
+- `[x]` **U118** the five scene shading styles are one band, and each split view has an icon
+  Why: The owner: the view buttons in the bottom toolbar mean the scene's shading styles —
+  wireframe, translucent and the rest — and they must be grouped; and the split-view buttons
+  (one view, two, four) carry text only and need their own icons. Today `style_buttons` draws
+  the five cells as an unnamed run between two dividers, so the set reads as five separate
+  switches rather than one choice, and `layout_popover` lists four text rows behind the single
+  generic `layout.svg`.
+  Shape: The five shades become one band in the anatomy the transform band already uses (ADR 0113):
+  states of one value are one control, so the cells touch with no gap, sit in one tinted frame,
+  the view's style draws pressed and one divider borders the band on either side; the group's
+  accessible name and hover line say it is the shading, not five switches. The four split
+  choices get artwork of their own under `assets/icons/view/` — one view, two columns, two
+  rows, four views — drawn with the `draw-icon` skill, listed in `assets/README.md` and named in
+  `icons::view`. `LayoutKind` gains `icon()`, `layout_popover` draws each row as glyph plus name
+  the way `preset_row` does, and the cluster's layout cell draws the active layout's icon
+  instead of the generic one, so the current split reads without opening the popover. No ADR:
+  the band copies a decided control, and the four drawings are reversible.
+  Done: The five styles draw as one band with the active cell pressed and one accessible name; the
+  four layout choices draw their own glyphs in the popover and the cluster's layout cell shows
+  the active one; every new file loads, the theme table lists the four rows, and a headless test
+  drives the cluster and reads the band's order and the chosen style; `cargo xtask ci` is green.
+  `files: app/src/view_cluster.rs,app/src/view_layout.rs,crates/ui/src/display.rs,crates/ui/src/icons.rs,assets/icons/view,assets/README.md,crates/text/src/messages.rs` — `eb14b3b`
 
 - `[x]` **O9** selection walks six steps and says why
   Why: A plug must follow the corpus it decorates, and the shop reasons in families, not in
@@ -312,47 +2625,47 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: state-contract/src/,plan/BACKLOG.md,xtask/src/main.rs` — `4423489`
 
 - `[x]` **X73** a hidden part is still in the way of the tools
-  why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
-   shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
-   void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
-   to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
-   through the part itself — a hidden part "allows building through itself but not being
-   intersected": the part placed there stops at the hidden part's own faces. Today the hidden
-   set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
-   the consumers that project the whole tree ask it: the frame builder and the light rig
-   (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
-   model's own measurements walk the document, where the flag has no home: `Project::probe` and
-   `Project::niche` measure every panel, object and shell
-   (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
-   (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
-   (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
-   drawing and the measuring disagree about what is there.
-  shape: Two halves, which land together because either one alone is wrong. **The sight.** One
-   visibility value in the model — the nodes the user switched off plus the parent walk that
-   makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
-   in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
-   takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
-   rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
-   void that holds one is no longer refused as "not one convex cell". **The boundary.** The
-   part still stops at it: the hidden bodies a cell holds are walls for the material and not
-   for the ray. The plan trims the footprint at every hidden body's face on the axes the part
-   takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
-   X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
-   the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
-   decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
-   cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
-   than the board, a hidden facade that spans the whole opening (the part takes what is left,
-   and a void with nothing left says so), and a hidden container whose children are visible
-   (the subtree goes with it, as the frame already does).
-  done: With a frame's facades hidden the shelf fill measures the case's own void instead of
-   the phantom planes and the ghost lands in the clear space, its depth stopping at the
-   facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
-   while a part created or carried there stops at the hidden faces and never intersects them; a
-   hidden body standing inside a void is a boundary of the part and never a slice of it, in
-   both builds; the niche row, the distance fields, the picking and the drawing name the same
-   parts in both states; showing a part again restores every reading and changes no document
-   field; a hidden container hides its whole subtree for the tools as it does for the frame;
-   cargo xtask ci is green.
+  Why: Observation, from the owner: he switched a frame's facades off in the tree, armed the
+  shelf fill, and the ghost stuck in the phantom facades — a part he cannot see still cut the
+  void. The owner's rule, given to this entry: a switched-off part is invisible to the eye and
+  to the pointer, so a maker reaches and fills the niche behind it, while nothing may pass
+  through the part itself — a hidden part "allows building through itself but not being
+  intersected": the part placed there stops at the hidden part's own faces. Today the hidden
+  set is session view state (`ui::ViewFlags`, whose `hides` walks the parent chain) and only
+  the consumers that project the whole tree ask it: the frame builder and the light rig
+  (`app/src/scene_build.rs`), picking (`SceneFrame::pick_surface`) and the camera glyphs. The
+  model's own measurements walk the document, where the flag has no home: `Project::probe` and
+  `Project::niche` measure every panel, object and shell
+  (`crates/model/src/project/niche.rs`), the niche atom hands that cell to the fill
+  (`crates/ui/src/void.rs`), `move_rule`'s obstacles stop a carried piece at a hidden panel
+  (`move_query.rs::obstacle_boxes`), and the exact-distance fields read the same walls. So the
+  drawing and the measuring disagree about what is there.
+  Shape: Two halves, which land together because either one alone is wrong. **The sight.** One
+  visibility value in the model — the nodes the user switched off plus the parent walk that
+  makes a hidden container hide its subtree, the walk `ViewFlags::hides` does today — passed
+  in the way `SnapSettings` is passed into `move_rule`. Every query that looks at surfaces
+  takes it: `probe`, `niche`, the pick, the walls the distance fields measure and the move
+  rule's obstacles. The ray then passes a hidden part, the cell behind it is measured, and a
+  void that holds one is no longer refused as "not one convex cell". **The boundary.** The
+  part still stops at it: the hidden bodies a cell holds are walls for the material and not
+  for the ray. The plan trims the footprint at every hidden body's face on the axes the part
+  takes — the largest rectangle of `Fit` and the ring of `Shape` — and the placement guard of
+  X72 refuses anything that would still intersect one, so a shelf behind a hidden facade takes
+  the depth the facade allows instead of sticking in it or crossing it. The awkward cases are
+  decisions: a hidden body wholly inside the cell (the rectangle goes around it; a shape that
+  cannot be drawn around it is refused with the niche's own sentence), a hidden part thinner
+  than the board, a hidden facade that spans the whole opening (the part takes what is left,
+  and a void with nothing left says so), and a hidden container whose children are visible
+  (the subtree goes with it, as the frame already does).
+  Done: With a frame's facades hidden the shelf fill measures the case's own void instead of
+  the phantom planes and the ghost lands in the clear space, its depth stopping at the
+  facade's inner face; a pointer's ray passes a hidden panel to reach the space behind it,
+  while a part created or carried there stops at the hidden faces and never intersects them; a
+  hidden body standing inside a void is a boundary of the part and never a slice of it, in
+  both builds; the niche row, the distance fields, the picking and the drawing name the same
+  parts in both states; showing a part again restores every reading and changes no document
+  field; a hidden container hides its whole subtree for the tools as it does for the frame;
+  cargo xtask ci is green.
   `files: crates/ui/src/view_flags.rs,crates/model/src/project/niche.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/model/src/project/fill.rs,crates/ui/src/void.rs,app/src/document.rs,app/src/scene_build.rs` — `36a1cd4`
 
 - `[x]` **X84** a cut is measured from where the piece stands
@@ -541,22 +2854,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/model/src/project/move_query.rs, crates/model/src/project/surface.rs, crates/ui/src/transform.rs, crates/ui/src/inventory.rs, crates/text/src/messages.rs, app/src/gizmo_math.rs, app/src/translate_gizmo.rs, plan/map.md` — `8366029`
 
 - `[x]` **X76** a carried frame leaves its grips behind, and a grip steals the press that puts it down
-  why: Observation, from the owner's screenshot of a carried frame: the frame moved and its
-   fourteen grip rings — eight corners and six face centres — stayed at the place it was taken.
-   The grips are read from the document (`BoxGrips::paint` calls `BoxBody::read(project,
-   node)`) while the body itself follows the drag preview, so the overlay and the picture
-   disagree for the whole gesture. The same defect has a second half: a press within the grip
-   radius of a carried piece arms a grip resize instead of putting the piece down, because the
-   shell's `gripping` test does not know a piece is in hand. Expected: a carried frame's grips
-   ride with it as its corner brackets do, and a press while a piece is in hand is the click
-   that puts it down.
-  shape: The grips read the drag preview the way the brackets and the renderer do: the body's
-   world placement goes through `Preview::moved_world` before a grip is projected, so a
-   translation carries the rings and a rotation turns them. The shell does not arm a grip while
-   the furniture move holds a piece — the next press belongs to the carry.
-  done: The grips of a frame in hand sit on the previewed body in both tools, a translation and
-   a rotation; a press over a carried piece's old grip position puts the piece down instead of
-   resizing it; the envelope's sides are unchanged by that press; `cargo xtask ci` is green.
+  Why: Observation, from the owner's screenshot of a carried frame: the frame moved and its
+  fourteen grip rings — eight corners and six face centres — stayed at the place it was taken.
+  The grips are read from the document (`BoxGrips::paint` calls `BoxBody::read(project,
+  node)`) while the body itself follows the drag preview, so the overlay and the picture
+  disagree for the whole gesture. The same defect has a second half: a press within the grip
+  radius of a carried piece arms a grip resize instead of putting the piece down, because the
+  shell's `gripping` test does not know a piece is in hand. Expected: a carried frame's grips
+  ride with it as its corner brackets do, and a press while a piece is in hand is the click
+  that puts it down.
+  Shape: The grips read the drag preview the way the brackets and the renderer do: the body's
+  world placement goes through `Preview::moved_world` before a grip is projected, so a
+  translation carries the rings and a rotation turns them. The shell does not arm a grip while
+  the furniture move holds a piece — the next press belongs to the carry.
+  Done: The grips of a frame in hand sit on the previewed body in both tools, a translation and
+  a rotation; a press over a carried piece's old grip position puts the piece down instead of
+  resizing it; the envelope's sides are unchanged by that press; `cargo xtask ci` is green.
   `files: app/src/box_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs` — `0d85cba`
 
 - `[x]` **X75** a carried frame lags the hand and leaves its brackets behind
@@ -619,22 +2932,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    distance, a palette command or the assistant can land a board inside another one as well.
    The live path the owner used is not yet identified; the two open ends are the free move and
    a panel outside a product.
-  shape: The overlap is refused where the document is written, not only where a gesture runs.
-   The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
-   with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
-   shell that stays behind — touching faces are contact, not overlap, and a panel inside its
-   own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
-   rule is that a switched-off part is invisible to the eye and to the pointer, never to the
-   material (X73), so the guard asks the document, not the sight. The placement commands
-   (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
-   sentence naming the part that is in the way; the gestures read the same answer first, so a
-   piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
-   X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
-   snapping are untouched. A part that already overlaps another (a file written before this
-   rule) can still be dragged out of the overlap: the test refuses a placement that makes an
-   overlap worse, never one that makes it no worse. The awkward cases are decisions, not
-   accidents: a selection of several parts against one neighbour, a shell inside a shell (a
-   piece inside a case), a board that only touches, and a part carried with the camera moving.
+  Shape: The overlap is refused where the document is written, not only where a gesture runs.
+  The contact test leaves `MoveRule` for one function both callers share (`move_query.rs`,
+  with `SurfaceBox` from `surface.rs`): does the moved box come to rest inside a body or a
+  shell that stays behind — touching faces are contact, not overlap, and a panel inside its
+  own frame's envelope stays legal. **Hidden parts are read like visible ones**: the owner's
+  rule is that a switched-off part is invisible to the eye and to the pointer, never to the
+  material (X73), so the guard asks the document, not the sight. The placement commands
+  (`node.placement.set`, `set_many`, the fill's `panel.create`) ask it and refuse with a
+  sentence naming the part that is in the way; the gestures read the same answer first, so a
+  piece stops at a neighbour instead of reaching a refusal, and the free move stops too —
+  X65's crossing clause is narrowed by a new ADR, and the class rules, the axes and the
+  snapping are untouched. A part that already overlaps another (a file written before this
+  rule) can still be dragged out of the overlap: the test refuses a placement that makes an
+  overlap worse, never one that makes it no worse. The awkward cases are decisions, not
+  accidents: a selection of several parts against one neighbour, a shell inside a shell (a
+  piece inside a case), a board that only touches, and a part carried with the camera moving.
   Done: A panel dragged into another panel stops at its face with both moves; a
    `node.placement.set` asked for the same overlap is refused with a sentence naming the part
    and writes nothing, so the revision does not move; a part already overlapping another can be
@@ -644,27 +2957,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/translate_gizmo.rs,crates/model/src/project/move_query.rs,crates/model/src/project/surface.rs,crates/engine/src/node_cmds.rs,crates/engine/src/panel_cmds/panel.rs,app/src/frame_tests.rs` — `f9209e6`
 
 - `[x]` **N26** a carried piece measures its gaps with arrows in the scene, not with a card at the hand
-  why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
-   owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
-   nearest object, with the editable gap in the middle of the arrow (reference picture:
-   Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
-   lags while a number is typed, drifts away from the pieces it measures after a camera gesture
-   and covers the pointer (X66, X69).
-  shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
-   from the piece's face along the free axis to the surface the model probe answered (the
-   neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
-   each end and the gap's own field sitting in the middle of the run. The field keeps the
-   behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
-   the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
-   the face and the opposite face follows. The floating card stops being drawn for the
-   furniture move; the inspector still shows the same two rows from the same Distances (ADR
-   0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
-   area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
-   axis points at the camera. Dimension grammar comes from the drafting skill.
-  done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
-   and Escape behave as the rows do today; the furniture move draws no card; the inspector
-   still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
-   test drives a gap through the arrow's field and asserts one command and one undo entry.
+  Why: The carried piece's gaps are numbers in a floating card that follows the hand, and the
+  owner wants them in the scene: a yellow dimension arrow from each face of the piece to the
+  nearest object, with the editable gap in the middle of the arrow (reference picture:
+  Screenshot from 2026-11-18 20-58-47.png in the owner's Pictures/Screenshots). The card also
+  lags while a number is typed, drifts away from the pieces it measures after a camera gesture
+  and covers the pointer (X66, X69).
+  Shape: The two gaps of a carried piece are drawn where they are measured: an arrow per side,
+  from the piece's face along the free axis to the surface the model probe answered (the
+  neighbour face or the frame envelope), in the assistant line's own ink, with an arrowhead at
+  each end and the gap's own field sitting in the middle of the run. The field keeps the
+  behaviour the card's rows have today: a fresh gesture focuses the nearest one, Tab walks to
+  the other, Enter locks the face, Escape gives the piece back to the pointer; a number pins
+  the face and the opposite face follows. The floating card stops being drawn for the
+  furniture move; the inspector still shows the same two rows from the same Distances (ADR
+  0119), and a box, a pull or a niche keeps its own card. The arrows are clipped to the work
+  area, thin and dim while the pointer is elsewhere, and are never drawn for a panel whose
+  axis points at the camera. Dimension grammar comes from the drafting skill.
+  Done: A carried piece draws two arrows with a field in the middle of each; typing, Tab, Enter
+  and Escape behave as the rows do today; the furniture move draws no card; the inspector
+  still measures the same numbers; the arrow is not drawn for a view-aligned axis; a frame
+  test drives a gap through the arrow's field and asserts one command and one undo entry.
   `files: crates/ui/src/distance.rs,crates/ui/src/tool_card.rs,app/src/document.rs,app/src/gizmo_math.rs` — `4870510`
 
 - `[x]` **N20** the card says the position its class gives, and never asks
@@ -1297,7 +3610,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A cone is drawn from a base circle and a height, the card edits both radii and the
    height, a zero top radius builds a sharp cone with no top face, and tests cover the frustum
    volume and the sharp case; the icon is drawn and passes the icon test.
-  `files: crates/model/src/primitive.rs,crates/mesh/src/primitive.rs,crates/ui/src/draw.rs,crates/ui/src/editor/drawing.rs,crates/ui/src/object_card.rs,crates/ui/src/toolbars/spec.rs,app/src/extrude_gizmo.rs,assets/icons/primitives/cone.svg` — `00c8795`
+  `files: crates/param/src/primitive.rs` — `00c8795`
 
 - `[x]` **X63** identical created objects all carry the same name in the tree and the card
   Why: Observation: every created object is named after its shape alone (ui/editor/creation.rs:
@@ -1440,7 +3753,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    covers one equal meridian step within rounding, and the counts, bounds and outward normals
    are unchanged; a mesh test asserts the pole ring's radius and that no band spans more than
    twice another, and the ball is looked at once in the live window at the default size.
-  `files: crates/mesh/src/primitive.rs` — `06ae440`
+  `files: crates/param/src/primitive.rs` — `06ae440`
 
 - `[x]` **K5** the program cannot open a scene named on its command line
   Why: Observation: `z3l cabinet.z3l` prints «`cabinet.z3l` is not a command; run `z3l --help`»
@@ -1670,14 +3983,14 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    contain, drawn only as the dashed construction line. The owner could not tell what the
    number measured: the arc itself is not drawn yet, so the plate names a length against a
    figure that is not on screen.
-  shape: Decide what the second stage of Arc reads and draw the thing it measures. The owner's
-   words — «draw L1 at once so it is clear what the distance is» — suggest the chord is the
-   measurement and must be drawn as a real draft segment (solid draft ink from the start to the
-   placed point) rather than as the dashed construction guide, with the plate on its midpoint,
-   so the number and the line are one object. `PointState::construction` already carries the
-   pair; the change is in `paint_guides`, `DrawDraft::preview` and the plate anchor. Confirm
-   with the owner whether L1 names the first chord of the arc or the first plate of the set
-   before drawing.
+  Shape: Decide what the second stage of Arc reads and draw the thing it measures. The owner's
+  words — «draw L1 at once so it is clear what the distance is» — suggest the chord is the
+  measurement and must be drawn as a real draft segment (solid draft ink from the start to the
+  placed point) rather than as the dashed construction guide, with the plate on its midpoint,
+  so the number and the line are one object. `PointState::construction` already carries the
+  pair; the change is in `paint_guides`, `DrawDraft::preview` and the plate anchor. Confirm
+  with the owner whether L1 names the first chord of the arc or the first plate of the set
+  before drawing.
   Done: The second click of an arc draws the segment its length plate measures, in draft ink,
    and the plate sits on it; a frame test asserts the drawn segment and the plate's value agree
    at several pointer positions. The owner confirms the reading of L1.
@@ -2084,20 +4397,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    at most two can apply. The owner asked for the card to be studied, the excess removed and
    the design improved; this is the one task of the pass that starts from a measurement rather
    than from a bug.
-  shape: First the audit the ui-design skill orders: a brief in five lines, the inventory of
-   every section and field with the node kinds that can show it, and three options with their
-   cost in code and in learned conventions. Then the chosen shape — most likely one summary
-   band (kind, size, material, one warning chip), only the fields the selected node can use,
-   the modes (mesh edit, contour edit) as one row of actions rather than four collapsible
-   sections, and a fold state remembered per node kind. Every number stays the shared scrub
-   field, every mutation stays a command, nothing new enters the document; a removed section or
-   a changed reading order is a break the owner approves and ADR 0116 records. The measurement
-   and the rejected options go to `plan/notes/U93.md`.
-  done: The audit and the options are in `plan/notes/U93.md`; the card draws no section that
-   cannot apply to the selected node and no field twice on one screen; a headless test opens a
-   panel, an object and a product frame and asserts the sections drawn for each; an offscreen
-   shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
-   `cargo xtask ci` is green.
+  Shape: First the audit the ui-design skill orders: a brief in five lines, the inventory of
+  every section and field with the node kinds that can show it, and three options with their
+  cost in code and in learned conventions. Then the chosen shape — most likely one summary
+  band (kind, size, material, one warning chip), only the fields the selected node can use,
+  the modes (mesh edit, contour edit) as one row of actions rather than four collapsible
+  sections, and a fold state remembered per node kind. Every number stays the shared scrub
+  field, every mutation stays a command, nothing new enters the document; a removed section or
+  a changed reading order is a break the owner approves and ADR 0116 records. The measurement
+  and the rejected options go to `plan/notes/U93.md`.
+  Done: The audit and the options are in `plan/notes/U93.md`; the card draws no section that
+  cannot apply to the selected node and no field twice on one screen; a headless test opens a
+  panel, an object and a product frame and asserts the sections drawn for each; an offscreen
+  shot of the three cards in both themes is looked at; ADR 0116 is written when a break ships;
+  `cargo xtask ci` is green.
   `files: crates/ui/src/object_card.rs, crates/ui/src/editor/cards.rs, crates/text/src/messages.rs, app/src/ui_shots.rs` — `43ef744`
 
 - `[x]` **U92** a right click opens the actions of the node under the pointer, from one list the tree and the viewport share
@@ -2547,11 +4860,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/icons.rs, crates/ui/src/toolbars.rs, crates/ui/src/theme.rs` — `55f372b`
 
 - `[x]` **U83** the program's own guides get one ink and one stroke: the helper ink
-  why: The corner brackets of an open level (U89) and the viewport's own cursor (U88) are the
-   first things Z3L draws to help rather than to show the furniture, and the owner asked
-   for the colour and thickness rule before more helper geometry arrives. A guide whose colour
-   is a literal in a feature module is the defect `cargo xtask ui-rules` exists to stop (ADR
-   0063, 0089), and a guide that disappears into the light theme is worse than no guide.
+  Why: The corner brackets of an open level (U89) and the viewport's own cursor (U88) are the
+  first things Z3L draws to help rather than to show the furniture, and the owner asked
+  for the colour and thickness rule before more helper geometry arrives. A guide whose colour
+  is a literal in a feature module is the defect `cargo xtask ui-rules` exists to stop (ADR
+  0063, 0089), and a guide that disappears into the light theme is worse than no guide.
   Shape: `theme::helper()` returns the ink — a warm amber, mixed from the palette so it keeps
    its contrast in both variants of all three presets — and `theme::HELPER_STROKE` the rest
    width; a test pins the contrast against `surface`, `panel` and the viewport background
@@ -2866,7 +5179,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    and a face grip one, each one undo entry; a min-face drag keeps the opposite face still in
    the world; cylinder and sphere still load and build; the ribbon cell, the icon and the
    messages no longer mention a cube; cargo xtask ci is green.
-  `files: crates/model/src/primitive.rs, crates/mesh/src/primitive.rs, crates/engine/src/object_cmds.rs, crates/ui/src/toolbars.rs` — `ce8ce93`
+  `files: crates/param/src/primitive.rs` — `ce8ce93`
 
 - `[x]` **N8** the exact-distance fields: type a distance, lock it, centre it, with the keyboard
   Why: A maker cannot place a post to the millimetre with a mouse, and the same need appears in

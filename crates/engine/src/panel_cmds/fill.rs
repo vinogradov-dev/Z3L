@@ -1,0 +1,320 @@
+//! The part a point inside a void names: one command over the niche measurement.
+//!
+//! A post, a shelf and a back wall are one question (`Project::niche`, `Project::fill_plan`): which
+//! board fills the space the walls leave, where does it stand and which outline does it store. The
+//! window answers it twice — as the ghost it paints and as the part the click writes — and a caller
+//! that cannot point had to redo the arithmetic itself, in millimetres and quaternions, and could
+//! disagree with the ribbon about the class's axis pair. This command is that answer as one write:
+//! the point, the class and the mode in, the measured part out.
+//!
+//! The measurement is the model's, not a second copy of it: the niche is measured at the point with
+//! no sight — a program has no hidden parts to look through (ADR 0175) — and the plan it becomes is
+//! the same [`FillPlan`](model::FillPlan) the ghost draws. The board and its thickness are the
+//! catalogue's first panel material, which is what every created panel takes.
+//!
+//! The part is written through [`create_panel`], the one creation path `panel.create` uses, so the
+//! two commands store a board the same way: one revision, one undo entry, the class in the same
+//! command. The product is named by the caller and not by the session: a caller works in the piece
+//! it is sure about, and whether a person has that piece open is the interface's question
+//! (ADR 0098, ADR 0226).
+//!
+//! Changes when: the fill gains a class trait, a refusal or a third reading of the section.
+
+use catalog::Directory;
+use geom::{Contact, DVec3};
+use model::{ClassCode, Fill, FillMode, FillRequest, Id, Level, Project, Sight};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use text::{Lang, Message};
+
+use super::PanelCreate;
+use super::panel::create_panel;
+use crate::class_rules::allow_creation;
+use crate::commands::{CommandError, CommandOutcome, CommandSpec, Creation};
+use crate::session::Session;
+
+/// Stable id of the niche-filling command.
+pub const FILL_ID: &str = "panel.fill";
+
+/// User-facing label of the niche-filling command.
+pub const FILL_LABEL: Message = Message::CmdFillNiche;
+
+/// Parameters for `panel.fill`.
+///
+/// The three that name the part are the point inside the void, the class whose `fill` trait says
+/// which pair of the niche's sides the board takes, and the mode that says whether the board is the
+/// largest rectangle or the shape the walls leave.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelFill {
+    /// Id of the container the part lands in: the product itself or a group inside it.
+    pub parent: Id,
+    /// The point inside the void, in world millimetres, exactly as `query niche` takes it.
+    pub at: [f64; 3],
+    /// The class the part carries; its `fill` trait chooses the axis pair.
+    pub class: ClassCode,
+    /// How the board reads the section the walls leave; the largest rectangle when absent.
+    #[serde(default)]
+    pub mode: FillMode,
+    /// The place along the part's free axis, in the parent frame and millimetres.
+    ///
+    /// `None` lets the point's own coordinate answer, which is what a caller wants when it measured
+    /// the void itself. A tool that carries the part across a board hands in the place it drew.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free: Option<f64>,
+    /// The part's name; absent, it is the class's own word, made unique among its siblings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl PanelFill {
+    fn parse(params: &Value) -> Result<Self, CommandError> {
+        serde_json::from_value(params.clone())
+            .map_err(|error| CommandError::InvalidParams { command: FILL_ID, message: error.to_string() })
+    }
+
+    /// The axis pair the class's `fill` trait names, or the reason the class fills nothing.
+    fn fill(&self) -> Result<Fill, CommandError> {
+        self.class.traits().and_then(|traits| traits.fill()).ok_or_else(|| CommandError::InvalidParams {
+            command: FILL_ID,
+            message: format!("class {} does not fill a void", self.class),
+        })
+    }
+}
+
+/// The `panel.fill` command.
+pub(crate) const FILL: CommandSpec =
+    CommandSpec::new::<PanelFill>(FILL_ID, FILL_LABEL, fill_enabled, fill_run).creating(Creation::new(Level::Part));
+
+fn fill_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = PanelFill::parse(params) else {
+        return false;
+    };
+    let project = session.project();
+    // The interface's reading, exactly as `panel.create` asks it: the button is offered only inside
+    // the open piece. A dispatch writes where the parameters name (ADR 0226).
+    params.class.is_assignable()
+        && project.is_container(params.parent)
+        && params.fill().is_ok()
+        && allow_creation(project, params.parent, session.active_product()).is_ok()
+        && session.directory().boards().next().is_some()
+}
+
+fn fill_run(
+    project: &mut Project,
+    catalog: &Directory,
+    params: &Value,
+    contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = PanelFill::parse(params)?;
+    let fill = params.fill()?;
+    let board = catalog.boards().next().ok_or(CommandError::NoMaterial { command: FILL_ID })?;
+    let point = DVec3::from_array(params.at);
+    // One measurement, the query's own: a program has nothing switched off, so it reads every face
+    // in the way (ADR 0175, ADR 0226).
+    let niche = project
+        .niche(point, Sight::none(), Some(contact))
+        .map_err(|refusal| CommandError::NoNiche { message: crate::read::no_niche_sentence(params.at, refusal) })?;
+    let request = FillRequest::new(point, fill, params.mode, board.thickness, params.free);
+    let plan = project
+        .fill_plan_in(&niche, params.parent, request, Sight::none())
+        .map_err(|refusal| CommandError::FillRefused { command: FILL_ID, refusal })?;
+    let base = params.name.clone().unwrap_or_else(|| class_word(params.class));
+    let name = project.unique_child_name(params.parent, &base);
+    let create = PanelCreate {
+        parent: params.parent,
+        name,
+        nominal_size: plan.nominal_size,
+        material: board.id,
+        placement: plan.placement,
+        class: Some(params.class),
+        outline: Some(plan.outline),
+        bevels: plan.bevels,
+    };
+    let id = create_panel(project, catalog, create)?;
+    Ok(CommandOutcome::created(id))
+}
+
+/// The word a part is named by when the caller names none: its class's own label.
+fn class_word(class: ClassCode) -> String {
+    class.label().map_or_else(|| Message::ToolPanel.text(Lang::En).to_owned(), |label| label.text(Lang::En).to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use geom::DVec3;
+    use model::{Container, Envelope, PanelNominalSize, Placement, Project};
+    use testkit::{millimetres, sample_catalog};
+
+    use crate::batch::{BatchEffect, BatchOptions, BatchStep};
+    use crate::guide::Stance;
+    use crate::read::Query;
+
+    use super::*;
+
+    /// A session whose open product is an empty 600 x 560 x 720 cabinet.
+    fn session() -> (Session, Id) {
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let envelope = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+        let product = project
+            .add_product(root, "Cabinet", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a product");
+        let mut session = Session::with_directory(project, sample_catalog());
+        assert!(session.open_product(product), "the fixture opens its piece");
+        (session, product)
+    }
+
+    /// The request the tests ask with: the middle of the empty cabinet.
+    fn request(product: Id, class: ClassCode, mode: FillMode) -> PanelFill {
+        PanelFill { parent: product, at: [300.0, 280.0, 360.0], class, mode, free: None, name: None }
+    }
+
+    fn json_params<T: serde::Serialize>(value: &T) -> Value {
+        serde_json::to_value(value).expect("the parameters serialize")
+    }
+
+    #[test]
+    fn a_post_a_shelf_and_a_wall_take_their_class_their_stance_and_their_size() {
+        // The three ribbon cells are one command: the class names the part, its `fill` trait picks
+        // the axis pair and the stance follows, and the niche's own size is the board's (N37).
+        let cases: [(ClassCode, usize, i64, i64); 3] = [
+            (ClassCode::HORIZONTAL_PANEL, 0, 600, 560),
+            (ClassCode::VERTICAL_PANEL, 1, 720, 560),
+            (ClassCode::BACK_PANEL, 2, 720, 600),
+        ];
+        for (class, stance, length, width) in cases {
+            let (mut session, product) = session();
+            let id = session
+                .dispatch(FILL_ID, &json_params(&request(product, class, FillMode::Fit)))
+                .unwrap_or_else(|error| panic!("{class} fills the void: {error}"))
+                .created_id()
+                .expect("a panel id");
+            let panel = session.project().panel(id).expect("a panel");
+            assert_eq!(session.project().class(id), Some(class), "{class}: the class travels with the part");
+            assert_eq!(
+                panel.nominal_size(),
+                PanelNominalSize::new(millimetres(length), millimetres(width)).expect("a size"),
+                "{class}: the board is the void's own pair"
+            );
+            // The stance is the documented one, not an equivalent quarter-turn: the panel's own axes
+            // land where ADR 0105 says they do.
+            let placed = session.project().world_placement(id).expect("a placement");
+            let expected = Stance::ALL[stance].placement().expect("a unit rotation");
+            for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
+                assert!(
+                    (placed.transform_vector(axis) - expected.transform_vector(axis)).length() < 1e-9,
+                    "{class}: the {} stance's axes are {axis}",
+                    Stance::ALL[stance].name()
+                );
+            }
+            // The point's own coordinate answers on the free axis, and the board grows away from the
+            // face it named: the hand's place is one of the part's two faces (ADR 0103, ADR 0105).
+            let free = model::free_axis(class.traits().and_then(|traits| traits.fill()).expect("a fill pair"));
+            let hand = request(product, class, FillMode::Fit).at[free];
+            let base = placed.translation()[free];
+            let far =
+                base + placed.transform_vector(DVec3::Z)[free] * testkit::sample_panel_thickness().millimetres_f64();
+            assert!(
+                (base - hand).abs() < 1e-9 || (far - hand).abs() < 1e-9,
+                "{class}: the hand named {hand}, and the board spans {base}..{far}"
+            );
+            // One part, one undo entry.
+            session.undo().expect("one undo step");
+            assert_eq!(session.project().panel(id), None, "{class}: the whole part comes back");
+            assert!(!session.can_undo(), "{class}: the fill was one entry");
+        }
+    }
+
+    #[test]
+    fn the_free_place_pins_the_part_and_the_name_is_its_class_made_unique() {
+        let (mut session, product) = session();
+        let mut first = request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit);
+        first.free = Some(100.0);
+        let id = session.dispatch(FILL_ID, &json_params(&first)).expect("a pinned shelf").created_id().expect("an id");
+        let free = model::free_axis(model::Fill::WidthAndDepth);
+        let placed = session.project().world_placement(id).expect("a placement");
+        assert!((placed.translation()[free] - 100.0).abs() < 1e-9, "the number the caller pinned is where it sits");
+        let second =
+            session.dispatch(FILL_ID, &json_params(&first)).expect("a second shelf").created_id().expect("an id");
+        let one = session.project().node(id).expect("a node").name().to_owned();
+        let two = session.project().node(second).expect("a node").name().to_owned();
+        assert_ne!(one, two, "two shelves of one piece are told apart: {one} / {two}");
+    }
+
+    #[test]
+    fn a_dry_run_answers_the_part_and_writes_nothing() {
+        let (mut session, product) = session();
+        let before = session.project().revision();
+        let steps =
+            [BatchStep::new(FILL_ID, json_params(&request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit)))];
+        let planned = session.batch(&steps, BatchOptions::ALL_OR_NOTHING.dry_run(true));
+        assert_eq!(planned.effect(), BatchEffect::Planned, "the dry run claims no write");
+        let made = *planned.created().first().expect("the answer names the part it would make");
+        assert_eq!(session.project().panel(made), None, "nothing was written");
+        assert_eq!(session.project().revision(), before, "the document is untouched");
+        let landed = session.batch(&steps, BatchOptions::ALL_OR_NOTHING);
+        assert_eq!(landed.effect(), BatchEffect::Landed);
+        assert_eq!(landed.created(), planned.created(), "the same step makes the same part");
+        assert!(session.project().panel(made).is_some(), "the second run writes it");
+    }
+
+    #[test]
+    fn a_point_outside_every_product_is_the_query_s_own_refusal() {
+        let (mut session, product) = session();
+        let mut params = request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit);
+        params.at = [5_000.0; 3];
+        let refused = session.dispatch(FILL_ID, &json_params(&params)).expect_err("there is no void there");
+        let asked = session.read(Query::Niche { at: params.at }).expect_err("the query refuses the same point");
+        assert_eq!(refused.to_string(), asked.to_string(), "one sentence for one point");
+        assert!(!session.can_undo(), "a refusal records no history");
+    }
+
+    #[test]
+    fn a_void_in_another_product_and_a_class_without_a_fill_pair_are_both_refused() {
+        // Two products side by side: a point in the second names a void that is not the first's part.
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let one = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+        let two = Envelope::new(millimetres(600), millimetres(560), millimetres(720)).expect("a box");
+        let first =
+            project.add_product(root, "One", ClassCode::GENERAL_PRODUCT, one, Placement::IDENTITY).expect("a product");
+        let beside = Placement::IDENTITY
+            .with_translation(millimetres(1_000), units::Length::ZERO, units::Length::ZERO)
+            .expect("a translation");
+        project.add_product(root, "Two", ClassCode::GENERAL_PRODUCT, two, beside).expect("a product beside it");
+        let mut session = Session::with_directory(project, sample_catalog());
+        assert!(session.open_product(first), "the first piece is open");
+
+        let mut elsewhere = request(first, ClassCode::HORIZONTAL_PANEL, FillMode::Fit);
+        elsewhere.at = [1_300.0, 280.0, 360.0];
+        let refused = session.dispatch(FILL_ID, &json_params(&elsewhere)).expect_err("the void is the other piece");
+        assert!(refused.to_string().contains("another product"), "{refused}");
+        assert!(!session.can_undo(), "a refusal records no history");
+
+        // A class with no `fill` trait has no pair to take, so the void is not its part.
+        let class = ClassCode::GENERAL_PRODUCT;
+        assert!(class.traits().and_then(|traits| traits.fill()).is_none(), "the fixture class fills nothing");
+        let refused =
+            session.dispatch(FILL_ID, &json_params(&request(first, class, FillMode::Fit))).expect_err("no pair");
+        assert!(refused.to_string().contains("does not fill a void"), "{refused}");
+        assert!(!session.can_undo(), "a refusal records no history");
+    }
+
+    #[test]
+    fn a_workshop_with_no_board_has_nothing_to_cut_the_part_from() {
+        let (session, product) = session();
+        let mut empty = Session::new(session.project().clone());
+        assert!(empty.open_product(product), "the piece is open, so the refusal is the catalogue's");
+        let refused = empty
+            .dispatch(FILL_ID, &json_params(&request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit)))
+            .expect_err("the catalogue holds no board");
+        assert!(matches!(refused, CommandError::NoMaterial { .. }), "{refused}");
+        assert!(!empty.can_undo(), "a refusal records no history");
+    }
+}

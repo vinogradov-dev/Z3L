@@ -32,7 +32,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0025](0025-one-manipulation-pivot.md) | Move and Rotate share one pivot at the first corner of the local bounds | Superseded by 0026 |
 | [0026](0026-the-manipulation-pivot-is-stored-node-data.md) | The manipulation pivot is stored, editable node data | Accepted; supersedes 0025 |
 | [0027](0027-the-rotate-gizmo-uses-world-aligned-rings.md) | The rotate gizmo uses world-aligned rings | Accepted; batch commit extended by 0033 |
-| [0028](0028-the-assistant-is-a-client-of-the-command-registry.md) | The assistant is a client of the command registry | Accepted |
+| [0028](0028-the-assistant-is-a-client-of-the-command-registry.md) | The assistant is a client of the command registry | Accepted; registry narrowed by 0185, layering by 0186, listening clarified by 0188 |
 | [0029](0029-view-state-belongs-to-the-session.md) | View state belongs to the session | Accepted; camera and light objects carved out by 0036 |
 | [0030](0030-construction-knowledge-is-code.md) | Construction knowledge is code, not prose | Superseded by 0034 |
 | [0031](0031-external-resources-keep-their-own-system-of-record.md) | External resources keep their own system of record | Accepted |
@@ -109,7 +109,6 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0102](0102-a-furniture-entity-is-a-surface.md) | A furniture entity is a surface; a frame is a shell | Accepted; amends the probe and collision clauses of 0099 and 0097 |
 | [0103](0103-one-probe-serves-the-niche-the-distances-and-the-move.md) | One probe serves the niche, the distances and the move | Accepted; refines 0099 and 0102 |
 | [0104](0104-a-ghost-of-a-missing-node-is-shell-paint.md) | A ghost of a missing node is shell paint, not the overlay | Accepted; narrows 0093 |
-| [0104](0104-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
 | [0105](0105-a-panel-stance-is-the-flat-frame-turned.md) | A panel stance is the flat frame turned, never mirrored | Accepted |
 | [0106](0106-a-niche-is-a-convex-cell-of-wall-planes.md) | A niche is a convex cell of wall planes | Accepted; refines 0099 and 0103; coverage clause superseded by 0109 |
 | [0107](0107-an-end-bevel-is-an-angle-about-its-edge.md) | An end bevel is an angle about its outline edge | Accepted |
@@ -187,9 +186,57 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0179](0179-the-contact-port-lives-with-the-geometry-foundation.md) | The contact port lives with the geometry foundation, and parry answers it | Accepted; the port half of X85, amends 0165's world-box reading |
 | [0181](0181-a-drag-prepares-the-bodies-it-reaches.md) | A drag prepares the bodies it reaches, and the port can cast a ray | Accepted; the rule's build is a walk over boxes, and the probe keeps the box reading until X92 |
 | [0182](0182-the-file-manager-chooses-the-path.md) | The file manager chooses the path, and the window keeps drawing | Accepted |
-| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted |
+| [0183](0183-the-command-line-is-the-one-headless-door.md) | The command line is the one headless door into the document | Accepted; "one headless door" narrowed by 0185; parameter-schema gap closed by 0195; the report set moved into the session by 0196 |
 | [0184](0184-a-price-names-its-money-and-its-source.md) | A price names its money, its source and its age; stock is an overlay | Accepted |
+| [0185](0185-the-tool-registry-is-one-table-and-every-door-reads-it.md) | The tool registry is one table, and the CLI and the MCP server are its doors | Accepted; narrows 0028 and 0183 |
+| [0186](0186-the-mcp-crate-sits-beside-the-ui.md) | The MCP crate sits beside the UI, and the chat panel lives in the shell | Accepted; narrows 0028 |
+| [0187](0187-a-chat-turn-is-one-undo-entry-and-a-plan-first.md) | A chat turn is one undo entry, and the first turn is a plan | Accepted; its two modes named by 0190 |
+| [0188](0188-a-local-control-channel-is-not-a-network-service.md) | A local control channel is not a network service | Accepted; clarifies 0028 |
+| [0189](0189-the-model-is-an-openai-compatible-endpoint.md) | The model is an OpenAI-compatible endpoint, and the key is not in the settings file | Accepted |
+| [0190](0190-plan-and-build-are-the-persons-switch.md) | Plan and build are the person's switch | Accepted; refines 0187 |
+| [0191](0191-the-inspectors-first-seven-findings.md) | The inspector's first seven findings | Accepted |
+| [0192](0192-a-recipe-is-rust-that-emits-commands.md) | A recipe is Rust that emits commands, and the recipe language waits | Accepted |
+| [0193](0193-an-agent-task-is-the-acceptance-test.md) | An agent task is the acceptance test | Accepted |
+| [0195](0195-the-parameter-schema-derives-where-its-type-lives.md) | The parameter schema derives where its type lives | Accepted |
 | [0180](0180-control-belongs-to-the-object-tool.md) | Control belongs to the object tool: the free move and the rotation are not measured | Accepted; amends 0162's every-write rule for the two hand-driven gestures |
+| [0194](0194-a-contour-boolean-is-a-mode-that-stores-a-new-object.md) | A contour boolean is a mode that stores a new object | Accepted; implements 0043, the tool mark follows the file schema |
+| [0196](0196-the-read-model-is-one-typed-question.md) | The read model is one typed question, and its stable answers are resources | Accepted; implements 0183's report set and 0185's "session read-only queries" |
+| [0197](0197-a-body-boolean-is-a-step-that-names-its-tool.md) | A body boolean is a step that names its tool | Accepted; implements 0041's boolean steps as a document feature |
+| [0198](0198-a-batch-is-planned-on-a-copy-and-lands-in-one-piece.md) | A batch is planned on a copy and lands in one piece | Accepted; implements the session operation 0190 asked for |
+| [0199](0199-one-set-of-scene-snaps.md) | One set of scene snaps, resolved in the model | Accepted; extends 0051 and narrows its "no document" clause |
+| [0200](0200-a-wall-fills-a-void-and-a-back-board-is-born-from-the-gap.md) | A wall fills a void, and a back board is born from the gap | Accepted; amends the `fill` trait of 0097 and the fill rule of 0099 |
+| [0201](0201-the-niche-starts-from-the-frames-footprint.md) | The niche starts from the frame's footprint | Accepted; amends 0106 and the containment rule of 0099; the chord rule for a section's curve superseded by 0202; the non-convex refusal superseded by 0203 |
+| [0202](0202-a-section-keeps-the-frames-curve.md) | A section keeps the frame's curve | Accepted; supersedes the chord rule of 0201 for the section |
+| [0203](0203-a-frame-drawn-as-a-ring-builds-the-part-the-pointer-names.md) | A frame drawn as a ring builds the part the pointer names | Accepted; supersedes the non-convex refusal of 0201 and the box shortcut of 0106 for a shaped frame; its piece-only seed superseded by 0204 for the section and the box |
+| [0204](0204-a-niche-keeps-the-whole-shape-the-frame-draws.md) | A niche keeps the whole shape the frame draws | Accepted; supersedes the piece-only seed of 0203 for the section and the box; amends the chord rule of 0201 for a shelf's section |
+| [0205](0205-the-areas-of-a-drawing-are-derived-on-read.md) | The areas of a drawing are derived on read | Accepted; completes the contour sets of 0194 and takes the hole question of G3 |
+| [0206](0206-a-boolean-result-is-one-object.md) | A boolean result is one object, a hole is part of one region, and splitting is a command | Accepted; the tree rule the contour boolean, a body boolean and the profile of 0205 read |
+| [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188; its `busy` answer is amended by 0223 |
+| [0208](0208-a-primitive-is-a-body-a-boolean-cuts.md) | A primitive is a body, so a boolean cuts it in both directions | Accepted; closes the consequence of 0197 |
+| [0209](0209-the-assistant-panel-is-a-window-and-its-turn-runs-between-frames.md) | The assistant's panel is a window, and its turn is driven between frames | Accepted; places the panel 0186 and 0187 asked for; its chrome place extended by 0222 |
+| [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
+| [0211](0211-the-render-is-a-place-beside-the-file-menu.md) | The final render is a place beside the File menu, not a dialog | Accepted; the surface the entry point of 0210 is reached from |
+| [0212](0212-a-batch-names-the-product-it-works-in.md) | A batch names the product it works in, and opening is not a step | Accepted; the field 0098 leaves a caller without |
+| [0213](0213-a-frame-carries-a-finish-and-the-tracer-samples-by-power.md) | A frame carries a finish, and the final render samples the light it is given | Accepted; the frame contract Y3 fills from the catalogue |
+| [0214](0214-a-batch-step-names-what-it-made.md) | A batch step names what it made, and a later step refers to the name | Accepted; the hole 0198 leaves a recipe with |
+| [0215](0215-the-domain-is-taught-and-a-construction-is-composed.md) | The program teaches its domain, and a construction is composed | Accepted; supersedes the recipe of 0192 |
+| [0216](0216-a-decor-is-the-boards-picture-its-size-and-its-grain.md) | A decor is the board's picture, the size it covers and its grain | Accepted; the render half of the material library (Y3) |
+| [0217](0217-supply-names-four-sources.md) | Supply names four sources, and a product is assembled | Accepted; amends the trait list of 0094 |
+| [0218](0218-an-overlays-pair-of-inks-is-the-themes.md) | An overlay's pair of inks is the theme's, and its quiet half is a neutral | Accepted; pays part of the overlay leftover of 0087 `[gizmo]` |
+| [0219](0219-the-base-of-an-armed-boolean-has-an-ink-of-its-own.md) | The base of an armed boolean has an ink of its own | Accepted |
+| [0220](0220-a-drawing-becomes-a-body-per-ring.md) | A drawing becomes a body per ring, and the area pull is the Extrude cell's second method | Accepted; the Extrude cell's gesture of 0205 becomes its second method |
+| [0221](0221-a-ring-is-one-closed-chain-not-three-segments.md) | A ring is one closed chain, not three segments | Accepted; corrects the minimum the domain stated for a contour |
+| [0222](0222-the-assistants-panel-has-one-header-cell.md) | The assistant's panel has one header cell | Accepted; extends the place 0209 left to the key |
+| [0223](0223-a-call-waits-for-the-frame-that-has-the-window.md) | A call waits for the frame that has the window, and a caller that has gone is not performed | Accepted; amends the `busy` answer of 0207 |
+| [0224](0224-two-plan-writers-in-one-checkout-are-one-at-a-time.md) | Two plan writers in one checkout are one at a time | Accepted; amends the `plan/.lock` consequence of 0085 |
+| [0225](0225-a-queued-call-rings-the-window.md) | A queued call rings the window, and the frame that lands it asks for the next one | Accepted; completes the repainting clause 0223 left to X111 |
+| [0226](0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md) | A command names the piece it writes in, and the interface keeps it open | Accepted; amends the command-vs-button clause of 0098 and the `enabled` column of 0185 |
+| [0227](0227-a-released-build-carries-its-words-on-the-surface.md) | A released build carries its words on the surface | Accepted; states the units clause of 0185 with an annotation, refuses the side-vocabulary half of X118 |
+| [0228](0228-the-tool-server-asks-for-a-picture-it-is-handed.md) | The tool server asks for a picture it is handed | Accepted; states the screenshot channel 0028 left open |
+| [0230](0230-an-agent-process-owns-the-model-loop.md) | An agent process owns the model loop, and the bridge is what it holds | Accepted |
+| [0231](0231-the-list-is-short-rows-and-a-schema-is-read-by-id.md) | The list is short rows, and a schema is read one id at a time | Accepted; amends the `command_list` answer of 0185 and the dictionary clause of 0227 |
+| [0232](0232-the-chat-offers-the-tools-the-door-publishes.md) | The chat offers the tools the door publishes, and the history keeps every call | Accepted; supersedes the no-read-tool ruling of J14, refines 0185, 0189 and 0190 |
+| [0233](0233-a-tab-owns-its-assistant-conversation.md) | A tab owns its assistant conversation, and one panel draws the tab in front | Accepted; tab routing of a process's calls is debt |
 
 ## Format
 

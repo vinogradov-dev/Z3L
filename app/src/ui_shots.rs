@@ -23,10 +23,12 @@ use ui::settings::{
     DEFAULT_CURSOR_POINTS, DEFAULT_PANEL_OPACITY, MAX_HANDLE_POINTS, MAX_PANEL_OPACITY, MAX_RING_PERCENT,
     MIN_HANDLE_POINTS, MIN_PANEL_OPACITY, MIN_RING_PERCENT, PanelState, Settings, ThemeChoice,
 };
+use ui::theme;
 use ui::theme::ThemePreset;
 use ui::ui_scale;
 
 use crate::App;
+use crate::contour_gizmo;
 
 /// The window a shot is drawn for, in points: the default launch size (M2).
 const WINDOW: egui::Vec2 = egui::vec2(1280.0, 840.0);
@@ -135,6 +137,24 @@ impl Picture {
         a.iter().zip(b).filter(|(a, b)| a != b).count()
     }
 
+    /// The number of pixels within [`INK_TOLERANCE`] of `ink`.
+    fn near(&self, ink: egui::Color32) -> usize {
+        let (pixels, _) = self.rgba.as_chunks::<4>();
+        pixels
+            .iter()
+            .filter(|pixel| {
+                let gap = |channel: u8, ink: u8| i32::from(channel) - i32::from(ink);
+                let (red, green, blue) = (gap(pixel[0], ink.r()), gap(pixel[1], ink.g()), gap(pixel[2], ink.b()));
+                red * red + green * green + blue * blue <= INK_TOLERANCE * INK_TOLERANCE
+            })
+            .count()
+    }
+
+    /// The number of pixels in the picture.
+    fn pixels(&self) -> usize {
+        self.width as usize * self.height as usize
+    }
+
     /// Whether the picture is a single flat colour, which no interface is.
     fn is_flat(&self) -> bool {
         let (pixels, _) = self.rgba.as_chunks::<4>();
@@ -147,17 +167,10 @@ impl Picture {
 
 /// A device and a queue with no surface behind them, or the sentence that says why there is none.
 ///
-/// The upload probe in `scene_build` borrows the same device, so the shell creates one only here.
+/// The upload probe in `scene_build` and the agent's preview borrow the same device, so the shell
+/// creates one only once (`crate::preview::render_state`).
 pub(crate) fn render_state() -> Result<egui_wgpu::RenderState, String> {
-    let configuration = egui_wgpu::WgpuConfiguration::default();
-    let instance = wgpu::Instance::default();
-    pollster::block_on(egui_wgpu::RenderState::create(
-        &configuration,
-        &instance,
-        None,
-        egui_wgpu::RendererOptions::PREDICTABLE,
-    ))
-    .map_err(|error| format!("this machine has no GPU adapter to render the interface shots with: {error}"))
+    crate::preview::render_state()
 }
 
 /// Draws one cell offscreen, writes it to `path` and returns what it wrote.
@@ -199,7 +212,7 @@ fn settle(
     jobs
 }
 
-/// Draws one frame with `events`, uploads what it new-textured and returns the jobs to paint.
+/// Draws one frame of `app` with `events`, uploads what it new-textured and returns the jobs.
 fn run_frame(
     app: &mut App,
     ctx: &egui::Context,
@@ -207,9 +220,23 @@ fn run_frame(
     screen: egui::Rect,
     events: Vec<egui::Event>,
 ) -> Vec<egui::ClippedPrimitive> {
-    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+    paint_frame(ctx, render_state, screen, events, |ui| {
         app.frame(ui);
-    });
+    })
+}
+
+/// Draws one frame of `draw` with `events`, uploads what it new-textured and returns the jobs.
+///
+/// A shot of one overlay paints that overlay instead of the whole window, so the picture can be
+/// taken against a surface the shell would not open on its own (X97's two boards).
+fn paint_frame(
+    ctx: &egui::Context,
+    render_state: &egui_wgpu::RenderState,
+    screen: egui::Rect,
+    events: Vec<egui::Event>,
+    draw: impl FnMut(&mut egui::Ui),
+) -> Vec<egui::ClippedPrimitive> {
+    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, draw);
     let mut delta = std::mem::take(&mut output.textures_delta);
     {
         let mut renderer = render_state.renderer.write();
@@ -396,6 +423,59 @@ fn the_interface_renders_offscreen_to_one_png_per_cell() {
     );
 }
 
+/// Draws the render place into one picture: the numbers, the destination and a run's progress.
+///
+/// The place replaces the workspace, so the picture shows what a person sees after pressing the
+/// `Render` tab — and it is the only way to judge the page's density and its progress row, which a
+/// rectangle test cannot answer (ADR 0211).
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/render-place.png"]
+fn the_render_place_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots/render-place").join("workspace.json");
+    let session = crate::scene_build::demo_session().expect("the sample session");
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the shell builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+    // The place, with a destination and a run that reports progress: the shot is taken between two
+    // frames of a real render, so the bar and the counter are what the page actually draws.
+    app.render_open = true;
+    // A real run at a size that finishes in a second, so the picture shows the page's own report
+    // line rather than a stage no person has reached yet.
+    let image = directory.join("render-place-example.png");
+    let _ = std::fs::remove_file(&image);
+    app.render_place.set_path(image.clone());
+    app.render_place.settings().width = 480;
+    app.render_place.settings().height = 360;
+    app.render_place.settings().samples = 4;
+    app.start_render(&ctx);
+    app.render_place.wait();
+    assert!(image.is_file(), "the place wrote its image");
+    let mut jobs = Vec::new();
+    for _ in 0..SETTLE_FRAMES {
+        jobs = run_frame(&mut app, &ctx, &render_state, screen, Vec::new());
+    }
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let path = directory.join("render-place.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the render place is in {}", path.display());
+}
+
 /// Draws the box tool's base rectangle and pulled height into one picture.
 ///
 /// The gesture is driven through the real shell with pointer events, so the shot proves the whole
@@ -496,6 +576,392 @@ fn the_box_tool_gesture_is_painted_offscreen() {
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the box tool is in {}", path.display());
+}
+
+/// The size of the contour overlay's own shot, in points.
+const OVERLAY_SHOT: egui::Vec2 = egui::vec2(520.0, 360.0);
+
+/// The scale the overlay's shot is drawn at, in pixels per point.
+///
+/// The pair is 2 and 3.5 points wide, and at 1:1 the casing under the ink is a band under a pixel:
+/// a stroke that thin cannot be counted, and this picture is here to be counted as well as looked
+/// at. At 2:1 the casing is a band of a pixel and a half and both inks have a solid core; the
+/// picture is the same drawing at double size, so what it shows is what a person sees magnified.
+const OVERLAY_SCALE: f32 = 2.0;
+
+/// How far the camera of the overlay's shot stands from the drawing, in millimetres.
+const OVERLAY_CAMERA_MM: f64 = 750.0;
+
+/// The point of the drawing the overlay's camera looks at, in millimetres: the middle of the
+/// sketch, so the whole shape is in the picture.
+const OVERLAY_CAMERA_TARGET: [f64; 3] = [150.0, 80.0, 0.0];
+
+/// How far one pixel of a shot may be from an ink and still count as that ink.
+///
+/// The strokes have solid cores, so the tolerance only absorbs the rounding of the colour that
+/// reaches the target; it is smaller than the distance between any two of the inks and the board.
+const INK_TOLERANCE: i32 = 12;
+
+/// The two boards the overlay is drawn over: the bright beech face every panel gets, and the dark
+/// tone every edge band wears (`scene_build`'s v1 placeholder materials).
+///
+/// A colour literal is not the theme's business in a test, and these two are read from the scene
+/// rather than picked here, so a picture of the overlay moves when the material does.
+fn boards() -> [(&'static str, egui::Color32); 2] {
+    [
+        ("beech", screen_ink(crate::scene_build::PANEL_COLORS[0])),
+        ("band", screen_ink(crate::scene_build::EDGE_BAND_COLOR)),
+    ]
+}
+
+/// A linear scene colour as the screen draws it: the sRGB transfer of each channel, without the
+/// final render's tone curve, because the shot paints a surface rather than the light on one.
+fn screen_ink(linear: [f32; 4]) -> egui::Color32 {
+    let channel = |value: f32| {
+        let value = value.clamp(0.0, 1.0);
+        let encoded = if value <= 0.003_130_8 { value * 12.92 } else { 1.055 * value.powf(1.0 / 2.4) - 0.055 };
+        (encoded * 255.0).round() as u8
+    };
+    egui::Color32::from_rgb(channel(linear[0]), channel(linear[1]), channel(linear[2]))
+}
+
+/// A project with one closed sketch, and an edit of it that has already moved a corner.
+///
+/// The working copy differs from the shape the edit started from, which is the state the owner's
+/// report is about: both are on screen at once and the change has to be readable.
+fn overlay_draft() -> (model::Project, ui::ContourEdit) {
+    let mut project = testkit::sample_project();
+    let root = project.root().id();
+    let rectangle = model::Path::polyline(
+        vec![
+            [testkit::millimetres(0), testkit::millimetres(0)],
+            [testkit::millimetres(300), testkit::millimetres(0)],
+            [testkit::millimetres(300), testkit::millimetres(200)],
+            [testkit::millimetres(0), testkit::millimetres(200)],
+        ],
+        true,
+    )
+    .expect("a closed rectangle");
+    let sketch = project
+        .add_object(root, "Sketch", model::Placement::IDENTITY, model::Geometry::Path(rectangle))
+        .expect("a path object");
+    let mut edit = ui::ContourEdit::start(&project, ui::ContourTarget::Path(sketch)).expect("a path is editable");
+    let first = edit.draft().id_at(0).expect("a closed sketch has a first side");
+    edit.move_corner_at(
+        model::PathCorner::Start(first),
+        [testkit::millimetres(60), testkit::millimetres(-40)],
+        model::CornerMove::Free,
+    )
+    .expect("the corner moves");
+    (project, edit)
+}
+
+/// Draws the contour overlay over a light and a dark board, in both variants (X97).
+///
+/// The owner reported the two shapes as almost one colour, which a rectangle test cannot answer:
+/// the question is what the two inks look like over a material, and a material is a picture. The
+/// shot paints the real gizmo — base, casing, working copy and grips — over the bright beech face
+/// and the dark band tone, in both variants, and counts the pixels of each ink, so the pair is
+/// known to reach the screen and the board to remain the ground of the picture.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/contour-overlay-*.png"]
+fn the_contour_overlay_reads_over_a_light_and_a_dark_board() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, OVERLAY_SHOT);
+    let [x, y, z] = OVERLAY_CAMERA_TARGET;
+    let camera =
+        scene::Camera::new(geom::DVec3::new(x, y, z), OVERLAY_CAMERA_MM).expect("a camera at the shot's distance");
+    let (project, edit) = overlay_draft();
+
+    for dark in [true, false] {
+        for (board_name, board) in boards() {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(OVERLAY_SCALE);
+            let preference = if dark { egui::ThemePreference::Dark } else { egui::ThemePreference::Light };
+            theme::install_with(&ctx, preference, ThemePreset::GraphiteCopper, None);
+            let mut inks = (egui::Color32::TRANSPARENT, egui::Color32::TRANSPARENT, egui::Color32::TRANSPARENT);
+            let mut jobs = Vec::new();
+            for _ in 0..SETTLE_FRAMES {
+                jobs = paint_frame(&ctx, &render_state, screen, Vec::new(), |ui| {
+                    ui.painter().rect_filled(screen, 0.0, board);
+                    inks = (theme::original(ui), theme::working_copy(ui), theme::casing(ui));
+                    let _ =
+                        contour_gizmo::ContourGizmo::default().paint(ui, screen.shrink(24.0), camera, &project, &edit);
+                });
+            }
+            let pixels_per_point = ctx.pixels_per_point();
+            let size = [
+                (OVERLAY_SHOT.x * pixels_per_point).round().max(1.0) as u32,
+                (OVERLAY_SHOT.y * pixels_per_point).round().max(1.0) as u32,
+            ];
+            let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the overlay paints");
+            let path =
+                directory.join(format!("contour-overlay-{}-{board_name}.png", if dark { "dark" } else { "light" }));
+            testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+            let picture = Picture { width: size[0], height: size[1], rgba };
+            assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+            // Both inks of the pair reach the screen, and the casing under the working copy is
+            // there to hold it off a board of its own colour.
+            let (original, working, casing) = (picture.near(inks.0), picture.near(inks.1), picture.near(inks.2));
+            assert!(
+                original >= 100,
+                "{}: the shape the edit started from reaches {original} pixels of its ink",
+                path.display()
+            );
+            assert!(working >= 800, "{}: the working copy reaches {working} pixels", path.display());
+            assert!(casing >= 300, "{}: the casing reaches {casing} pixels", path.display());
+            // The board is still the ground of the picture: the overlay is a line, not a veil.
+            let board_pixels = picture.near(board);
+            assert!(
+                board_pixels * 2 > picture.pixels(),
+                "{}: the board covers {board_pixels} of {} pixels",
+                path.display(),
+                picture.pixels()
+            );
+            println!("{}: original {original}, working {working}, casing {casing}", path.display());
+        }
+    }
+}
+
+/// Draws the sketch overlay while a corner above the work plane captures the pointer.
+///
+/// The picture is the one the owner's report could not be answered from rectangles: the marker of a
+/// snap and the end of the preview edge must be the same pixel, because the click stores exactly the
+/// point the marker names (U119). The mode is the workspace's 2.5D reading, so the answer is the
+/// candidate's foot on the drawing plane and the preview runs from the first point to that foot.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/snap-marker.png"]
+fn the_snap_marker_is_painted_on_the_end_of_the_preview() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("snap-workspace.json");
+    // A block hanging above the drawing plane, so the two readings of a candidate are far apart on
+    // screen: the picture is about that distance, and a floor panel's 18 mm is a few pixels.
+    let mut project = testkit::sample_project();
+    let root = project.root().id();
+    let raised = model::Placement::new(geom::DVec3::new(420.0, -320.0, 320.0), model::Placement::IDENTITY.rotation())
+        .expect("a place above the plane");
+    project
+        .add_object(root, "Raised", raised, model::Geometry::Mesh(testkit::cube_mesh(testkit::millimetres(120))))
+        .expect("a block above the plane");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the application builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    // A corner of that block, above the drawing plane, and the plane point the first click of the
+    // sketch takes. The pointer goes where the eye sees the corner.
+    let (first, candidate) = {
+        let document = app.tabs.active_mut();
+        document.editor.start_drawing(ui::DrawTool::Line);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        let camera = document.camera();
+        let project = document.session.project();
+        let sight = document.editor.flags().sight();
+        let candidate = project
+            .snap_marks(sight)
+            .into_iter()
+            .find(|mark| mark.point.z > 250.0)
+            .expect("the sample scene has a corner above the plane");
+        let first = crate::gizmo_math::screen_point(camera, rect, geom::DVec3::new(140.0, -320.0, 0.0))
+            .expect("the work plane is on screen");
+        let at = crate::gizmo_math::screen_point(camera, rect, candidate.point).expect("the corner is on screen");
+        (first, at)
+    };
+    let click = |pointer: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let frames = vec![
+        vec![egui::Event::PointerMoved(first), click(first, true), click(first, false)],
+        vec![egui::Event::PointerMoved(candidate)],
+        vec![egui::Event::PointerMoved(candidate)],
+        vec![egui::Event::PointerMoved(candidate)],
+    ];
+    let mut jobs = Vec::new();
+    for events in frames {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+
+    // The marker is drawn at the point the draft stores, so the overlay's own value answers both:
+    // the place the click takes and the end of the preview edge the picture shows.
+    {
+        let document = app.tabs.active();
+        let placed = document.draw_gizmo.hover_point().expect("the pointer places a point");
+        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let stored = geom::DVec3::new(placed[0].millimetres_f64(), placed[1].millimetres_f64(), 0.0);
+        let drawn = crate::gizmo_math::screen_point(document.camera(), rect, stored).expect("the point is on screen");
+        assert!(
+            (marker - drawn).length() < 0.5,
+            "the marker stands on the point the click stores: {marker:?} against {drawn:?}"
+        );
+        assert_ne!(
+            document.draw_gizmo.snap_kind(),
+            Some(model::SnapKind::Grid),
+            "a corner of the scene took the pointer"
+        );
+    }
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("snap-marker.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the snap marker is in {}", path.display());
+}
+
+/// Draws a 3D sketch started on a board's top face: the plane guide and the marker on that face.
+///
+/// The picture is the one the 3D mode's switch cannot be answered from rectangles: the plane a sketch
+/// is stored on is the face under its first click, so the guide's cross and the marker stand on the
+/// board and not on the floor, and the preview edge runs in that face (U121). The mode is the
+/// workspace's 3D reading; a click on the board's top face starts the draft and the pointer then
+/// moves to its other corner.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/work-plane.png"]
+fn the_sketch_on_a_face_plane_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("plane-workspace.json");
+    // A block standing 320 mm above the floor: its top face is far enough from the world XY for the
+    // picture to show which plane the sketch took.
+    let mut project = testkit::sample_project();
+    let root = project.root().id();
+    let raised = model::Placement::new(geom::DVec3::new(420.0, -320.0, 320.0), model::Placement::IDENTITY.rotation())
+        .expect("a place above the floor");
+    project
+        .add_object(root, "Raised", raised, model::Geometry::Mesh(testkit::cube_mesh(testkit::millimetres(120))))
+        .expect("a block above the floor");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut settings = Settings::default();
+    settings.snaps.mode = model::SnapMode::Space;
+    let mut app =
+        App::test_app(&ctx, Some(render_state.clone()), workspace, settings, session).expect("the application builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    // The middle of the block's top face, its corners 60 mm either way, and the pointer beside one of
+    // them so the sketch's own corner captures it in the 3D reading.
+    let top = geom::DVec3::new(420.0, -320.0, 380.0);
+    let (first, beside) = {
+        let document = app.tabs.active_mut();
+        document.editor.start_drawing(ui::DrawTool::Line);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        let camera = document.camera();
+        let first = crate::gizmo_math::screen_point(camera, rect, top).expect("the face is on screen");
+        (first, first + egui::vec2(24.0, 0.0))
+    };
+    let click = |pointer: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let frames = vec![
+        vec![egui::Event::PointerMoved(first)],
+        vec![egui::Event::PointerMoved(first), click(first, true), click(first, false)],
+        vec![egui::Event::PointerMoved(beside)],
+        vec![egui::Event::PointerMoved(beside)],
+    ];
+    let mut jobs = Vec::new();
+    for events in frames {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+
+    // The click on the face froze that face's plane, and the pointer beside the first point still
+    // stores a point of it: the plane is not the floor, and the draft is not the camera's.
+    {
+        let document = app.tabs.active();
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let plane = document.draw_gizmo.plane(camera);
+        assert!(
+            (plane.normal() - geom::DVec3::Z).length() < 1.0e-6,
+            "the plane of the block's top face is horizontal: {:?}",
+            plane.normal()
+        );
+        let plane_local = document.draw_gizmo.hover_point().expect("the pointer stores a point of the plane");
+        let stored = plane.world(geom::DVec2::new(plane_local[0].millimetres_f64(), plane_local[1].millimetres_f64()));
+        assert!((stored.z - top.z).abs() < 0.5, "the sketch is stored on the face, not on the floor: {stored:?}");
+        let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+        let drawn = crate::gizmo_math::screen_point(camera, rect, stored).expect("the point is on screen");
+        assert!(
+            (marker - drawn).length() < 0.5,
+            "the marker stands on the point the click stores: {marker:?} against {drawn:?}"
+        );
+    }
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("work-plane.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the sketch on the face plane is in {}", path.display());
 }
 
 /// Draws the product card in both theme variants: its number column and its folded class tree.

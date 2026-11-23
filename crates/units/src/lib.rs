@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -20,7 +21,7 @@ use thiserror::Error;
 ///
 /// The value is signed because placements and offsets may be negative; dimensions such as a
 /// panel thickness are validated separately where they are used.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Length(i64);
 
@@ -52,6 +53,24 @@ impl Length {
     /// in the document or in a command parameter.
     pub fn millimetres_f64(self) -> f64 {
         self.0 as f64 / 1_000.0
+    }
+
+    /// The length nearest a millimetre reading, or `None` when the value is not one a document can
+    /// hold.
+    ///
+    /// The other half of [`Length::millimetres_f64`]: a pointer that resolved to a point in geometry
+    /// millimetres comes back into the document here, rounded to the micrometre the document stores.
+    /// A value that is not finite, or a rounding that overflows, is `None` rather than a wrapped
+    /// coordinate.
+    pub fn from_millimetres_f64(millimetres: f64) -> Option<Self> {
+        if !millimetres.is_finite() {
+            return None;
+        }
+        let micrometres = (millimetres * 1_000.0).round();
+        if micrometres < i64::MIN as f64 || micrometres > i64::MAX as f64 {
+            return None;
+        }
+        Some(Self(micrometres as i64))
     }
 
     /// Parses a length from decimal millimetres, with an optional `mm` suffix.
@@ -93,7 +112,7 @@ impl Length {
 ///
 /// Degrees are the human-facing unit for placements and the inspector; the document stores
 /// rotations as unit quaternions. The value is signed because Euler angles may be negative.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Degrees(i64);
 

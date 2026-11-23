@@ -1,10 +1,10 @@
 //! The fill plan: the one part a click in a void creates, in the mode the tool is in.
 //!
-//! A post and a shelf are the same question asked of the niche the walls leave (ADR 0099, ADR 0103,
-//! ADR 0106): which part fills it exactly, where does it land, and which outline does it store? The
-//! answer is one [`FillPlan`], derived for cadence-free reasons — the ghost the maker sees, the
-//! distance fields that place it and the `panel.create` the click dispatches all read it, so the
-//! picture, the numbers and the history cannot disagree.
+//! A post, a shelf and a wall are the same question asked of the niche the walls leave (ADR 0099,
+//! ADR 0103, ADR 0106): which part fills it exactly, where does it land, and which outline does it
+//! store? The answer is one [`FillPlan`], derived for cadence-free reasons — the ghost the maker
+//! sees, the distance fields that place it and the `panel.create` the click dispatches all read it,
+//! so the picture, the numbers and the history cannot disagree.
 //!
 //! Both modes start from the same cut of the cell at the board's own thickness ([`Niche::cut`]), so
 //! a part is inside the walls at both faces by construction:
@@ -25,10 +25,12 @@
 use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use geom::{Contact, DQuat, DVec2, DVec3};
+use geom::{Contact, DQuat, DVec2, DVec3, Region};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use units::{Degrees, Length};
 
-use super::niche::{signed_area, surface_corners};
+use super::niche::{document_ring, signed_area, surface_corners};
 use super::surface::SurfaceBox;
 use crate::*;
 
@@ -37,6 +39,14 @@ use crate::*;
 /// A plane whose normal lies this close to the board's thickness axis bounds no outline edge, which
 /// is the same threshold the niche's section cut uses to leave such a plane to its hold test.
 const LEVEL_WALL: f64 = 1.0e-3;
+
+/// Chord tolerance of the polygon a plan reports beside the shape it stores, in millimetres.
+///
+/// A plane can describe a straight wall exactly and a curve only by chords, so a shaped part keeps its
+/// curve in the **outline** it stores — the panel's own ring, arcs and all — and reports the polygon the
+/// ghost draws beside it. A quarter of a millimetre is the tolerance the shell already samples a frame's
+/// footprint at, so the ghost and the frame it sits in are cut alike (N17, N33).
+const FILL_SAMPLE_MM: f64 = 0.25;
 
 /// How far a measured corner may sit off the wall line it was cut from, in millimetres.
 ///
@@ -85,7 +95,11 @@ impl FillRequest {
 }
 
 /// How a fill tool reads the section the walls leave.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+///
+/// It is a wire word as well as a tool's mode: a command that fills a niche names it, so a caller
+/// that cannot see the void asks for the largest rectangle or for the shape the walls leave.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum FillMode {
     /// The largest rectangle that fits inside the section, keeping the standard rectangle panel.
     #[default]
@@ -113,8 +127,9 @@ pub struct FillPlan {
     pub niche: Niche,
     /// The plan's base-face polygon in panel-local millimetres, counter-clockwise.
     ///
-    /// It is the shape the ghost draws and the shape the panel occupies: the inscribed rectangle in
-    /// [`FillMode::Fit`], the section itself in [`FillMode::Shape`].
+    /// It is the shape the ghost draws: the inscribed rectangle in [`FillMode::Fit`], the section itself
+    /// in [`FillMode::Shape`] — and where the frame's section carries an arc, the same ring sampled at
+    /// [`FILL_SAMPLE_MM`], because a ghost is a wireframe and the panel keeps the arc.
     pub corners: Vec<DVec2>,
     /// The plan's far-face polygon, in the same frame and the same order as [`FillPlan::corners`].
     ///
@@ -139,7 +154,9 @@ pub enum FillRefusal {
     Outside,
     /// The free space around the point is not one convex cell.
     Unrepresentable,
-    /// The void belongs to another product than the one that is open.
+    /// The open product's own footprint is not a convex ring, so the space it reserves is not one cell.
+    Footprint,
+    /// The void belongs to another product than the one the part is for.
     OtherProduct,
     /// Neither the product nor the measured point has a usable frame.
     NoFrame,
@@ -157,6 +174,38 @@ pub enum FillRefusal {
     ///
     /// `Shape` falls back to the slab section, as above; the classifier's own refusal.
     Wedge,
+}
+
+impl std::fmt::Display for FillRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.sentence())
+    }
+}
+
+impl std::error::Error for FillRefusal {}
+
+impl FillRefusal {
+    /// The sentence the refusal is read by, in the wire's English.
+    ///
+    /// One wording serves the ghost a maker sees and the command a caller dispatches, so the two
+    /// cannot explain one measured void differently.
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::Outside => "Point at the empty space inside the open product.",
+            Self::Unrepresentable => "The empty space here is not one straight shape; point at a plainer gap.",
+            Self::Footprint => "The open piece's frame is not convex, so no one part takes its shape.",
+            Self::OtherProduct => "The void belongs to another product than the one this part is for.",
+            Self::NoFrame => "The open product has no frame.",
+            Self::TooThin => "The void is thinner than the material.",
+            Self::TooSmall => "The void is too small for a panel.",
+            Self::WallsDisagree => {
+                "The walls here lean against each other, so no flat board meets them all; use the largest fit."
+            }
+            Self::Wedge => {
+                "The void narrows across the board's thickness, where no end bevel helps; use the largest fit."
+            }
+        }
+    }
 }
 
 impl Project {
@@ -177,6 +226,7 @@ impl Project {
         let niche = self.niche(request.point, sight, contact).map_err(|refusal| match refusal {
             NicheRefusal::Outside => FillRefusal::Outside,
             NicheRefusal::Unrepresentable => FillRefusal::Unrepresentable,
+            NicheRefusal::Footprint => FillRefusal::Footprint,
         })?;
         self.fill_plan_in(&niche, product, request, sight)
     }
@@ -244,6 +294,7 @@ pub const fn free_axis(fill: Fill) -> usize {
     match fill {
         Fill::WidthAndDepth => 2,
         Fill::HeightAndDepth => 0,
+        Fill::WidthAndHeight => 1,
     }
 }
 
@@ -262,9 +313,10 @@ struct Part {
 /// How a fill's board sits in the product frame: which product axis each local axis runs along.
 ///
 /// The shelf is the flat stance, the post is the shelf turned a quarter-turn to the right about `+Y`
-/// (ADR 0105), so the board's own axes are a permutation of the product's with `+1` or `-1` on local
-/// `Y` and `Z`. A fill may turn a board half a turn about its own length axis, which negates both
-/// (ADR 0108), and that is the whole vocabulary this needs.
+/// and the wall is the post turned a quarter-turn to the right about `+Z` (ADR 0105), so the board's
+/// own axes are a permutation of the product's with `+1` or `-1` on local `Y` and `Z`. A fill may
+/// turn a board half a turn about its own length axis, which negates both (ADR 0108), and that is
+/// the whole vocabulary this needs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Stance {
     /// The product axis the board's local `X` runs along.
@@ -320,6 +372,18 @@ fn stance(fill: Fill) -> Stance {
             other_face: false,
             turn: DQuat::from_rotation_y(-FRAC_PI_2),
         },
+        // The wall is the post turned a quarter-turn to the right about `+Z`, so its length runs
+        // up, its width across the front and its material towards `+Y`, face `A` pointing at the
+        // maker (ADR 0105). Its free axis is the product's depth, which is where the pointer sits.
+        Fill::WidthAndHeight => Stance {
+            u: 2,
+            v: 0,
+            t: 1,
+            against_y: false,
+            against_z: false,
+            other_face: false,
+            turn: DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2),
+        },
     }
 }
 
@@ -358,22 +422,23 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     let value = follow(free.unwrap_or(local[stance.t]), low, high);
     // A hidden body is a boundary of the part and not a slice out of it: the footprint is cut back at
     // the body's face in both modes, so the part stops where the material starts (X73, ADR 0175).
-    let trim = |polygon: Vec<DVec2>, stance: &Stance| -> Result<Vec<DVec2>, FillRefusal> {
+    // The cuts are handed back with the polygon so an exact outline takes the same ones (ADR 0204).
+    let trim = |polygon: Vec<DVec2>, stance: &Stance| -> Result<(Vec<DVec2>, Vec<Cut>), FillRefusal> {
         trim_footprint(polygon, hidden, stance, local, (value, value + gap))
     };
-    let (stance, polygon, angles) = match mode {
+    let (stance, polygon, angles, cuts) = match mode {
         FillMode::Fit => {
-            let footprint =
-                niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-            (stance, trim(footprint, &stance)?, Vec::new())
+            let footprint = fit_footprint(niche, &stance, (value, value + gap)).ok_or(FillRefusal::TooSmall)?;
+            let (polygon, cuts) = trim(footprint, &stance)?;
+            (stance, polygon, Vec::new(), cuts)
         }
         FillMode::Shape => match reference_face(niche, value, gap, stance) {
             Ok(stance) => {
                 let face = stance.face(value, gap);
                 let section = niche.cut(stance.t, (face, face), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-                let section = trim(section, &stance)?;
+                let (section, cuts) = trim(section, &stance)?;
                 let angles = wall_bevels(niche, &section, face, &stance);
-                (stance, section, angles)
+                (stance, section, angles, cuts)
             }
             // The wall planes here cannot all be met by one flat end face: two walls lean against
             // each other, or a wall lies nearly level with the board. The shape is still useful and
@@ -383,12 +448,23 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
             Err(FillRefusal::WallsDisagree | FillRefusal::Wedge) => {
                 let section =
                     niche.cut(stance.t, (value, value + gap), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
-                (stance, trim(section, &stance)?, Vec::new())
+                let (section, cuts) = trim(section, &stance)?;
+                (stance, section, Vec::new(), cuts)
             }
             Err(refusal) => return Err(refusal),
         },
     };
-    let (part, anchor) = part_of(&polygon, mode, &stance, &angles, thickness)?;
+    let exact = exact_section(niche, mode, &stance, &cuts, DVec2::new(local[stance.u], local[stance.v]));
+    let shape = PartShape {
+        footprint: &polygon,
+        mode,
+        stance: &stance,
+        angles: &angles,
+        thickness,
+        exact,
+        pointer: DVec2::new(local[stance.u], local[stance.v]),
+    };
+    let (part, anchor) = part_of(shape)?;
     // The panel's zero corner is the outline's own base corner, which the product frame answers from
     // the stance: the lower end of each axis the board runs with and the higher one where it runs
     // against, then the base face along the thickness.
@@ -398,6 +474,68 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     translation[stance.t] = stance.face(value, gap);
     let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
     Ok((part, placement))
+}
+
+/// The polygon a fit searches: the frame's whole reserved shape when the stance is a shelf's.
+///
+/// A shelf's own plane is the plan, and the plan's free shape is the ring the frame draws, whole
+/// (ADR 0204). The cell's `cut` is the convex piece the planes describe, which is the right reading for
+/// a board standing across the void and a smaller one for a shelf: so a fit takes the section the frame
+/// reserves, and falls back to the cell where the frame is a plain box.
+fn fit_footprint(niche: &Niche, stance: &Stance, slab: (f64, f64)) -> Option<Vec<DVec2>> {
+    let plan = stance.u == 0 && stance.v == 1 && stance.t == 2 && !stance.other_face;
+    if plan && let Some(polygon) = niche.section_polygon() {
+        return Some(polygon);
+    }
+    niche.cut(stance.t, slab, (stance.u, stance.v))
+}
+
+/// The frame's own section a part is cut to, when the cell can answer one.
+///
+/// A cell seeded from a shaped frame keeps that frame's ring exactly (ADR 0201, N33, ADR 0204), and a
+/// prism's section is the same at every height, so a shelf takes the ring itself instead of the chords
+/// of it. Two conditions hold it back: the part must be the shape rather than the largest fit, and its
+/// own plane must *be* the section plane and keep the panel's own axes — a post or a wall stands across
+/// the cell, where the section is a projection of the ring and not the ring.
+///
+/// A hidden body trims the ring by the half-planes the polygon trim chose, not by a polygon rule, so a
+/// part that stops at a hidden part still keeps the frame's own arc (ADR 0204, X73, ADR 0175).
+fn exact_section(niche: &Niche, mode: FillMode, stance: &Stance, cuts: &[Cut], point: DVec2) -> Option<Contour> {
+    let flat = stance.u == 0 && stance.v == 1 && stance.t == 2;
+    let square = !stance.against_y && !stance.against_z && !stance.other_face;
+    if mode != FillMode::Shape || !flat || !square {
+        return None;
+    }
+    let section = niche.section()?;
+    if cuts.is_empty() {
+        return Some(section.clone());
+    }
+    let ring = section.to_geometry().ok()?;
+    let mut region = Region::new(ring, Vec::new()).ok()?;
+    for cut in cuts {
+        region = region.clip_half_plane_around(cut.normal, cut.offset, point).ok()??;
+    }
+    region_contour(&region)
+}
+
+/// The document ring a region's outer boundary draws, or `None` when it cannot be stored.
+fn region_contour(region: &Region) -> Option<Contour> {
+    let segments = region
+        .outer()
+        .segments()
+        .iter()
+        .map(|segment| ContourSegment::from_geom(*segment).ok())
+        .collect::<Option<Vec<_>>>()?;
+    Contour::new(segments).ok()
+}
+
+/// One half-plane a hidden body's face cuts away from the part: its normal and its offset.
+#[derive(Clone, Copy, Debug)]
+struct Cut {
+    /// The normal of the kept side, in the board's own two axes.
+    normal: DVec2,
+    /// The offset of the face along that normal.
+    offset: f64,
 }
 
 /// The stance whose base face is the wide one: the face a cut-only bevel can keep as the outline.
@@ -501,14 +639,27 @@ fn wall_bevels(niche: &Niche, section: &[DVec2], face: f64, stance: &Stance) -> 
     bevels
 }
 
-/// The part a footprint becomes in `mode`, with the section point the panel is anchored at.
-fn part_of(
-    footprint: &[DVec2],
+/// One part's own reading of the void: the footprint, the mode, the stance and what the frame adds.
+struct PartShape<'a> {
+    /// The free space in the board's own two axes, in the product frame.
+    footprint: &'a [DVec2],
+    /// How the part takes it.
     mode: FillMode,
-    stance: &Stance,
-    angles: &[Option<Degrees>],
+    /// The axes the board runs with.
+    stance: &'a Stance,
+    /// The bevel each edge of the footprint asks for, when a wall leans.
+    angles: &'a [Option<Degrees>],
+    /// The material's thickness.
     thickness: Length,
-) -> Result<(Part, DVec2), FillRefusal> {
+    /// The frame's own ring, when the part takes the shape rather than the largest fit.
+    exact: Option<Contour>,
+    /// The pointer's own place in the board's two axes: a fit goes where the hand points.
+    pointer: DVec2,
+}
+
+/// The part a footprint becomes in `mode`, with the section point the panel is anchored at.
+fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
+    let PartShape { footprint, mode, stance, angles, thickness, exact, pointer } = shape;
     let Some(first) = footprint.first().copied() else {
         return Err(FillRefusal::TooSmall);
     };
@@ -519,7 +670,9 @@ fn part_of(
     let high = footprint.iter().copied().fold(first, DVec2::max);
     match mode {
         FillMode::Fit => {
-            let (corner, size) = largest_rectangle(footprint).ok_or(FillRefusal::TooSmall)?;
+            let (corner, size) = largest_rectangle_through(footprint, pointer)
+                .or_else(|| largest_rectangle(footprint))
+                .ok_or(FillRefusal::TooSmall)?;
             let nominal_size = PanelNominalSize::new(
                 length_of(size.x).ok_or(FillRefusal::TooSmall)?,
                 length_of(size.y).ok_or(FillRefusal::TooSmall)?,
@@ -532,6 +685,10 @@ fn part_of(
                 Part { outline, nominal_size, corners: corners.clone(), far_corners: corners, bevels: Vec::new() },
                 corner,
             ))
+        }
+        FillMode::Shape if exact.is_some() => {
+            let ring = exact.ok_or(FillRefusal::TooSmall)?;
+            exact_part(&ring, stance)
         }
         FillMode::Shape => {
             let ring = local_ring(footprint, angles, stance, low, high);
@@ -560,6 +717,29 @@ fn part_of(
             Ok((Part { outline, nominal_size, corners: ring.points, far_corners, bevels }, anchor))
         }
     }
+}
+
+/// The part whose outline is the frame's own ring: a curve of the frame stays a curve of the part.
+///
+/// The ring is moved to the panel's own frame once — the mirror the board's stance applies and the move
+/// to the zero corner — as one rigid flat transform, so an arc stays an arc and the classifier can still
+/// read the case's own radius. Nothing here bevels: a cell whose walls all stand plumb has no tilted
+/// wall, so the far face is the base face. The polygon beside the outline is the same ring sampled, which
+/// is the shape the ghost draws; the ring itself is what the panel stores (N33).
+fn exact_part(section: &Contour, stance: &Stance) -> Result<(Part, DVec2), FillRefusal> {
+    let ring = section.to_geometry().map_err(|_| FillRefusal::TooSmall)?;
+    let (low, high) = ring.bounds().ok_or(FillRefusal::TooSmall)?;
+    let anchor = DVec2::new(low.x, if stance.against_y { high.y } else { low.y });
+    let offset = DVec2::new(-anchor.x, if stance.against_y { high.y } else { -anchor.y });
+    let ring = ring.placed(0.0, stance.against_y, offset).map_err(|_| FillRefusal::TooSmall)?;
+    let contour = document_ring(&ring).ok_or(FillRefusal::TooSmall)?;
+    let nominal_size = Panel::contour_size(&contour).map_err(|_| FillRefusal::TooSmall)?;
+    let outline = classify_outline(&contour).unwrap_or(PanelOutline::Contour { contour });
+    let polygon = ring.sample(FILL_SAMPLE_MM).map_err(|_| FillRefusal::TooSmall)?;
+    if polygon.len() < 3 {
+        return Err(FillRefusal::TooSmall);
+    }
+    Ok((Part { outline, nominal_size, corners: polygon.clone(), far_corners: polygon, bevels: Vec::new() }, anchor))
 }
 
 /// A section in the panel's own plane, anchored at its zero corner, with the bevel on each edge.
@@ -710,7 +890,28 @@ fn area2(points: &[DVec2]) -> f64 {
 ///
 /// A polygon that leaves no rectangle at all — a line, a single point, a section thinner than the
 /// document's micrometre — answers `None`.
+/// The largest rectangle that lies inside the footprint **and contains `point`**.
+///
+/// A fit goes where the hand points: the largest rectangle of a shape that is not convex can stand in
+/// another arm of it — an L's largest is a column the pointer may be nowhere near — and a part that
+/// appeared across the case from the click would be a surprise (ADR 0204). `None` when no rectangle
+/// through the point fits, which a caller answers with the search that is free to look anywhere.
+fn largest_rectangle_through(points: &[DVec2], point: DVec2) -> Option<(DVec2, DVec2)> {
+    search_rectangle(points, point.is_finite().then_some(point))
+}
+
+/// The largest rectangle inside the footprint, wherever it stands.
 fn largest_rectangle(points: &[DVec2]) -> Option<(DVec2, DVec2)> {
+    search_rectangle(points, None)
+}
+
+/// The largest axis-aligned rectangle inside a polygon, optionally through a point.
+///
+/// The sides of a largest rectangle lie on the shape's own lines or on the point's, so the candidates
+/// are every pair of vertex x-coordinates: a rectilinear outline is answered exactly, and an arc, which
+/// the ring answers by its chord, to the chord. Every candidate is checked against the whole polygon
+/// ([`rect_inside`]), so a band the shape narrows in the middle can never pass a side.
+fn search_rectangle(points: &[DVec2], through: Option<DVec2>) -> Option<(DVec2, DVec2)> {
     if points.len() < 3 {
         return None;
     }
@@ -720,73 +921,82 @@ fn largest_rectangle(points: &[DVec2]) -> Option<(DVec2, DVec2)> {
     if !(max.x - min.x).is_finite() || !(max.y - min.y).is_finite() {
         return None;
     }
-    let height = |u: f64, v: f64| -> Option<f64> {
-        let (low_u, high_u) = vertical_span(points, u)?;
-        let (low_v, high_v) = vertical_span(points, v)?;
-        let bottom = low_u.max(low_v);
-        let top = high_u.min(high_v);
-        (top - bottom > 0.0).then_some(top - bottom)
-    };
-    let score = |u: f64, v: f64| -> Option<f64> {
-        let width = v - u;
-        let height = height(u, v)?;
-        (width > 0.0).then(|| width.ln() + height.ln())
-    };
-    // The breakpoint pairs are the corners of the piecewise search and a first answer on their own;
-    // the refinement only ever improves it.
-    let mut best: Option<(f64, f64, f64)> = None;
+    let mut xs = breakpoints_x(points);
+    if let Some(point) = through {
+        if point.x < min.x || point.x > max.x || point.y < min.y || point.y > max.y {
+            return None;
+        }
+        xs.push(point.x);
+        xs.sort_by(|first, second| first.partial_cmp(second).unwrap_or(std::cmp::Ordering::Equal));
+        xs.dedup_by(|first, second| (*first - *second).abs() <= 1.0e-9);
+    }
+    let mut best: Option<(f64, DVec2, DVec2)> = None;
     let mut consider = |u: f64, v: f64| {
-        if let Some(value) = score(u, v)
-            && best.is_none_or(|(seen, ..)| value > seen)
+        if let Some(point) = through
+            && (u > point.x + 1.0e-9 || v < point.x - 1.0e-9)
         {
-            best = Some((value, u, v));
+            return;
+        }
+        let Some((bottom, top)) = band_span(points, u, v) else {
+            return;
+        };
+        if let Some(point) = through
+            && (point.y < bottom - 1.0e-9 || point.y > top + 1.0e-9)
+        {
+            return;
+        }
+        let size = DVec2::new(v - u, top - bottom);
+        let corner = DVec2::new(u, bottom);
+        if size.x <= 0.0 || size.y <= 0.0 || !rect_inside(points, corner, size) {
+            return;
+        }
+        let area = size.x * size.y;
+        if best.is_none_or(|(seen, ..)| area > seen) {
+            best = Some((area, corner, size));
         }
     };
-    let breakpoints = breakpoints_x(points);
-    for (index, u) in breakpoints.iter().copied().enumerate() {
-        for v in breakpoints.iter().copied().skip(index.saturating_add(1)) {
+    for (index, u) in xs.iter().copied().enumerate() {
+        for v in xs.iter().copied().skip(index.saturating_add(1)) {
             consider(u, v);
         }
     }
-    // Partial maximisation of a jointly concave function is concave in the other variable, so the
-    // outer search over `u` and the inner one over `v` both converge to the single maximum.
+    // A slanted wall puts the best rectangle's side between two vertices, which no candidate names: the
+    // search is sharpened by thirds on each axis. The objective is concave in the other variable on a
+    // convex shape, and every candidate is validated, so a shape that is not convex only loses the
+    // sharpening and never gains a rectangle that stands in material.
     let mut low_u = min.x;
-    let mut high_u = max.x;
+    let mut high_u = through.map_or(max.x, |point| point.x);
     for _ in 0..REFINE_STEPS {
         let first = low_u + (high_u - low_u) / 3.0;
         let second = high_u - (high_u - low_u) / 3.0;
-        let first_best = best_v(points, first, max.x, &mut consider);
-        let second_best = best_v(points, second, max.x, &mut consider);
+        let first_best = best_v(points, first, through, max.x, &mut consider);
+        let second_best = best_v(points, second, through, max.x, &mut consider);
         if first_best <= second_best {
             low_u = first;
         } else {
             high_u = second;
         }
     }
-    let (_, u, v) = best?;
-    let (low_u, high_u) = vertical_span(points, u)?;
-    let (low_v, high_v) = vertical_span(points, v)?;
-    let bottom = low_u.max(low_v);
-    let top = high_u.min(high_v);
-    Some((DVec2::new(u, bottom), DVec2::new(v - u, top - bottom)))
+    let (_, corner, size) = best?;
+    (size.x > 0.0 && size.y > 0.0).then_some((corner, size))
 }
 
-/// How many times the refinement splits each axis.
+/// How many times the sharpening splits each axis.
 ///
-/// Two thirds per step: forty steps shrink the span by more than ten orders of magnitude, which is
-/// past the document's micrometre and stops before the search is comparing noise.
+/// Two thirds per step: forty steps shrink the span by more than ten orders of magnitude, which is past
+/// the document's micrometre and stops before the search is comparing noise.
 const REFINE_STEPS: usize = 40;
 
 /// The best `v` above `u` for one outer candidate, recording every rectangle it evaluates.
-fn best_v(points: &[DVec2], u: f64, high: f64, consider: &mut impl FnMut(f64, f64)) -> f64 {
+fn best_v(points: &[DVec2], u: f64, through: Option<DVec2>, high: f64, consider: &mut impl FnMut(f64, f64)) -> f64 {
     let mut best = f64::NEG_INFINITY;
-    let mut low = u;
+    let mut low = through.map_or(u, |point| point.x.max(u));
     let mut top = high;
     for _ in 0..REFINE_STEPS {
         let first = low + (top - low) / 3.0;
         let second = top - (top - low) / 3.0;
-        let first_score = span_score(points, u, first);
-        let second_score = span_score(points, u, second);
+        let first_score = span_score(points, u, first, through);
+        let second_score = span_score(points, u, second, through);
         consider(u, first);
         consider(u, second);
         best = best.max(first_score).max(second_score);
@@ -800,12 +1010,19 @@ fn best_v(points: &[DVec2], u: f64, high: f64, consider: &mut impl FnMut(f64, f6
 }
 
 /// The log area of the rectangle between `u` and `v`, or negative infinity when there is none.
-fn span_score(points: &[DVec2], u: f64, v: f64) -> f64 {
-    let (Some((low_u, high_u)), Some((low_v, high_v))) = (vertical_span(points, u), vertical_span(points, v)) else {
+///
+/// The search is *steered* by this number, so it carries the whole rule: a band that leaves the point
+/// out is no candidate at all, or the sharpening would walk towards a rectangle the answer may not be.
+fn span_score(points: &[DVec2], u: f64, v: f64, through: Option<DVec2>) -> f64 {
+    let Some((bottom, top)) = band_span(points, u, v) else {
         return f64::NEG_INFINITY;
     };
-    let width = v - u;
-    let height = high_u.min(high_v) - low_u.max(low_v);
+    if let Some(point) = through
+        && (point.y < bottom - 1.0e-9 || point.y > top + 1.0e-9)
+    {
+        return f64::NEG_INFINITY;
+    }
+    let (width, height) = (v - u, top - bottom);
     if width <= 0.0 || height <= 0.0 {
         return f64::NEG_INFINITY;
     }
@@ -818,6 +1035,105 @@ fn breakpoints_x(points: &[DVec2]) -> Vec<f64> {
     xs.sort_by(|first, second| first.partial_cmp(second).unwrap_or(std::cmp::Ordering::Equal));
     xs.dedup_by(|first, second| (*first - *second).abs() <= 1.0e-9);
     xs
+}
+
+/// The y-interval the whole band between `u` and `v` leaves inside a polygon.
+///
+/// A rectangle is inside only when **every** x between its sides is: on a convex polygon the two ends
+/// are enough, because the span between them only narrows towards the middle — but a frame drawn as an
+/// L or with an arc is not convex, and the wall that bounds the band can stand anywhere in it. The
+/// candidates are the polygon's own breakpoints, where a vertical span is lowest or highest, plus the
+/// two ends the search hands in.
+fn band_span(points: &[DVec2], u: f64, v: f64) -> Option<(f64, f64)> {
+    if u > v {
+        return None;
+    }
+    let mut bottom = f64::NEG_INFINITY;
+    let mut top = f64::INFINITY;
+    let mut seen = false;
+    let mut consider = |x: f64| {
+        let Some((low, high)) = vertical_span(points, x) else {
+            return;
+        };
+        seen = true;
+        bottom = bottom.max(low);
+        top = top.min(high);
+    };
+    consider(u);
+    consider(v);
+    for x in breakpoints_x(points) {
+        if x > u + 1.0e-9 && x < v - 1.0e-9 {
+            consider(x);
+        }
+    }
+    (seen && top > bottom).then_some((bottom, top))
+}
+
+/// Whether an axis-aligned rectangle lies inside a simple polygon.
+///
+/// A rectangle is inside when its centre is and no edge of the polygon crosses its interior: a
+/// boundary that steps into the rectangle must cross a side, so a crossing test over the ring answers
+/// every notch, however the span at one x reads.
+fn rect_inside(points: &[DVec2], corner: DVec2, size: DVec2) -> bool {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return false;
+    }
+    let (low, high) = (corner, corner + size);
+    let centre = DVec2::new((low.x + high.x) * 0.5, (low.y + high.y) * 0.5);
+    if !polygon_holds(points, centre) {
+        return false;
+    }
+    !(0..points.len()).any(|index| {
+        let (Some(start), Some(end)) = (points.get(index), points.get((index + 1) % points.len())) else {
+            return true;
+        };
+        edge_crosses_rect(*start, *end, low, high)
+    })
+}
+
+/// Whether the point is inside a simple polygon, by the crossing parity of a ray to `+x`.
+fn polygon_holds(points: &[DVec2], point: DVec2) -> bool {
+    let mut inside = false;
+    for (index, start) in points.iter().enumerate() {
+        let Some(end) = points.get((index + 1) % points.len()) else {
+            return false;
+        };
+        if (start.y > point.y) != (end.y > point.y) {
+            let t = (point.y - start.y) / (end.y - start.y);
+            if point.x < start.x + (end.x - start.x) * t {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+/// Whether a segment crosses the open interior of the rectangle `low..high`.
+///
+/// The segment is clipped against the rectangle's own sides (Liang and Barsky): a parameter interval
+/// inside the box that is more than a point is a crossing, which is the only way a ring's boundary can
+/// step into a rectangle while the rectangle's centre is inside the ring.
+fn edge_crosses_rect(start: DVec2, end: DVec2, low: DVec2, high: DVec2) -> bool {
+    let direction = end - start;
+    let mut enter = 0.0f64;
+    let mut exit = 1.0f64;
+    for (origin, step, floor, ceiling) in [(start.x, direction.x, low.x, high.x), (start.y, direction.y, low.y, high.y)]
+    {
+        if step.abs() <= 1.0e-12 {
+            if origin <= floor + 1.0e-9 || origin >= ceiling - 1.0e-9 {
+                return false;
+            }
+            continue;
+        }
+        let first = (floor - origin) / step;
+        let second = (ceiling - origin) / step;
+        enter = enter.max(first.min(second));
+        exit = exit.min(first.max(second));
+        if exit <= enter + 1.0e-9 {
+            return false;
+        }
+    }
+    exit - enter > 1.0e-9
 }
 
 /// The interval a convex polygon leaves on the vertical line at `x`, in millimetres.
@@ -961,8 +1277,9 @@ fn trim_footprint(
     stance: &Stance,
     at: DVec3,
     slab: (f64, f64),
-) -> Result<Vec<DVec2>, FillRefusal> {
+) -> Result<(Vec<DVec2>, Vec<Cut>), FillRefusal> {
     let mut polygon = polygon;
+    let mut cuts = Vec::new();
     for body in hidden {
         // A body that only reaches the slab's own faces is contact, not a cut.
         if body.max[stance.t] <= slab.0 + TRIM_TOLERANCE || body.min[stance.t] >= slab.1 - TRIM_TOLERANCE {
@@ -974,7 +1291,7 @@ fn trim_footprint(
         if !polygon_hits_rect(&polygon, min, max) {
             continue;
         }
-        let mut best: Option<((bool, f64), Vec<DVec2>)> = None;
+        let mut best: Option<((bool, f64), Vec<DVec2>, Cut)> = None;
         for axis in [stance.u, stance.v] {
             // The two faces of the body on this axis, each keeping the side it bounds.
             for (face, side) in [(body.min[axis], -1.0), (body.max[axis], 1.0)] {
@@ -985,17 +1302,20 @@ fn trim_footprint(
                 };
                 let stands = side * (at[axis] - face) > TRIM_TOLERANCE;
                 let score = (stands, signed_area(&kept));
-                if best.as_ref().is_none_or(|(seen, _)| score > *seen) {
-                    best = Some((score, kept));
+                if best.as_ref().is_none_or(|(seen, ..)| score > *seen) {
+                    best = Some((score, kept, Cut { normal, offset: side * face }));
                 }
             }
         }
         match best {
-            Some((_, kept)) => polygon = kept,
+            Some((_, kept, cut)) => {
+                polygon = kept;
+                cuts.push(cut);
+            }
             None => return Err(FillRefusal::TooSmall),
         }
     }
-    Ok(polygon)
+    Ok((polygon, cuts))
 }
 
 /// Whether a convex polygon and an axis-aligned rectangle share any area.
@@ -1330,7 +1650,7 @@ mod tests {
             .expect("a top placement");
         project.add_panel(product, "Top", top, None, millimetres(18), placement).expect("add a top");
         let thickness = millimetres(18);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = plan(&project, product, fill, mode, thickness)
                     .unwrap_or_else(|refusal| panic!("{fill:?}/{mode:?} refused: {refusal:?}"));
@@ -1377,6 +1697,240 @@ mod tests {
         })
     }
 
+    /// A corner cabinet: 600 wide, 500 deep, 720 tall, one 45-degree corner cut 100 mm along each edge.
+    fn corner_cabinet() -> (Project, Id) {
+        let footprint = Footprint::cut([
+            None,
+            Some(CornerFeatureKind::Chamfer { incoming: millimetres(100), outgoing: millimetres(100) }),
+            None,
+            None,
+        ]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a corner cabinet");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Corner", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a corner cabinet");
+        (project, product)
+    }
+
+    /// The envelope of the open product, for the footprint tests.
+    fn envelope_of(project: &Project, product: Id) -> Envelope {
+        project.container(product).and_then(|product| product.envelope()).cloned().expect("a product has an envelope")
+    }
+
+    #[test]
+    fn a_cut_corner_case_fits_the_largest_rectangle_inside_its_cut() {
+        // The niche starts from the frame's footprint, so the cut face is a wall of the cell: the fit
+        // rectangle is 500 x 500 (the full depth, one setback narrower) and not the 600 x 400 the box
+        // around the cut would allow (N29, ADR 0201).
+        let (project, product) = corner_cabinet();
+        let thickness = millimetres(18);
+        let fitted = plan(&project, product, Fill::WidthAndDepth, FillMode::Fit, thickness).expect("a fit plan");
+        assert_eq!(fitted.nominal_size, PanelNominalSize::new(millimetres(500), millimetres(500)).expect("a size"));
+        assert!(matches!(fitted.outline, PanelOutline::Rect { .. }), "a fit keeps the standard panel");
+        assert!(inside(&fitted, thickness), "the rectangle lies inside every wall of the cell");
+        let envelope = envelope_of(&project, product);
+        for corner in &fitted.corners {
+            let local = fitted.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0));
+            assert!(
+                envelope.holds(DVec2::new(local.x, local.y)),
+                "the fitted rectangle left the footprint at {corner:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cut_corner_case_takes_its_own_outline_in_the_shape_mode() {
+        let (project, product) = corner_cabinet();
+        let shaped =
+            plan(&project, product, Fill::WidthAndDepth, FillMode::Shape, millimetres(18)).expect("a shape plan");
+        let features = shaped.outline.corner_features();
+        let [feature] = features else {
+            panic!("the cut is one corner feature, was {features:?}");
+        };
+        assert_eq!(
+            feature.feature(),
+            CornerFeatureKind::Chamfer { incoming: millimetres(100), outgoing: millimetres(100) },
+            "the cut face is the case's own 45-degree corner"
+        );
+        assert_eq!(feature.corner(), VertexId::new(2).expect("the bottom-right corner"), "the cut belongs to it");
+        assert_eq!(shaped.corners.len(), 5, "the shaped shelf is the pentagon the walls leave");
+    }
+
+    #[test]
+    fn the_part_a_shaped_case_creates_stands_inside_its_footprint() {
+        let thickness = millimetres(18);
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
+            for mode in [FillMode::Fit, FillMode::Shape] {
+                // One case per part: a part left standing is material, and the next part would be
+                // measured against it rather than against the frame (N36).
+                let (mut project, product) = corner_cabinet();
+                let envelope = envelope_of(&project, product);
+                let plan = plan(&project, product, fill, mode, thickness).expect("a plan inside the cut case");
+                let id = project
+                    .add_panel_with_outline(
+                        product,
+                        "Part",
+                        plan.nominal_size,
+                        plan.outline.clone(),
+                        &plan.bevels,
+                        None,
+                        thickness,
+                        plan.placement,
+                    )
+                    .expect("the click creates the part");
+                let panel = project.panel(id).expect("the part is in the tree");
+                let ring = panel
+                    .outline()
+                    .ring_for(panel.nominal_size())
+                    .expect("the stored outline draws its own ring")
+                    .sample(0.25)
+                    .expect("the ring samples");
+                let gap = thickness.millimetres_f64();
+                for point in &ring {
+                    for face in [0.0, gap] {
+                        let local = plan.placement.transform_point(DVec3::new(point.x, point.y, face));
+                        assert!(
+                            envelope.holds(DVec2::new(local.x, local.y)),
+                            "{fill:?} in {mode:?} put a point of the part outside the frame: {point:?} at {face}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_rounded_corner_stands_as_the_frames_own_radius() {
+        // The cell's planes take an arc by its chord, but the section a shelf is cut to keeps the frame's
+        // curve (ADR 0201, N33): the part is the case's rounded corner, not the chamfer its chord spans.
+        let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a rounded case");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Rounded", ClassCode::GENERAL_PRODUCT, envelope.clone(), Placement::IDENTITY)
+            .expect("a rounded case");
+        let thickness = millimetres(18);
+        let shaped = plan(&project, product, Fill::WidthAndDepth, FillMode::Shape, thickness).expect("a shape plan");
+        let features = shaped.outline.corner_features();
+        let [feature] = features else {
+            panic!("the rounded corner is one corner feature, was {features:?}");
+        };
+        assert_eq!(
+            feature.feature(),
+            CornerFeatureKind::Radius { radius: millimetres(80) },
+            "the frame's own radius, not its chord"
+        );
+        assert!(shaped.bevels.is_empty(), "a cell of plumb walls bevels nothing");
+        assert_eq!(shaped.corners, shaped.far_corners, "the far face ends over the base rim");
+
+        // What the click creates carries the radius too, and every point of it stands inside the frame.
+        let id = project
+            .add_panel_with_outline(
+                product,
+                "Shelf",
+                shaped.nominal_size,
+                shaped.outline.clone(),
+                &shaped.bevels,
+                None,
+                thickness,
+                shaped.placement,
+            )
+            .expect("the click creates the part");
+        let panel = project.panel(id).expect("the part is in the tree");
+        let stored = panel.outline().corner_features();
+        assert_eq!(
+            stored.first().map(|feature| feature.feature()),
+            Some(CornerFeatureKind::Radius { radius: millimetres(80) })
+        );
+        let ring = panel
+            .outline()
+            .ring_for(panel.nominal_size())
+            .expect("the stored outline draws its own ring")
+            .sample(0.25)
+            .expect("the ring samples");
+        let gap = thickness.millimetres_f64();
+        for point in &ring {
+            for face in [0.0, gap] {
+                let local = shaped.placement.transform_point(DVec3::new(point.x, point.y, face));
+                assert!(
+                    envelope.holds(DVec2::new(local.x, local.y)),
+                    "the shelf left the frame it was cut to at {point:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_notched_frame_builds_a_part_inside_the_arm_the_pointer_names() {
+        // A frame drawn as any closed ring builds a part: the cell is the convex piece of the frame
+        // around the pointer (N34, ADR 0203), and the part stands inside the frame it was cut to.
+        let ring = Path::polyline(
+            vec![
+                [millimetres(0), millimetres(0)],
+                [millimetres(600), millimetres(0)],
+                [millimetres(600), millimetres(560)],
+                [millimetres(300), millimetres(560)],
+                [millimetres(300), millimetres(400)],
+                [millimetres(200), millimetres(400)],
+                [millimetres(200), millimetres(560)],
+                [millimetres(0), millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope.clone(), Placement::IDENTITY)
+            .expect("a notched frame");
+        let thickness = millimetres(18);
+        for mode in [FillMode::Fit, FillMode::Shape] {
+            let plan = plan(&project, product, Fill::WidthAndDepth, mode, thickness).expect("a plan in the arm");
+            // The pointer is the envelope's centre, which falls in the arm beside the notch.
+            assert_eq!((plan.free_low, plan.free_high), (360.0, 378.0), "the part sits at the pointer's height");
+            let id = project
+                .add_panel_with_outline(
+                    product,
+                    "Part",
+                    plan.nominal_size,
+                    plan.outline.clone(),
+                    &plan.bevels,
+                    None,
+                    thickness,
+                    plan.placement,
+                )
+                .expect("the click creates the part");
+            let panel = project.panel(id).expect("the part is in the tree");
+            let stored = panel
+                .outline()
+                .ring_for(panel.nominal_size())
+                .expect("the stored outline draws its own ring")
+                .sample(0.25)
+                .expect("the ring samples");
+            let gap = thickness.millimetres_f64();
+            for point in &stored {
+                for face in [0.0, gap] {
+                    let local = plan.placement.transform_point(DVec3::new(point.x, point.y, face));
+                    assert!(
+                        envelope.holds(DVec2::new(local.x, local.y)),
+                        "{mode:?} put a point of the part outside the notched frame: {point:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_plain_box_gives_the_same_rectangle_in_both_modes() {
         let (project, product) = empty_product(600, 560, 720);
@@ -1397,7 +1951,7 @@ mod tests {
     fn the_fitted_rectangle_lies_inside_every_wall_over_the_whole_thickness() {
         let (project, product) = splayed_product();
         let thickness = millimetres(18);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             let plan = plan(&project, product, fill, FillMode::Fit, thickness).expect("a fit plan");
             let gap = thickness.millimetres_f64();
             let mut points = Vec::new();
@@ -1424,6 +1978,78 @@ mod tests {
         assert!((post.nominal_size.length().millimetres_f64() - 720.0).abs() <= 1.0e-3, "{:?}", post.nominal_size);
         assert!(post.nominal_size.width().millimetres_f64() > 0.0);
         assert!((post.free_high - post.free_low - thickness.millimetres_f64()).abs() <= 1.0e-9, "one thickness");
+    }
+
+    #[test]
+    fn a_wall_takes_the_voids_width_and_height_in_the_frontal_plane() {
+        // The third pair of the fill trait (ADR 0200): a back board stands in the frontal plane, so
+        // its length runs up the case and its width across the front, and the material is what the
+        // pointer's own depth sets (ADR 0105).
+        let (project, product) = empty_product(600, 560, 720);
+        let thickness = millimetres(18);
+        let close = |first: DVec3, second: DVec3| (first - second).length() <= 1.0e-9;
+        for mode in [FillMode::Fit, FillMode::Shape] {
+            let wall = plan(&project, product, Fill::WidthAndHeight, mode, thickness).expect("a wall fills the void");
+            assert_eq!(wall.nominal_size.length(), millimetres(720), "{mode:?}: length is the niche's height");
+            assert_eq!(wall.nominal_size.width(), millimetres(600), "{mode:?}: width is the niche's width");
+            assert_eq!(
+                wall.placement.translation(),
+                DVec3::new(0.0, 280.0, 0.0),
+                "{mode:?}: the node is the base corner at the pointer's depth"
+            );
+            assert!(close(wall.placement.transform_vector(DVec3::X), DVec3::Z), "{mode:?}: the length runs up");
+            assert!(close(wall.placement.transform_vector(DVec3::Y), DVec3::X), "{mode:?}: the width runs across");
+            assert!(close(wall.placement.transform_vector(DVec3::Z), DVec3::Y), "{mode:?}: the material faces front");
+            assert_eq!((wall.free_low, wall.free_high), (280.0, 298.0), "{mode:?}: one thickness of depth");
+            assert!(matches!(wall.outline, PanelOutline::Rect { .. }), "{mode:?}: a box keeps the rectangle panel");
+            assert!(wall.bevels.is_empty(), "{mode:?}: plumb walls ask for no end face");
+            assert!(wall.corners.iter().all(|corner| {
+                corner.x >= -1.0e-6 && corner.x <= 720.0 + 1.0e-6 && corner.y >= -1.0e-6 && corner.y <= 600.0 + 1.0e-6
+            }));
+        }
+        assert_eq!(free_axis(Fill::WidthAndHeight), 1, "the wall's free axis is the product's depth");
+    }
+
+    #[test]
+    fn a_wall_in_a_splayed_case_takes_the_shaped_board() {
+        // The posts lean in plan, so the board's two end faces are not square to them: Shape bevels
+        // both ends into the posts' own planes (ADR 0107, 0108), where Fit keeps the rectangle.
+        let (project, product) = splayed_product();
+        let thickness = millimetres(18);
+        let fitted = plan(&project, product, Fill::WidthAndHeight, FillMode::Fit, thickness).expect("a fit plan");
+        assert!(matches!(fitted.outline, PanelOutline::Rect { .. }), "a fit keeps the standard panel");
+        assert!((fitted.nominal_size.length().millimetres_f64() - 720.0).abs() <= 1.0e-3, "{:?}", fitted.nominal_size);
+        // The posts lean in plan, so the slab is narrowest at its far face: the fit has to pass
+        // through the whole thickness, and 600 − 200 · 298 / 560 is what it leaves. 300 mm at the
+        // pointer's own depth would cut into both posts at the front.
+        assert!((fitted.nominal_size.width().millimetres_f64() - 293.572).abs() <= 1.0e-2, "{:?}", fitted.nominal_size);
+
+        let shaped = plan(&project, product, Fill::WidthAndHeight, FillMode::Shape, thickness).expect("a shape plan");
+        assert!(shaped.outline.contour().is_some(), "a beveled board is a contour");
+        assert_eq!(shaped.bevels.len(), 2, "both splayed posts ask for an end face: {:?}", shaped.bevels);
+        let lean = Degrees::from_radians((100.0_f64 / 560.0).atan()).expect("a storable angle");
+        for bevel in &shaped.bevels {
+            assert_eq!(bevel.angle().millidegrees(), lean.millidegrees(), "the post's own lean");
+        }
+        assert_ne!(shaped.corners, shaped.far_corners, "the far face is set back into the walls");
+        assert!(inside(&shaped, thickness), "the board stays in the void it was measured against");
+        // The base rim is the wide face, 150..450 across at the pointer's depth; the end faces are
+        // set back by the bevel, which leaves the far rim exactly the width the fit had to keep.
+        let across = |points: &[DVec2]| {
+            let low = points.iter().map(|corner| corner.y).fold(f64::INFINITY, f64::min);
+            let high = points.iter().map(|corner| corner.y).fold(f64::NEG_INFINITY, f64::max);
+            high - low
+        };
+        assert!(
+            (across(&shaped.corners) - 300.0).abs() <= 1.0e-2,
+            "the base rim is the wide face: {}",
+            across(&shaped.corners)
+        );
+        assert!(
+            (across(&shaped.far_corners) - fitted.nominal_size.width().millimetres_f64()).abs() <= 1.0e-2,
+            "the far rim is the fitted width: {}",
+            across(&shaped.far_corners)
+        );
     }
 
     #[test]
@@ -1504,7 +2130,7 @@ mod tests {
 
     #[test]
     fn a_turned_board_keeps_its_length_axis_and_takes_the_other_face() {
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             let stance = stance(fill);
             let turned = stance.turned();
             let (standing, over) = (stance.rotation(), turned.rotation());
@@ -1524,6 +2150,7 @@ mod tests {
     fn the_free_axis_is_the_panel_thickness_axis_of_each_fill() {
         assert_eq!(free_axis(Fill::WidthAndDepth), 2);
         assert_eq!(free_axis(Fill::HeightAndDepth), 0);
+        assert_eq!(free_axis(Fill::WidthAndHeight), 1);
     }
     /// A post standing across the whole depth of the case, its thickness from `x` to `x + 18`.
     fn standing_post(project: &mut Project, product: Id, x: f64) -> Id {
@@ -1616,6 +2243,99 @@ mod tests {
     }
 
     #[test]
+    fn a_part_never_runs_through_a_post_the_pointer_never_pointed_at() {
+        // «В одном случае полка прошила стенку» — the owner, on a cabinet whose post stands in the far
+        // arm of an L. The probes start at the pointer, so none of them met the post, and the ring the
+        // part took ran through it. A body standing in the frame's own space is material of the void's
+        // height, so the ring is clipped at its face (N36).
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let ring = Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(600), Length::ZERO],
+                [millimetres(600), millimetres(300)],
+                [millimetres(300), millimetres(300)],
+                [millimetres(300), millimetres(560)],
+                [Length::ZERO, millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a notched product");
+        // A post from the floor to the ceiling at x = 450, beyond the notch the pointer stands in.
+        let nominal = PanelNominalSize::new(millimetres(720), millimetres(250)).expect("a post size");
+        let placement =
+            Placement::new(DVec3::new(450.0, 0.0, 720.0), DQuat::from_rotation_y(FRAC_PI_2)).expect("a post placement");
+        project.add_panel(product, "Post", nominal, None, millimetres(18), placement).expect("add a post");
+
+        // The pointer stands left of the post and past its far end, so no ray of its own meets the post
+        // while the frame's own space runs right through it.
+        let point = DVec3::new(400.0, 280.0, 300.0);
+        let niche = project.niche(point, Sight::none(), None).expect("the void left of the post");
+        assert!(niche.size.x <= 450.0 + 1.0e-3, "the post bounds the frame's own space: {:?}", niche.size);
+        let plan = FillRequest::new(point, Fill::WidthAndDepth, FillMode::Shape, millimetres(18), None);
+        let shaped = project.fill_plan(product, plan, Sight::none(), None).expect("a shelf beside the post");
+        let ring = shaped.outline.ring_for(shaped.nominal_size).expect("the shelf's own ring");
+        let reach = ring
+            .sample(0.5)
+            .expect("the ring samples")
+            .iter()
+            .map(|corner| shaped.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0)).x)
+            .fold(f64::MIN, f64::max);
+        assert!(reach <= 450.0 + 1.0e-3, "no point of the shelf is inside the post: {reach}");
+    }
+
+    #[test]
+    fn a_trimmed_shape_still_keeps_the_frames_own_radius() {
+        // A hidden body stops the part at its face, and the part still takes the frame's shape: the
+        // trim cuts the frame's own ring by the body's half-plane instead of swapping the ring for the
+        // polygon of chords, so a rounded corner stays a radius (ADR 0204, X73).
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let footprint = Footprint::cut([None, Some(CornerFeatureKind::Radius { radius: millimetres(80) }), None, None]);
+        let envelope = Envelope::with_footprint(millimetres(600), millimetres(500), millimetres(720), footprint)
+            .expect("a rounded case");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Rounded", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a rounded product");
+        // A sheet standing across the depth between x = 100 and x = 118, hidden from the eye and
+        // present to the saw; the pointer is on its far side, where the frame's radius is.
+        let nominal = PanelNominalSize::new(millimetres(720), millimetres(500)).expect("a sheet size");
+        let placement = Placement::new(DVec3::new(100.0, 0.0, 720.0), DQuat::from_rotation_y(FRAC_PI_2))
+            .expect("a sheet placement");
+        let sheet =
+            project.add_panel(product, "Sheet", nominal, None, millimetres(18), placement).expect("add a sheet");
+        let hidden = hiding(sheet);
+        let request = FillRequest::new(
+            DVec3::new(400.0, 300.0, 300.0),
+            Fill::WidthAndDepth,
+            FillMode::Shape,
+            millimetres(18),
+            None,
+        );
+        let shaped = project.fill_plan(product, request, Sight::of(&hidden), None).expect("a trimmed shape");
+        let ring = shaped.outline.ring_for(shaped.nominal_size).expect("the outline's ring");
+        assert!(
+            ring.segments().iter().any(|segment| matches!(segment, geom::Segment::Arc(_))),
+            "the frame's rounded corner survives the trim: {:?}",
+            shaped.outline
+        );
+        assert!(
+            (shaped.nominal_size.length().millimetres_f64() - 482.0).abs() < 1.0e-3,
+            "the sheet is the near wall: {:?}",
+            shaped.nominal_size
+        );
+    }
+
+    #[test]
     fn a_hidden_body_that_spans_the_whole_void_leaves_nothing_to_fill() {
         let (mut project, product) = empty_product(600, 560, 720);
         let board = lying_board(&mut project, product, 350, 18);
@@ -1683,7 +2403,7 @@ mod turned {
             .expect("a top placement");
         project.add_panel(product, "Top", top, None, millimetres(18), placement).expect("add a top");
         let point = DVec3::new(300.0, 280.0, 360.0);
-        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth] {
+        for fill in [Fill::WidthAndDepth, Fill::HeightAndDepth, Fill::WidthAndHeight] {
             for mode in [FillMode::Fit, FillMode::Shape] {
                 let planned = project
                     .fill_plan(product, FillRequest::new(point, fill, mode, millimetres(18), None), Sight::none(), None)

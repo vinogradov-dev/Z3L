@@ -5,9 +5,12 @@
 //! the solid, with the original shape faintly behind it when the draft differs, so the user sees
 //! the change before the single command that applies it.
 //!
-//! The pointer is mapped onto the node's local XY plane through its world placement. An arc corner
-//! is projected onto its own circle first, because an edit may slide an arc corner along the arc but
-//! never change its centre or radius.
+//! The pointer is mapped onto the node's local XY plane through its world placement, and that plane
+//! is the plane the one snap resolver is asked about: a corner of another panel captures the dragged
+//! corner by the workspace's mode — its foot on this plane in 2.5D, itself in 3D — and the marker is
+//! painted where the working copy really put the corner, so the marker and the drop are one place
+//! (U119). An arc corner is projected onto its own circle first, because an edit may slide an arc
+//! corner along the arc but never change its centre or radius.
 //!
 //! A ring names every corner by the segment that starts on it; an open chain has a free end as well,
 //! so a handle is addressed with [`PathCorner`] and the last segment's end is reachable.
@@ -15,17 +18,19 @@
 use eframe::egui::{self, Pos2, Response, Ui};
 use geom::{DVec2, DVec3};
 use model::{
-    Contour, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, PathCorner, Placement, Project,
+    Contour, ContourSegment, ContourSegmentEntry, ContourSegmentId, CornerMove, PathCorner, Placement, Project, Sight,
+    SnapKind,
 };
 use scene::Camera;
 use ui::{
     ContourDraft, ContourEdit, ContourGrip, ContourTarget, Editor, FieldLabel, FieldParam, FieldRow, FieldSet,
-    GripNumber, GripValue, PointState, guides,
+    GripNumber, GripValue, PointState, guides, theme,
 };
 use units::Length;
 
 use crate::gizmo_math::{
-    ACTIVE_COLOR, distance_to_segment, length_from_millimetres, ray_plane, ray_to, reference_screen, screen_point,
+    ACTIVE_COLOR, SNAP_RADIUS_POINTS, WorkPlane, distance_to_segment, length_from_millimetres, paint_snap_marker,
+    ray_plane, ray_to, reference_screen, screen_point,
 };
 
 /// Radius of an unselected grip handle, in points.
@@ -40,12 +45,53 @@ const RING_TOLERANCE_MICROMETRES: f64 = 500.0;
 const SPLIT_MARGIN: f64 = 0.02;
 /// Maximum number of screen segments used to draw one arc.
 const MAX_ARC_STEPS: usize = 64;
-/// Colour of the ring the edit started from.
-const BASE_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(150, 150, 150, 160);
-/// Colour of the working copy.
-const DRAFT_COLOR: egui::Color32 = egui::Color32::from_rgb(120, 200, 255);
-/// Colour of an untouched grip handle.
-const GRIP_COLOR: egui::Color32 = egui::Color32::from_rgb(240, 240, 240);
+/// Width of the shape the edit started from, in points: the quiet line, behind the working copy.
+const BASE_STROKE: f32 = 1.0;
+/// The dash and the gap of that line, in points.
+///
+/// The pair of inks is the first signal and this is the second: the shape the edit started from is
+/// broken into dashes, so it reads as a reference even where its neutral sits close to the material
+/// it lies on (X97).
+const BASE_DASH: f32 = 4.0;
+const BASE_GAP: f32 = 3.0;
+/// Width of the working copy, in points.
+const DRAFT_STROKE: f32 = 2.0;
+/// Width of the workspace-coloured casing under the working copy, in points.
+///
+/// The casing reaches 0.75 points past the ink on each side — three quarters of a pixel at 100 %
+/// scale — the same overhang the selected chain gives its own underlay, so the loud ink is outlined
+/// by the surface behind the model and a board of the ink's own colour cannot swallow it (X97).
+const CASING_STROKE: f32 = 3.5;
+/// Width of the outline around a grip handle, in points.
+const GRIP_OUTLINE: f32 = 1.0;
+
+/// What the workspace's snap set and its mode say to one contour frame (U119).
+///
+/// The two travel together because the resolver reads both at once and the gizmo's signature is
+/// already long: which kinds may capture, and how a candidate above the ring's plane is read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ContourInput {
+    /// Which kinds may capture a dragged corner.
+    pub(crate) kinds: model::SnapKinds,
+    /// The workspace's mode: a candidate above the plane captures by its foot in 2.5D, and only when
+    /// it lies in the plane in 3D.
+    pub(crate) mode: model::SnapMode,
+}
+
+/// One pointer frame of a grip: where the pointer is, which grip it would move and the view it is
+/// seen through.
+///
+/// The three travel together because the resolver needs all of them and the gizmo's own call would
+/// otherwise carry eight arguments (AGENTS §1.5, U119).
+#[derive(Clone, Copy, Debug)]
+struct Ask {
+    /// The camera, its rectangle and the node's world frame.
+    view: Screen,
+    /// The grip the pointer would move.
+    grip: ContourGrip,
+    /// The pointer in viewport points.
+    pointer: Pos2,
+}
 
 /// The view one contour gesture is resolved against: the camera, its rectangle and the node's
 /// world frame.
@@ -144,6 +190,9 @@ pub(crate) struct ContourGizmo {
     numeric: Option<GripField>,
     /// Whether a corner drag runs along the contour instead of freely.
     along: bool,
+    /// The capture the resolver answered with while a corner was dragged or latched: the grip and
+    /// the kind, so the marker is painted at the point the working copy holds (U119).
+    snap: Option<(ContourGrip, SnapKind)>,
 }
 
 impl ContourGizmo {
@@ -155,11 +204,18 @@ impl ContourGizmo {
         self.selected = None;
         self.latch = None;
         self.numeric = None;
+        self.snap = None;
     }
 
     /// Whether a grip drag or its numeric field owns the keyboard right now.
     pub(crate) fn is_dragging(&self) -> bool {
         self.drag.is_some() || self.numeric.is_some()
+    }
+
+    /// The capture the pointer answered with while a corner was dragged or latched: the grip and the
+    /// kind that took it, or `None` when the pointer's own point stands (U119).
+    pub(crate) fn snap(&self) -> Option<(ContourGrip, SnapKind)> {
+        self.snap
     }
 
     /// Whether a latched move is waiting for the click that drops it.
@@ -194,6 +250,7 @@ impl ContourGizmo {
     /// Returns whether there was a latch to abandon, so the caller's Escape ends the mode only
     /// when the move was not the first thing it had to give up.
     pub(crate) fn abandon_latch(&mut self, editor: &mut Editor) -> bool {
+        self.snap = None;
         let Some(latch) = self.latch.take() else {
             return false;
         };
@@ -227,6 +284,7 @@ impl ContourGizmo {
         camera: Camera,
         project: &Project,
         editor: &mut Editor,
+        input: ContourInput,
     ) -> Result<GizmoAction, String> {
         let Some(edit) = editor.contour_edit() else {
             self.reset();
@@ -246,8 +304,14 @@ impl ContourGizmo {
 
         // A latched move owns the pointer until a click drops it; nothing else may grab a grip or
         // split a side meanwhile, or the drop would start an edit of its own.
-        if self.latch.is_some() {
-            let changed = self.follow(Screen { camera, rect, placement }, pointer, editor);
+        if let Some(latched) = self.latch.as_ref().map(|latch| latch.grip) {
+            let view = Screen { camera, rect, placement };
+            let local =
+                pointer.and_then(|pointer| self.snapped(editor, Ask { view, grip: latched, pointer }, project, input));
+            if local.is_none() {
+                self.snap = None;
+            }
+            let changed = self.follow(view, local, editor);
             // A press on one of the move's own plates is the plate's: it focuses or scrubs a number
             // and never drops the corner under it.
             if response.clicked_by(egui::PointerButton::Primary) && !pointer.is_some_and(|at| self.field_contains(at)) {
@@ -290,7 +354,12 @@ impl ContourGizmo {
             } else {
                 if response.dragged_by(egui::PointerButton::Primary)
                     && let Some(pointer) = response.interact_pointer_pos()
-                    && let Some(local) = local_point(pointer, rect, camera, placement)
+                    && let Some(local) = self.snapped(
+                        editor,
+                        Ask { view: Screen { camera, rect, placement }, grip: drag.grip, pointer },
+                        project,
+                        input,
+                    )
                     && let Some(local) = self.dragged_point(&draft, drag, local)
                     && let (Some(x), Some(y)) = (length_from_millimetres(local.x), length_from_millimetres(local.y))
                     && editor.contour_edit_drag_grip(drag.grip, [x, y], drag.motion).is_ok()
@@ -303,7 +372,8 @@ impl ContourGizmo {
                             .contour_edit()
                             .and_then(|edit| {
                                 let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
-                                edit.draft().along_contour_length(segment, corner, start)
+                                let far_end = edit.base().motion_far_end(segment, start)?;
+                                edit.draft().along_contour_length(segment, corner, far_end)
                             })
                             .is_some_and(|length| length.micrometres() <= 2);
                         if collapsed {
@@ -323,7 +393,8 @@ impl ContourGizmo {
                     {
                         editor.contour_edit().and_then(|edit| {
                             let start = edit.base().grip_position(ContourGrip::Corner(corner))?;
-                            edit.draft().along_contour_length(segment, corner, start).map(GripValue::Length)
+                            let far_end = edit.base().motion_far_end(segment, start)?;
+                            edit.draft().along_contour_length(segment, corner, far_end).map(GripValue::Length)
                         })
                     } else {
                         editor.contour_edit().and_then(|edit| edit.grip_value(field.grip))
@@ -334,6 +405,7 @@ impl ContourGizmo {
                 }
                 if response.drag_stopped_by(egui::PointerButton::Primary) {
                     self.drag = None;
+                    self.snap = None;
                 }
             }
         }
@@ -369,13 +441,81 @@ impl ContourGizmo {
             match grip {
                 Some(grip @ ContourGrip::Corner(_)) if self.selected == Some(grip) => {
                     let motion = self.motion_for(camera, rect, placement, &draft, grip, Some(pointer));
-                    self.latch = self.latch_move(&draft, grip, pointer, Screen { camera, rect, placement }, motion);
+                    let view = Screen { camera, rect, placement };
+                    let local = self.snapped(editor, Ask { view, grip, pointer }, project, input);
+                    self.latch = local.and_then(|local| self.latch_move(&draft, grip, pointer, local, view, motion));
                 }
                 Some(grip @ ContourGrip::Corner(_)) => self.selected = Some(grip),
                 _ => self.selected = None,
             }
         }
         Ok(if changed { GizmoAction::Changed } else { GizmoAction::Idle })
+    }
+
+    /// The point the pointer hands a grip, read through the one snap resolver, and the capture it
+    /// answered with (U119).
+    ///
+    /// The ring's own plane is the plane the tool draws on, so the workspace's mode decides whether a
+    /// candidate above that plane captures by its foot (2.5D) or only when it really lies in the
+    /// plane (3D). The draft's other corners are the figure's own points, offered exactly as a
+    /// running sketch offers the points it already holds; the corner being moved is left out, or it
+    /// would capture itself. There is no previous point in a grip drag, so the constructions that
+    /// need one — the perpendicular and the tangent — do not answer here.
+    fn snapped(&mut self, editor: &mut Editor, ask: Ask, project: &Project, input: ContourInput) -> Option<DVec2> {
+        let sight = editor.flags().sight();
+        let draft = editor.contour_edit()?.draft();
+        let (local, kind) = self.resolved(draft, ask, project, sight, input)?;
+        self.snap = kind.map(|kind| (ask.grip, kind));
+        Some(local)
+    }
+
+    /// The resolver's answer for one pointer position, in the node's own plane coordinates.
+    ///
+    /// The grid is the one kind left out: it rounds wherever the pointer is, which is right for
+    /// placing a new point on the drawing plane and wrong for moving a corner the maker already
+    /// measured — a 60.5 mm side would land on 60 the moment it was dragged. Every other kind, the
+    /// coordinate axes included, says "this place is a real place", and those are the captures an
+    /// edit wants.
+    fn resolved(
+        &self,
+        draft: &ContourDraft,
+        ask: Ask,
+        project: &Project,
+        sight: Sight<'_>,
+        input: ContourInput,
+    ) -> Option<(DVec2, Option<SnapKind>)> {
+        let Ask { view, grip, pointer } = ask;
+        let plane = WorkPlane::from_placement(view.placement)?;
+        let ray = ray_to(pointer, view.rect, view.camera);
+        let hit = plane.ray_point(ray)?;
+        let depth = (hit - view.camera.eye()).dot(view.camera.forward());
+        if !depth.is_finite() {
+            return None;
+        }
+        let reach = view.camera.world_per_point(depth, f64::from(view.rect.height())) * f64::from(SNAP_RADIUS_POINTS);
+        let tolerance = length_from_millimetres(reach)?;
+        let ends = draft
+            .grips()
+            .into_iter()
+            .filter(|other| *other != grip)
+            .filter_map(|other| draft.grip_position(other))
+            .map(|position| plane.world(plane_point(position)))
+            .collect::<Vec<_>>();
+        let request = model::SnapRequest {
+            ray_origin: ray.origin(),
+            ray_direction: ray.direction(),
+            tolerance,
+            tolerance_depth: depth,
+            kinds: model::SnapKinds { grid: false, ..input.kinds },
+            plane: plane.snap_plane(),
+            target: input.mode.target(),
+            anchor: None,
+            ends: &ends,
+            axis_lock: false,
+            face: None,
+        };
+        let answer = project.snap(request, sight)?;
+        Some((plane.local(answer.point), answer.kind))
     }
 
     /// The pointer the gizmo reads: the scene's hover, the drag's own position, and — while a move
@@ -394,12 +534,12 @@ impl ContourGizmo {
         draft: &ContourDraft,
         grip: ContourGrip,
         pointer: Pos2,
+        local: DVec2,
         view: Screen,
         motion: CornerMove,
     ) -> Option<CornerLatch> {
         let start = draft.grip_position(grip)?;
         let anchor = plane_point(start);
-        let local = local_point(pointer, view.rect, view.camera, view.placement).unwrap_or(anchor);
         let live = PointState::moved(anchor, local, None)?;
         let rows = live
             .rows
@@ -418,12 +558,11 @@ impl ContourGizmo {
     ///
     /// A refused placement is the mode's usual silent refusal: the working copy stays at its last
     /// valid shape, so a corner dragged into a self-crossing ring simply stops.
-    fn follow(&mut self, view: Screen, pointer: Option<Pos2>, editor: &mut Editor) -> bool {
+    fn follow(&mut self, view: Screen, local: Option<DVec2>, editor: &mut Editor) -> bool {
         let Some(latch) = self.latch.as_mut() else {
             return false;
         };
-        let Some(local) = pointer.and_then(|pointer| local_point(pointer, view.rect, view.camera, view.placement))
-        else {
+        let Some(local) = local else {
             return false;
         };
         let anchor = plane_point(latch.start);
@@ -451,6 +590,7 @@ impl ContourGizmo {
 
     /// Ends the latched move: a corner that really moved is written, one that did not is dropped.
     fn end_latch(&mut self) -> GizmoAction {
+        self.snap = None;
         let Some(latch) = self.latch.take() else {
             return GizmoAction::Idle;
         };
@@ -493,6 +633,10 @@ impl ContourGizmo {
 
     /// Paints the base shape, the working copy, the grips and the numeric field.
     ///
+    /// The pair of inks is the theme's: the shape the edit started from is the quiet neutral, thin
+    /// and dashed, and the working copy is the accent, thick and cased in the workspace so it reads
+    /// over a board of its own colour (X97).
+    ///
     /// The numeric field is an editable widget, so the frame returns the action Enter or Escape
     /// asked for and the shell applies it after the paint borrow ends.
     pub(crate) fn paint(
@@ -505,10 +649,24 @@ impl ContourGizmo {
     ) -> Option<GizmoAction> {
         let placement = project.world_placement(edit.target().id())?;
         let painter = ui.painter().with_clip_rect(rect);
+        let inks = Inks {
+            original: theme::original(ui),
+            working: theme::working_copy(ui),
+            grip: theme::text(ui),
+            casing: theme::casing(ui),
+        };
         if edit.is_dirty() {
-            paint_draft(&painter, camera, rect, placement, edit.base(), egui::Stroke::new(1.0, BASE_COLOR));
+            paint_original(
+                &painter,
+                camera,
+                rect,
+                placement,
+                edit.base(),
+                egui::Stroke::new(BASE_STROKE, inks.original),
+            );
         }
-        paint_draft(&painter, camera, rect, placement, edit.draft(), egui::Stroke::new(2.0, DRAFT_COLOR));
+        paint_draft(&painter, camera, rect, placement, edit.draft(), egui::Stroke::new(CASING_STROKE, inks.casing));
+        paint_draft(&painter, camera, rect, placement, edit.draft(), egui::Stroke::new(DRAFT_STROKE, inks.working));
         let grips = edit.draft().grips();
         for grip in &grips {
             let Some(local) = edit.draft().grip_position(*grip) else {
@@ -520,7 +678,7 @@ impl ContourGizmo {
             };
             let selected = self.marked(*grip);
             let hovered = self.hover == Some(*grip);
-            paint_grip(&painter, position, *grip, selected, hovered);
+            paint_grip(&painter, position, *grip, selected, hovered, inks);
         }
         // The radius grip on a hovered arc curve is not part of the stable list, so paint it here.
         // The radius grip on a hovered arc curve or a circle rim is not part of the stable list, so paint it here.
@@ -530,10 +688,18 @@ impl ContourGizmo {
         {
             let world = placement.transform_point(local_world(local));
             if let Some(position) = screen_point(camera, rect, world) {
-                paint_grip(&painter, position, grip, false, true);
+                paint_grip(&painter, position, grip, false, true, inks);
             }
         }
-        if let Some(action) = self.paint_latch(ui, Screen { camera, rect, placement }) {
+        // The marker stands where the working copy put the corner, so it names the place the drop
+        // will write and never the candidate it came from (U119).
+        if let Some((grip, kind)) = self.snap()
+            && let Some(local) = edit.draft().grip_position(grip)
+            && let Some(position) = local_screen(Screen { camera, rect, placement }, plane_point(local))
+        {
+            paint_snap_marker(&painter, position, Some(kind), false, ACTIVE_COLOR);
+        }
+        if let Some(action) = self.paint_latch(ui, Screen { camera, rect, placement }, inks.original) {
             return Some(action);
         }
         self.paint_numeric(ui, rect).map(GizmoAction::Numeric)
@@ -553,10 +719,10 @@ impl ContourGizmo {
     /// same measurement (ADR 0127). The line, the ghost and the arc use the anchors
     /// [`PointState::moved`] gives, so the motion the working copy takes and the one drawn can only
     /// differ when the corner's own segment refuses the point.
-    fn paint_latch(&mut self, ui: &Ui, view: Screen) -> Option<GizmoAction> {
+    fn paint_latch(&mut self, ui: &Ui, view: Screen, original: egui::Color32) -> Option<GizmoAction> {
         let latch = self.latch.as_mut()?;
         let painter = ui.painter().with_clip_rect(view.rect);
-        paint_latch_guides(ui, &painter, view, latch);
+        paint_latch_guides(ui, &painter, view, latch, original);
         let action = latch.fields.show(ui.ctx(), view.rect);
         if action.cancel {
             // Escape with nothing typed: the latch is the first thing the mode gives up.
@@ -616,13 +782,20 @@ impl ContourGizmo {
 
 /// The number a grip opens, when it takes a number at all.
 fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Option<CornerMove>) -> Option<GripField> {
+    let mut along_range = None;
     let (kind, value, label, motion) = if let Some(motion @ CornerMove::Along(segment)) = motion
         && let ContourGrip::Corner(corner) = grip
     {
         // Along-contour mode: show the length from the far end of the motion segment. At the
-        // moment the drag starts the corner is still at its base position.
+        // moment the drag starts the corner is still at its base position, so the draft answers the
+        // far end the whole drag keeps.
         let start = draft.grip_position(grip)?;
-        let length = draft.along_contour_length(segment, corner, start)?;
+        let far_end = draft.motion_far_end(segment, start)?;
+        let length = draft.along_contour_length(segment, corner, far_end)?;
+        // The number's two ends are the segment's own: zero is the collapse, and the top is what the
+        // segment still holds once it has grown, so the field cannot offer a number the command refuses.
+        let (min, max) = draft.along_length_range(segment)?;
+        along_range = Some(min.millimetres_f64()..=max.millimetres_f64());
         (GripNumber::Length, GripValue::Length(length), "L", Some(motion))
     } else {
         let kind = draft.grip_number(grip)?;
@@ -633,7 +806,7 @@ fn grip_field(draft: &ContourDraft, grip: ContourGrip, pointer: Pos2, motion: Op
     // No unit: the grip's symbol (`L`, `W`, `H`, `R`, `∠`) already says what the number is, and a
     // field that floats over the figure stays as small as the number it holds.
     let (param, unit, range) = match value {
-        GripValue::Length(_) => (FieldParam::Length, "", 0.0..=1_000_000.0),
+        GripValue::Length(_) => (FieldParam::Length, "", along_range.unwrap_or(0.0..=1_000_000.0)),
         GripValue::Angle(_) => (FieldParam::Angle, "", -360.0..=360.0),
     };
     let row = FieldRow::new(param, Some(FieldLabel::Symbol(label)), number_of(value), unit, range, 1, pointer);
@@ -649,11 +822,27 @@ fn number_of(value: GripValue) -> f64 {
     }
 }
 
+/// The inks of the contour overlay, read from the theme once per frame.
+///
+/// A handle takes the ink the window's own text takes, so the mark the pointer grabs and the words
+/// around it are one weight of ink (X97).
+#[derive(Clone, Copy, Debug)]
+struct Inks {
+    /// The shape the edit started from.
+    original: egui::Color32,
+    /// The working copy.
+    working: egui::Color32,
+    /// A handle the pointer can take.
+    grip: egui::Color32,
+    /// The workspace, drawn under the working copy and around a handle.
+    casing: egui::Color32,
+}
+
 /// Paints one grip: a square for a centre, a circle for a point on the figure.
-fn paint_grip(painter: &egui::Painter, position: Pos2, grip: ContourGrip, selected: bool, hovered: bool) {
+fn paint_grip(painter: &egui::Painter, position: Pos2, grip: ContourGrip, selected: bool, hovered: bool, inks: Inks) {
     let radius = if selected || hovered { GRIP_RADIUS + 1.5 } else { GRIP_RADIUS };
-    let color = if selected { ACTIVE_COLOR } else { GRIP_COLOR };
-    let outline = egui::Stroke::new(1.0, egui::Color32::from_black_alpha(160));
+    let color = if selected { ACTIVE_COLOR } else { inks.grip };
+    let outline = egui::Stroke::new(GRIP_OUTLINE, inks.casing);
     if is_center(grip) {
         let box_rect = egui::Rect::from_center_size(position, egui::vec2(radius, radius) * 2.0);
         painter.rect_filled(box_rect, 1.0, color);
@@ -689,6 +878,21 @@ fn paint_draft(
     }
 }
 
+/// Paints the shape the edit started from as a dashed polyline.
+///
+/// The dash is the second signal of the pair: a neutral line may sit close to the material it lies
+/// on, and a broken rhythm still says it is a reference rather than the thing being made (X97).
+fn paint_original(
+    painter: &egui::Painter,
+    camera: Camera,
+    rect: egui::Rect,
+    placement: Placement,
+    draft: &ContourDraft,
+    stroke: egui::Stroke,
+) {
+    painter.extend(draft_dashes(camera, rect, placement, draft, stroke));
+}
+
 /// The screen-space polyline a draft paints, closed only when the draft is a ring.
 ///
 /// The closed flag is what separates the two cases: a ring and a closed chain join their last
@@ -700,21 +904,49 @@ fn draft_shape(
     draft: &ContourDraft,
     stroke: egui::Stroke,
 ) -> Option<egui::Shape> {
+    let (points, closed) = draft_points(camera, rect, placement, draft)?;
+    Some(if closed { egui::Shape::closed_line(points, stroke) } else { egui::Shape::line(points, stroke) })
+}
+
+/// The dashes of one draft: the polyline [`draft_points`] returns, cut into [`BASE_DASH`] and
+/// [`BASE_GAP`], with a closed draft joined back to its first point so its last side is dashed too.
+fn draft_dashes(
+    camera: Camera,
+    rect: egui::Rect,
+    placement: Placement,
+    draft: &ContourDraft,
+    stroke: egui::Stroke,
+) -> Vec<egui::Shape> {
+    let Some((mut points, closed)) = draft_points(camera, rect, placement, draft) else {
+        return Vec::new();
+    };
+    if closed && let Some(first) = points.first().copied() {
+        points.push(first);
+    }
+    egui::Shape::dashed_line(&points, stroke, BASE_DASH, BASE_GAP)
+}
+
+/// The screen-space polyline of one draft and whether it closes.
+fn draft_points(
+    camera: Camera,
+    rect: egui::Rect,
+    placement: Placement,
+    draft: &ContourDraft,
+) -> Option<(Vec<Pos2>, bool)> {
     match draft {
-        ContourDraft::Ring(contour) => ring_shape(camera, rect, placement, contour, stroke),
-        ContourDraft::Chain(path) => chain_shape(camera, rect, placement, path.entries(), path.is_closed(), stroke),
+        ContourDraft::Ring(contour) => ring_points(camera, rect, placement, contour).map(|points| (points, true)),
+        ContourDraft::Chain(path) => chain_points(camera, rect, placement, path.entries(), path.is_closed()),
     }
 }
 
 /// The screen-space polyline of one open or closed chain.
-fn chain_shape(
+fn chain_points(
     camera: Camera,
     rect: egui::Rect,
     placement: Placement,
     entries: &[ContourSegmentEntry],
     closed: bool,
-    stroke: egui::Stroke,
-) -> Option<egui::Shape> {
+) -> Option<(Vec<Pos2>, bool)> {
     let mut screen = Vec::new();
     for entry in entries {
         for position in segment_screen(camera, rect, placement, entry.segment()) {
@@ -723,18 +955,11 @@ fn chain_shape(
             }
         }
     }
-    (screen.len() >= 2)
-        .then(|| if closed { egui::Shape::closed_line(screen, stroke) } else { egui::Shape::line(screen, stroke) })
+    (screen.len() >= 2).then_some((screen, closed))
 }
 
 /// The screen-space polyline of one ring, always closed.
-fn ring_shape(
-    camera: Camera,
-    rect: egui::Rect,
-    placement: Placement,
-    contour: &Contour,
-    stroke: egui::Stroke,
-) -> Option<egui::Shape> {
+fn ring_points(camera: Camera, rect: egui::Rect, placement: Placement, contour: &Contour) -> Option<Vec<Pos2>> {
     let points = contour.sampled_points(RING_TOLERANCE_MICROMETRES).ok()?;
     let mut screen = Vec::with_capacity(points.len());
     for point in points {
@@ -743,7 +968,7 @@ fn ring_shape(
         };
         screen.push(position);
     }
-    (screen.len() >= 3).then(|| egui::Shape::closed_line(screen, stroke))
+    (screen.len() >= 3).then_some(screen)
 }
 
 /// The corners a draft draws a handle on, for the tests that check the corner list.
@@ -954,7 +1179,7 @@ fn plane_point(point: [Length; 2]) -> DVec2 {
 /// The ghost marks the position the corner will leave, the dashed chord is the length the plate
 /// shows, and the arc's radius is that same length, so the angle is read where it is measured
 /// (ADR 0127).
-fn paint_latch_guides(ui: &Ui, painter: &egui::Painter, view: Screen, latch: &CornerLatch) {
+fn paint_latch_guides(ui: &Ui, painter: &egui::Painter, view: Screen, latch: &CornerLatch, original: egui::Color32) {
     let Some(from) = local_screen(view, plane_point(latch.start)) else {
         return;
     };
@@ -962,7 +1187,7 @@ fn paint_latch_guides(ui: &Ui, painter: &egui::Painter, view: Screen, latch: &Co
         return;
     };
     guides::construction(ui, painter, from, to);
-    painter.circle_stroke(from, GRIP_RADIUS, egui::Stroke::new(1.0, BASE_COLOR));
+    painter.circle_stroke(from, GRIP_RADIUS, egui::Stroke::new(BASE_STROKE, original));
     let Some(reference) = latch.state.reference else {
         return;
     };
@@ -1207,8 +1432,9 @@ mod tests {
         let camera = Camera::default();
         let path = l_path();
         let draft = ContourDraft::Chain(path.clone());
-        let shape = draft_shape(camera, viewport(), Placement::IDENTITY, &draft, egui::Stroke::new(2.0, DRAFT_COLOR))
-            .expect("three points make a polyline");
+        let shape =
+            draft_shape(camera, viewport(), Placement::IDENTITY, &draft, egui::Stroke::new(2.0, egui::Color32::WHITE))
+                .expect("three points make a polyline");
         let egui::Shape::Path(painted) = shape else {
             panic!("a chain paints as a path, got {shape:?}");
         };
@@ -1232,7 +1458,7 @@ mod tests {
             viewport(),
             Placement::IDENTITY,
             &ContourDraft::Chain(rectangle.clone()),
-            egui::Stroke::new(2.0, DRAFT_COLOR),
+            egui::Stroke::new(2.0, egui::Color32::WHITE),
         )
         .expect("a closed chain paints");
         assert!(matches!(chain, egui::Shape::Path(ref painted) if painted.closed), "a closed chain closes");
@@ -1242,7 +1468,7 @@ mod tests {
             viewport(),
             Placement::IDENTITY,
             &ContourDraft::Ring(rectangle.to_contour().expect("ring")),
-            egui::Stroke::new(2.0, DRAFT_COLOR),
+            egui::Stroke::new(2.0, egui::Color32::WHITE),
         )
         .expect("a ring paints");
         assert!(matches!(ring, egui::Shape::Path(ref painted) if painted.closed), "a ring always closes");
@@ -1265,7 +1491,7 @@ mod tests {
                 viewport(),
                 Placement::IDENTITY,
                 &ContourDraft::Chain(single),
-                egui::Stroke::new(2.0, DRAFT_COLOR)
+                egui::Stroke::new(2.0, egui::Color32::WHITE)
             )
             .is_some(),
             "one line still has two screen points and paints"
@@ -1276,7 +1502,7 @@ mod tests {
                 egui::Rect::from_min_size(Pos2::ZERO, egui::Vec2::ZERO),
                 Placement::IDENTITY,
                 &ContourDraft::Chain(l_path()),
-                egui::Stroke::new(2.0, DRAFT_COLOR)
+                egui::Stroke::new(2.0, egui::Color32::WHITE)
             )
             .is_none(),
             "a zero-size viewport collapses every corner onto one point, so there is no line to draw"
@@ -1309,22 +1535,31 @@ mod tests {
         let mut paths = Vec::new();
         let mut filled = 0;
         let mut outlined = 0;
+        let mut dashes = 0;
         for clipped in &output.shapes {
             match &clipped.shape {
                 egui::Shape::Path(painted) => paths.push(painted.clone()),
+                egui::Shape::LineSegment { .. } => dashes += 1,
                 egui::Shape::Circle(circle) if circle.fill.a() > 0 => filled += 1,
                 egui::Shape::Circle(_) => outlined += 1,
                 _ => {}
             }
         }
-        assert_eq!(paths.len(), 1, "an untouched draft paints one polyline, not a base and a copy");
-        assert!(!paths[0].closed, "the painted chain is open");
-        assert_eq!(paths[0].points.len(), 3);
+        assert_eq!(paths.len(), 2, "an untouched draft still paints its casing under the working copy");
+        assert!(!paths[0].closed && !paths[1].closed, "the painted chain is open");
+        assert_eq!(paths[0].points, paths[1].points, "the casing and the ink are one polyline, drawn twice");
+        assert_eq!(
+            (paths[0].stroke.width, paths[1].stroke.width),
+            (CASING_STROKE, DRAFT_STROKE),
+            "the casing is the wider stroke, so it outlines the ink"
+        );
+        assert_eq!(dashes, 0, "there is no shape behind the working copy to dash");
         assert_eq!(filled, 3, "two segment starts and the free end, and nothing else");
-        assert_eq!(outlined, 3, "every handle keeps its dark outline");
+        assert_eq!(outlined, 3, "every handle keeps its casing outline");
         output.drop_without_applying_deltas();
 
-        // A dirty draft paints the stored shape faintly behind the working copy.
+        // A dirty draft paints the stored shape faintly behind the working copy, as a dashed line:
+        // the ink separates the roles and the dash says which of them is the reference (X97).
         let mut edit = edit;
         let last = edit.draft().id_at(1).expect("last segment");
         edit.move_corner_at(PathCorner::End(last), [millimetres(140), millimetres(60)], CornerMove::Free)
@@ -1332,16 +1567,20 @@ mod tests {
         let output = ctx.run_ui(egui::RawInput::default(), |ui| {
             ContourGizmo::default().paint(ui, rect, camera, &project, &edit);
         });
-        let paths: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|clipped| match &clipped.shape {
-                egui::Shape::Path(painted) => Some(painted.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(paths.len(), 2, "the base chain and the working copy");
-        assert!(paths.iter().all(|painted| !painted.closed), "both paint open");
+        let mut paths = 0;
+        let mut dashes = 0;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Path(painted) => {
+                    assert!(!painted.closed, "the working copy paints open");
+                    paths += 1;
+                }
+                egui::Shape::LineSegment { .. } => dashes += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(paths, 2, "the casing and the working copy");
+        assert!(dashes >= 3, "the shape the edit started from is dashed, not one stroke: {dashes}");
         output.drop_without_applying_deltas();
     }
 
@@ -1433,14 +1672,10 @@ mod tests {
         let start = draft.grip_position(corner).expect("the corner");
         let camera = Camera::default();
         let pointer = screen_of(camera, [millimetres(60), millimetres(40)]);
+        let view = Screen { camera, rect: viewport(), placement: Placement::IDENTITY };
+        let local = local_point(pointer, view.rect, view.camera, view.placement).expect("the pointer is on the plane");
         let latch = ContourGizmo::default()
-            .latch_move(
-                &draft,
-                corner,
-                pointer,
-                Screen { camera, rect: viewport(), placement: Placement::IDENTITY },
-                CornerMove::Free,
-            )
+            .latch_move(&draft, corner, pointer, local, view, CornerMove::Free)
             .expect("a latch");
         assert_eq!(latch.start, start, "the latch keeps the old position");
         assert_eq!(latch.grip, corner);

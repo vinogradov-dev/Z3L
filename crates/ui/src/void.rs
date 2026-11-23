@@ -20,8 +20,8 @@
 //! Changes when: a second niche shape needs the corners rather than the box, or the cursor rule for
 //! the point inside the product changes.
 
-use geom::{Contact, DVec3};
-use model::{Id, Niche, NicheRefusal, Project, Sight, SurfaceKind};
+use geom::{Contact, DVec2, DVec3, Region};
+use model::{Envelope, Id, Niche, NicheRefusal, Project, Sight, SurfaceKind};
 use scene::Ray;
 use text::Message;
 use units::Length;
@@ -53,6 +53,8 @@ pub enum VoidRefusal {
     /// The free space around the point is not one convex cell: it holds something, or a wall does
     /// not reach the face the cell would need.
     Unrepresentable,
+    /// The open product's frame is not convex, so the space it reserves is not one cell either.
+    Footprint,
 }
 
 impl VoidRefusal {
@@ -61,6 +63,7 @@ impl VoidRefusal {
         match refusal {
             NicheRefusal::Outside => VoidRefusal::Outside,
             NicheRefusal::Unrepresentable => VoidRefusal::Unrepresentable,
+            NicheRefusal::Footprint => VoidRefusal::Footprint,
         }
     }
 
@@ -69,6 +72,7 @@ impl VoidRefusal {
         match self {
             VoidRefusal::Outside => Message::VoidOutside,
             VoidRefusal::Unrepresentable => Message::VoidUnrepresentable,
+            VoidRefusal::Footprint => Message::VoidFootprint,
         }
     }
 }
@@ -157,7 +161,11 @@ impl Void {
     /// rounded millimetre reading; the value is the one the fill plan takes its part from.
     pub fn size(&self) -> Option<[Length; 3]> {
         let size = self.niche()?.size;
-        Some([length_from_millimetres(size.x)?, length_from_millimetres(size.y)?, length_from_millimetres(size.z)?])
+        Some([
+            Length::from_millimetres_f64(size.x)?,
+            Length::from_millimetres_f64(size.y)?,
+            Length::from_millimetres_f64(size.z)?,
+        ])
     }
 }
 
@@ -177,12 +185,17 @@ pub struct PointerPoint {
 
 /// The point in the open product the pointer points at, in world millimetres.
 ///
-/// The atom's cursor rule, shared by both tools that measure a niche. The ray enters the product's
-/// authored envelope — taken in the product's own frame, because a turned piece is not its world
-/// bounds — and then meets the first surface inside it. That face is what the maker sees under the
-/// cursor, so the void is measured a micrometre in front of it; a ray that meets nothing but the
-/// envelope answers the entry point, which is the whole reserved space. A pointer outside the
-/// product answers `None`.
+/// The atom's cursor rule, shared by both tools that measure a niche. The ray enters the **space the
+/// product reserves** — its footprint's own ring extruded from the floor to the ceiling, taken in the
+/// product's own frame because a turned piece is not its world bounds — and then meets the first
+/// surface inside it. That face is what the maker sees under the cursor, so the void is measured a
+/// micrometre in front of it; a ray that meets nothing but the envelope answers the entry point, which
+/// is the whole reserved space. A pointer outside the product answers `None`.
+///
+/// The entry is the ring and not the box around it (ADR 0201, ADR 0204): a frame drawn with an arc
+/// reserves nothing in the corner the arc cut away, so a ray that entered the box there would name a
+/// point outside the void and no niche would answer — while the space behind that corner is right
+/// there under the cursor.
 pub fn pointer_point(
     project: &Project,
     product: Id,
@@ -204,16 +217,11 @@ pub fn pointer_face(
     contact: Option<&dyn Contact>,
 ) -> Option<PointerPoint> {
     let envelope = project.container(product)?.envelope()?;
-    let size =
-        DVec3::new(envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
-    if !size.is_finite() || size.min_element() <= 0.0 {
-        return None;
-    }
     let placement = project.world_placement(product)?;
     let inverse = placement.inverse().ok()?;
     let origin = inverse.transform_point(ray.origin());
     let direction = inverse.transform_vector(ray.direction());
-    let entry = box_entry(origin, direction, DVec3::ZERO, size)?;
+    let entry = reserved_entry(envelope, origin, direction)?;
     let local_entry = if entry <= 0.0 { origin } else { origin + direction * entry };
     let world_entry = placement.transform_point(local_entry);
     if !world_entry.is_finite() {
@@ -305,10 +313,57 @@ pub fn free_place(
     Some(FreePlace { hand: hand.unwrap_or(local[axis]), point: local[axis], face, square })
 }
 
+/// The distance at which a ray enters the space the product reserves, in the product's own frame.
+///
+/// The reserved space is the envelope's footprint ring carried from the floor to the ceiling, so the
+/// entry is the first place on the ray that is inside the ring **and** between the two heights. Both
+/// readings are exact: the ring answers its own crossings (an arc is solved, not sampled) and the
+/// heights are one interval. The origin's own distance answers `0` when the ray starts inside, and a
+/// ray that misses the ring or the height band answers `None`.
+fn reserved_entry(envelope: &Envelope, origin: DVec3, direction: DVec3) -> Option<f64> {
+    if !origin.is_finite() || !direction.is_finite() {
+        return None;
+    }
+    let height = envelope.z().millimetres_f64();
+    if !height.is_finite() || height <= 0.0 {
+        return None;
+    }
+    let outline = envelope.footprint().outline(envelope.x(), envelope.y()).ok()?;
+    let ring = Region::new(outline, Vec::new()).ok()?;
+    let spans = ring.line_intervals(DVec2::new(origin.x, origin.y), DVec2::new(direction.x, direction.y));
+    let heights = slab_interval(origin.z, direction.z, 0.0, height)?;
+    let mut entry: Option<f64> = None;
+    for (low, high) in spans {
+        let from = low.max(heights.0).max(0.0);
+        let to = high.min(heights.1);
+        if to < from {
+            continue;
+        }
+        entry = Some(entry.map_or(from, |seen: f64| seen.min(from)));
+    }
+    entry
+}
+
+/// The parameter interval in which the line `origin + t * direction` is between `low` and `high`.
+///
+/// One axis of a slab, the answer a box entry is built from: a step along the axis that misses the
+/// band, and an origin outside it, both answer `None`.
+fn slab_interval(origin: f64, direction: f64, low: f64, high: f64) -> Option<(f64, f64)> {
+    if !origin.is_finite() || !direction.is_finite() {
+        return None;
+    }
+    if direction.abs() <= 1.0e-9 {
+        return (low..=high).contains(&origin).then_some((f64::NEG_INFINITY, f64::INFINITY));
+    }
+    let first = (low - origin) / direction;
+    let second = (high - origin) / direction;
+    Some((first.min(second), first.max(second)))
+}
+
 /// The distance at which a ray enters a box, or the origin's own distance when it starts inside.
 ///
-/// This is the cursor's resting place in the void: the face of the reserved space the maker is
-/// pointing at. A ray that misses the box answers `None`.
+/// A ray that misses the box answers `None`.
+#[allow(dead_code)]
 fn box_entry(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<f64> {
     if !origin.is_finite() || !direction.is_finite() {
         return None;
@@ -334,18 +389,6 @@ fn box_entry(origin: DVec3, direction: DVec3, min: DVec3, max: DVec3) -> Option<
         return None;
     }
     Some(enter.max(0.0))
-}
-
-/// A cell side in millimetres as the document's own `Length`, or `None` when it does not fit.
-fn length_from_millimetres(value: f64) -> Option<Length> {
-    if !value.is_finite() {
-        return None;
-    }
-    let micrometres = (value * 1_000.0).round();
-    if micrometres < i64::MIN as f64 || micrometres > i64::MAX as f64 {
-        return None;
-    }
-    Some(Length::from_micrometres(micrometres as i64))
 }
 
 #[cfg(test)]
@@ -419,6 +462,86 @@ mod tests {
         atom.measure(&project, point, Sight::of(&hidden), None);
         let through = atom.niche().expect("the hidden sheet is no wall").clone();
         assert_eq!(through.size, DVec3::new(600.0, 560.0, 720.0), "the cell spans the case it cannot see");
+    }
+
+    #[test]
+    fn the_pointer_enters_the_space_the_frame_reserves_and_not_the_box_around_it() {
+        // A frame drawn as an L reserves nothing in the corner of its box, so a ray that entered the
+        // box there would name a point outside the void — no niche, no part — while the space beside
+        // that corner is right under the cursor (ADR 0204, N35).
+        let mut project = clean_project();
+        let ring = model::Path::polyline(
+            vec![
+                [Length::ZERO, Length::ZERO],
+                [millimetres(600), Length::ZERO],
+                [millimetres(600), millimetres(300)],
+                [millimetres(300), millimetres(300)],
+                [millimetres(300), millimetres(560)],
+                [Length::ZERO, millimetres(560)],
+            ],
+            true,
+        )
+        .expect("a closed ring")
+        .to_contour()
+        .expect("a contour");
+        let envelope = Envelope::with_ring(&ring, millimetres(720)).expect("a notched frame");
+        let root = project.root().id();
+        let product = project
+            .add_product(root, "Notched", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a notched product");
+        let ray = Ray::new(DVec3::new(900.0, 400.0, 300.0), DVec3::NEG_X).expect("a ray across the notch");
+        let point = pointer_point(&project, product, ray, Sight::none(), None).expect("the ray enters the void");
+        assert!((point.x - 300.0).abs() < 0.01, "the arm's own side is the entry, was {point:?}");
+        assert!((point.y - 400.0).abs() < 0.01);
+        assert!((point.z - 300.0).abs() < 0.01);
+        // The box's own entry is inside the corner the frame never gave away, and it names no void.
+        let boxed = DVec3::new(600.0, 400.0, 300.0);
+        assert_eq!(project.niche(boxed, Sight::none(), None), Err(NicheRefusal::Outside));
+    }
+
+    #[test]
+    fn a_frame_whose_ring_bulges_inwards_says_so_of_itself() {
+        // A frame drawn as a ring builds the convex piece around the pointer (N34, ADR 0203), but a ring
+        // whose own arc bulges into its shape is still no one cell, and the atom carries that reason
+        // through so every surface prints the same sentence.
+        let ring = geom::Contour::new(
+            vec![
+                geom::Segment::Line(geom::Line::new(geom::DVec2::ZERO, geom::DVec2::new(600.0, 0.0)).expect("bottom")),
+                geom::Segment::Line(
+                    geom::Line::new(geom::DVec2::new(600.0, 0.0), geom::DVec2::new(600.0, 560.0)).expect("right"),
+                ),
+                geom::Segment::Arc(
+                    geom::Arc::from_endpoints_sagitta(
+                        geom::DVec2::new(600.0, 560.0),
+                        geom::DVec2::new(0.0, 560.0),
+                        50.0,
+                    )
+                    .expect("an inward arc"),
+                ),
+                geom::Segment::Line(geom::Line::new(geom::DVec2::new(0.0, 560.0), geom::DVec2::ZERO).expect("left")),
+            ],
+            true,
+        )
+        .expect("a ring");
+        let contour = model::Contour::new(
+            ring.segments()
+                .iter()
+                .map(|segment| model::ContourSegment::from_geom(*segment).expect("a document segment"))
+                .collect(),
+        )
+        .expect("a document ring");
+        let envelope = Envelope::with_ring(&contour, millimetres(720)).expect("a bowed frame");
+        let mut project = clean_project();
+        let root = project.root().id();
+        project
+            .add_product(root, "Bowed", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a bowed product");
+        let mut atom = Void::new();
+        atom.measure(&project, DVec3::new(300.0, 200.0, 300.0), Sight::none(), None);
+        let refusal = atom.refusal().expect("a frame that reserves no cell names no void");
+        assert_eq!(refusal, VoidRefusal::Footprint);
+        assert_eq!(refusal.words(), Message::VoidFootprint, "the sentence every surface prints");
+        assert_eq!(atom.niche(), None);
     }
 
     #[test]

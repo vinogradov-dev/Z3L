@@ -69,7 +69,7 @@ never a number. The registry's rows live in [`docs/domain/classes.md`](docs/doma
 the trait semantics and the rules that keep the table alive; the previous registry in
 [`furntypes.md`](docs/domain/furntypes.md) is kept only as history. See
 [ADR 0094](docs/decisions/0094-a-class-registry-gives-the-machine-its-semantics.md) and
-[0104](docs/decisions/0104-supply-names-four-sources.md). Material, finish, dimensions and price are
+[0217](docs/decisions/0217-supply-names-four-sources.md). Material, finish, dimensions and price are
 separate properties, never encoded in the code.
 
 ### `Geometry` object
@@ -168,6 +168,11 @@ Detailed, normative descriptions live in `docs/domain/`:
 - [`order-export.md`](docs/domain/order-export.md) — the order package: the published, one-way snapshot other programs read for reports, drawings, cutting lists and CNC.
 - [`products.md`](docs/domain/products.md) — the product as the unit of work: the authored envelope, open and closed, the workspace rules and the match to a void.
 
+The shop's own numbers — board thickness, plinth height, gaps, back sheet, rail height — are settings,
+not document data: the build's defaults come from the workshop standards the build reads, and a
+workshop's own values are the person's, kept in the application settings. They never enter a scene
+file, a package or a project.
+
 ## Architectural principles
 
 - **Data is separate from rendering.** `model` is serializable data; meshes and scene descriptions are derived in `mesh` and `scene`; only `render` touches `wgpu`. No GPU type ever appears in the document.
@@ -210,13 +215,31 @@ Z3L separates the model from the way it is viewed.
 
 Z3L ships an assistant named **Faber** that follows the project in real time. It is disabled by
 default because it needs a language-model connection; without one the editor behaves exactly as
-before.
+before. A person talks to it in a chat panel of the window, and a client outside the window — a
+desktop assistant, a script, an agent process — reaches the same tools over MCP (ADR 0185).
 
 - Faber acts as a person does: every action is a command, a query or a session view operation,
-  dispatched by the same ids the UI uses. It has no private mutation path (ADR 0028).
+  dispatched by the same ids the UI uses. It has no private mutation path (ADR 0028). The tool list is
+  a projection of `CommandRegistry::specs()`, never a second registry, and a tool that is unavailable
+  says why (ADR 0185). A call that builds a part names the product it works in — `product` on the run
+  and on the batch — and naming it opens the product without an undo entry, because a part is born
+  only inside the open product (ADR 0098, ADR 0212).
 - It runs with a window, where the user watches it work, and headless, where it processes jobs
   without a viewport. The core is deterministic and model-agnostic; the language model is an injected
-  adapter that may be local or remote. The application never listens for connections.
+  adapter that may be local or remote, reached through one OpenAI-compatible client whose endpoint and
+  model are settings, never types (ADR 0189). There is no network service: `z3l mcp serve` speaks over
+  stdio and binds nothing, and a local control channel — loopback, a token minted per run, a switch in
+  the settings — is how an agent attaches to a running window (ADR 0188). The channel publishes its
+  port and token in the settings folder, a connection presents the token first, and `ui_inspect`
+  reports the window it attached to; `z3l mcp serve --attach` serves the same channel from a process
+  with no window (ADR 0207).
+- A chat turn is one undo entry named after the message, the first enable is read-only, and a plan is
+  the `dry_run` result shown as a checklist — so what a person approves is what ran (ADR 0187). The
+  agent works in `plan` or `build`, and only a person switches between them (ADR 0190).
+- The code finds a workshop's mistakes and the model explains them: an envelope breach, two bodies
+  through each other, a shelf that does not fit its opening, a rail in the wrong place, an unbanded
+  visible edge, a front with the wrong gap and a part longer than the sheet, each read from the
+  profile's own numbers (ADR 0191).
 - The core does not receive pixels. It reads the scene as data: the node tree, panels, materials,
   placements, machining, diagnostics and derived measures. A vision channel is a separate, optional
   decision.
@@ -225,8 +248,8 @@ before.
 - "Build a hinged wardrobe 600 × 2200 × 500" is one user prototype script with named parameters,
   not a prompt. The script builds panels and placements through commands, and the document keeps the
   materialized geometry, the furniture type, the prototype reference and its parameter record; the
-  model only chooses the prototype and fills the parameters. The catalogue available to the model is
-  generated from the prototype registry (ADR 0034).
+  model only chooses the prototype and fills the parameters, and never does the arithmetic (ADR 0192).
+  The catalogue available to the model is generated from the prototype registry (ADR 0034).
 - The nomenclature directory and the order registry are separate programs with their own storage and
   APIs (ADR 0148). Faber uses the same API as their interfaces, never the database. An order is the project
   file, its records and the files produced for it; every version is a numbered folder holding the
@@ -237,12 +260,14 @@ before.
   (ADR 0036).
 
 Open questions: what API the material and order programs expose locally and whether they ship with
-Z3L; where the workshop profile lives; whether reference retrieval (catalogues, norms, past
+Z3L; whether reference retrieval (catalogues, norms, past
 jobs) is needed and in what form; voice input and output.
 
-The assistant adds `agent` between `engine` and `ui`, a model adapter and resource
-adapters at the composition boundary, and a project store for save and load. They enter the crate map
-only when the crates exist.
+The assistant adds `mcp` at layer 7, beside `ui`: the projection of the command registry into tools,
+the MCP server and client, the `ChatBackend` port and the model transport, as the only crate allowed
+to depend on `rmcp`, `tokio` and `cap-std` (ADR 0186). The chat panel is a shell surface in `app`. No
+layer is renumbered. The crate, its row in the crate map, the layer table in `xtask` and `AGENTS.md`
+§3 change in the one commit that creates it.
 
 ## Crate map
 
@@ -262,8 +287,10 @@ only when the crates exist.
 | L3 | `mesh` | Evaluation cache: `(Revision, PartId)` to solid and triangle mesh, and a panel to the holes its drilling objects cause; tessellation policy | model, param, kernel, geom, units |
 | L4 | `scene` | Renderer-agnostic frame description: drawables, world transforms, materials, selection highlight, camera, lights, grid | model, mesh, geom |
 | L5 | `render` | `wgpu` renderer: pipelines, buffers, depth, camera. No `egui`, no window creation | scene, geom, wgpu, bytemuck |
+| L5 | `final` | The final render: one still image at print resolution from the camera the viewport shows — the BVH, the sampler, the tracer and the PNG. Borrows the shell's device, reads a frame and never the document | scene, geom, wgpu |
 | L6 | `engine` | `Session`: document, catalogue, derived panel diagnostics, selection, view state (viewports/cameras), undo/redo, dirty state; command registry | model, param, mesh, units |
 | L7 | `ui` | `egui` panels and viewport widgets: scene tree, inspector, input, gizmos; dispatches commands | engine, model, scene, egui, egui_extras |
+| L7 | `mcp` | The editor as a tool server: the projection of the command registry into a few coarse MCP tools, the scene as one picture, and the protocol over stdio. No brain, no file I/O, no `egui`, no device; the only crate allowed to depend on `rmcp` and `tokio` (ADR 0185, ADR 0186, ADR 0228) | engine, model, text, rmcp, tokio, schemars, serde, serde_json, thiserror |
 | L8 | `app` | Composition root: `eframe` window, input, `egui` ↔ `wgpu` paint callback, constructs `TruckKernel` and evaluates the sample document | ui, engine, render, scene, model, param, mesh, kernel, kernel-truck, geom, units, eframe |
 | dev | `testkit` | Fixtures and helpers for tests; re-exports `millimetres`, `open_path` and `sample_project` from `model`'s `testing` feature, where they are defined once (ADR 0084) | model, units |
 | tool | `xtask` | The host's rules only: layering, the C-vendoring check and the `ci` step list, registered into the plan tool's command table (`cargo xtask help`) | serde_json, state-contract |
@@ -301,7 +328,8 @@ A crate may depend only on crates in lower layers. `kernel-truck` is the only cr
 | M7 | Objects and the scene file | Geometry objects with a baked mesh and with a feature history, mesh editing gated to the mesh payload, `object.collapse`, camera and light objects, and a versioned `.z3l` scene file with a migration and a golden file per schema |
 | M8 | Hardware and joinery | Hardware catalogue, anchor points, generated holes, collision warnings |
 | M9 | Output | Cutting lists per material and sheet, panel drawings, CNC export |
-| M10 | Assistant | Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per task, a whole task runnable by a scripted model without a network, and a headless job over a saved project |
+| M10 | Assistant | The chat panel holds a conversation in the window and a client outside it calls the same tools over MCP; Faber runs as a client of the command registry: disabled by default, read-only first, one undo step per turn, five named scenarios passing through a real MCP client without a network, and a headless job over a saved project |
+| M11 | Final render | One command renders the view the viewport shows into an image at print size through our own GPU tracer: the frame's triangles from the kernel, the catalogue's decor at its real texel scale with the grain answer, its banding and hardware, diffuse, GGX metal and rough dielectric under next-event estimation with a low-discrepancy sampler, and a denoiser measured against a converged reference, with progress and a cancel (Y1–Y4) |
 
 ## Open model questions (M1)
 

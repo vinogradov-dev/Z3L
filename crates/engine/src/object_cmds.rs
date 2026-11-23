@@ -12,10 +12,11 @@
 use geom::Contact;
 use mesh::{evaluate_constructive, evaluate_primitive};
 use model::{
-    Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive, Project, ProjectError,
-    rebase_origin_at,
+    Boolean, BooleanOp, BooleanTool, Constructive, Contour, FrameAnchor, Geometry, Id, Path, Placement, Primitive,
+    PrimitiveShape, Project, ProjectError, ToolBody, rebase_origin_at,
 };
 use param::validate_extrusion_contour;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::Length;
@@ -48,7 +49,7 @@ pub use model::{MAX_PRIMITIVE_SIZE, PrimitiveKind};
 /// size by [`Primitive::from_kind`].
 ///
 /// [ADR 0101]: ../docs/decisions/0101-a-frame-and-a-box-are-one-tool.md
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPrimitiveCreate {
     /// Id of the container that receives the new object.
@@ -56,13 +57,13 @@ pub struct ObjectPrimitiveCreate {
     /// User-visible name; it must contain a non-whitespace character.
     pub name: String,
     /// The validated shape and its parameters.
-    pub primitive: Primitive,
+    pub primitive: PrimitiveShape,
     /// Placement relative to the parent container: the box's base corner sits on it.
     pub placement: Placement,
 }
 
 /// The `object.primitive.create` command.
-pub(crate) const OBJECT_PRIMITIVE_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PRIMITIVE_CREATE: CommandSpec = CommandSpec::new::<ObjectPrimitiveCreate>(
     OBJECT_PRIMITIVE_CREATE_ID,
     OBJECT_PRIMITIVE_CREATE_LABEL,
     object_primitive_create_enabled,
@@ -84,22 +85,23 @@ fn object_primitive_create_run(
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<ObjectPrimitiveCreate>(params, OBJECT_PRIMITIVE_CREATE_ID)?;
     validate_name(&params.name, OBJECT_PRIMITIVE_CREATE_ID)?;
-    let id = project.add_object(params.parent, params.name, params.placement, Geometry::Primitive(params.primitive))?;
+    let body = Primitive::from_shape(params.primitive);
+    let id = project.add_object(params.parent, params.name, params.placement, Geometry::Primitive(body))?;
     Ok(CommandOutcome::created(id))
 }
 
 /// Parameters for `object.primitive.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPrimitiveReplace {
     /// The parametric primitive whose parameters change.
     pub object: Id,
     /// The validated parameters to store; the shape kind is part of the payload.
-    pub primitive: Primitive,
+    pub primitive: PrimitiveShape,
 }
 
 /// The `object.primitive.replace` command.
-pub(crate) const OBJECT_PRIMITIVE_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PRIMITIVE_REPLACE: CommandSpec = CommandSpec::new::<ObjectPrimitiveReplace>(
     OBJECT_PRIMITIVE_REPLACE_ID,
     OBJECT_PRIMITIVE_REPLACE_LABEL,
     object_primitive_replace_enabled,
@@ -131,7 +133,7 @@ pub const OBJECT_EXTRUDE_CREATE_ID: &str = "object.extrude.create";
 pub const OBJECT_EXTRUDE_CREATE_LABEL: Message = Message::CmdCreateExtrusion;
 
 /// Parameters for `object.extrude.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectExtrudeCreate {
     /// Id of the container that receives the new object.
@@ -141,21 +143,21 @@ pub struct ObjectExtrudeCreate {
     /// Closed flat contour in the frame of `placement`; the command moves it so its creation pivot
     /// becomes the object's local zero.
     pub contour: Contour,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
     /// Placement relative to the parent container.
     pub placement: Placement,
 }
 
 /// The `object.extrude.create` command.
-pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_EXTRUDE_CREATE: CommandSpec = CommandSpec::new::<ObjectExtrudeCreate>(
     OBJECT_EXTRUDE_CREATE_ID,
     OBJECT_EXTRUDE_CREATE_LABEL,
     object_extrude_create_enabled,
     object_extrude_create_run,
 );
 
-fn valid_extrusion_height(height: Length) -> bool {
+pub(crate) fn valid_extrusion_height(height: Length) -> bool {
     height.is_positive() && height.micrometres() <= model::MAX_CONTOUR_COORDINATE.micrometres()
 }
 
@@ -204,6 +206,107 @@ fn evaluate_contour(command: &'static str, contour: &Contour) -> Result<(), Comm
         .map_err(|error| CommandError::Evaluation { command, message: error.to_string() })
 }
 
+/// Stable id of the box creation command.
+pub const OBJECT_CUBOID_CREATE_ID: &str = "object.cuboid.create";
+
+/// User-facing label of the box creation command.
+///
+/// It is the ribbon cell's own message: a caller reading `command_list` finds the shape by the word
+/// the button prints, and one word belongs to one id (X105).
+pub const OBJECT_CUBOID_CREATE_LABEL: Message = Message::ToolBox;
+
+/// Parameters for `object.cuboid.create`.
+///
+/// Three independent sides, because that is what a maker means by a box — the same three numbers the
+/// retired cuboid carried (ADR 0138). The body is the constructive object a drawn box is, so the card,
+/// the contour edit and a body boolean see one payload rather than a second way to store a box.
+///
+/// The placement puts the drawn box's minimum corner at its translation — a caller that measures a
+/// body from the corner it was given keeps the number it computed. The ring itself is rebased to its
+/// own centre, because a closed ring anchors at its bounds centre (ADR 0082), which is the anchor a
+/// drawn box already has (ADR 0138): the node's local zero is the centre of the base face, so
+/// `bounds` reports the body around it and the placement carries the difference.
+///
+/// [ADR 0082]: ../docs/decisions/0082-the-local-zero-is-the-creation-anchor.md
+/// [ADR 0138]: ../docs/decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectCuboidCreate {
+    /// Id of the container that receives the new object.
+    pub parent: Id,
+    /// User-visible name; it must contain a non-whitespace character.
+    pub name: String,
+    /// Extent along the local `+X`, in micrometres.
+    pub width: Length,
+    /// Extent along the local `+Y`, in micrometres.
+    pub depth: Length,
+    /// Extent along the local `+Z`, which is the extrusion height, in micrometres.
+    pub height: Length,
+    /// Placement relative to the parent container.
+    pub placement: Placement,
+}
+
+/// The `object.cuboid.create` command.
+pub(crate) const OBJECT_CUBOID_CREATE: CommandSpec = CommandSpec::new::<ObjectCuboidCreate>(
+    OBJECT_CUBOID_CREATE_ID,
+    OBJECT_CUBOID_CREATE_LABEL,
+    object_cuboid_create_enabled,
+    object_cuboid_create_run,
+);
+
+/// Whether one side of a box can be stored.
+///
+/// A side is a box dimension, not a coordinate: the shortest one the gesture can draw is a micrometre
+/// and the longest is the contour ceiling, so the command refuses exactly what a drawn ring would —
+/// no side is negative, none is zero and none leaves the document's range.
+fn valid_cuboid_side(side: Length) -> bool {
+    side.is_positive() && side.micrometres() <= model::MAX_CONTOUR_COORDINATE.micrometres()
+}
+
+fn object_cuboid_create_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectCuboidCreate>(params, OBJECT_CUBOID_CREATE_ID) else {
+        return false;
+    };
+    !params.name.trim().is_empty()
+        && valid_cuboid_side(params.width)
+        && valid_cuboid_side(params.depth)
+        && valid_cuboid_side(params.height)
+        && session.project().is_container(params.parent)
+}
+
+fn object_cuboid_create_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectCuboidCreate>(params, OBJECT_CUBOID_CREATE_ID)?;
+    validate_name(&params.name, OBJECT_CUBOID_CREATE_ID)?;
+    for (field, side) in [("width", params.width), ("depth", params.depth), ("height", params.height)] {
+        if !valid_cuboid_side(side) {
+            return Err(CommandError::InvalidParams {
+                command: OBJECT_CUBOID_CREATE_ID,
+                message: format!(
+                    "{field} must be positive and at most {} micrometres",
+                    model::MAX_CONTOUR_COORDINATE.micrometres()
+                ),
+            });
+        }
+    }
+    // The base rectangle is the profile the gesture draws and the body is its one sweep, so a box made
+    // by a command and a box drawn by hand are the same payload (ADR 0138). The ring is rebased to its
+    // own centre, which is where a closed ring anchors, instead of restating that rule here.
+    let path = Path::rectangle([Length::ZERO, Length::ZERO], [params.width, params.depth]).map_err(|error| {
+        CommandError::InvalidParams { command: OBJECT_CUBOID_CREATE_ID, message: error.to_string() }
+    })?;
+    let rebased = rebase_origin_at(path, params.placement, FrameAnchor::CreationOrigin).map_err(|error| {
+        CommandError::InvalidParams { command: OBJECT_CUBOID_CREATE_ID, message: error.to_string() }
+    })?;
+    let constructive = Constructive::extrude(rebased.content, params.height).map_err(ProjectError::from)?;
+    let id = project.add_object(params.parent, params.name, rebased.placement, Geometry::Constructive(constructive))?;
+    Ok(CommandOutcome::created(id))
+}
+
 /// Stable id of the contour replacement command.
 pub const OBJECT_CONTOUR_REPLACE_ID: &str = "object.contour.replace";
 
@@ -211,7 +314,7 @@ pub const OBJECT_CONTOUR_REPLACE_ID: &str = "object.contour.replace";
 pub const OBJECT_CONTOUR_REPLACE_LABEL: Message = Message::CmdReplaceContour;
 
 /// Parameters for `object.contour.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectContourReplace {
     /// The constructive object whose path changes.
@@ -221,7 +324,7 @@ pub struct ObjectContourReplace {
 }
 
 /// The `object.contour.replace` command.
-pub(crate) const OBJECT_CONTOUR_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_CONTOUR_REPLACE: CommandSpec = CommandSpec::new::<ObjectContourReplace>(
     OBJECT_CONTOUR_REPLACE_ID,
     OBJECT_CONTOUR_REPLACE_LABEL,
     object_contour_replace_enabled,
@@ -265,20 +368,23 @@ fn extrusion_path_ready(path: &Path) -> Result<Contour, CommandError> {
 pub const OBJECT_PATH_EXTRUDE_ID: &str = "object.path.extrude";
 
 /// User-facing label of the path extrusion command.
-pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudePath;
+pub const OBJECT_PATH_EXTRUDE_LABEL: Message = Message::CmdExtrudeDrawing;
 
 /// Parameters for `object.path.extrude`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+///
+/// The node is a drawing of one ring or of several: a path becomes one body in place, and a
+/// contour set becomes one body per ring, the node itself keeping the first (X100).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathExtrude {
-    /// The path node that becomes the body.
+    /// The drawing node that becomes the body or the bodies.
     pub object: Id,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
 }
 
 /// The `object.path.extrude` command.
-pub(crate) const OBJECT_PATH_EXTRUDE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_EXTRUDE: CommandSpec = CommandSpec::new::<ObjectPathExtrude>(
     OBJECT_PATH_EXTRUDE_ID,
     OBJECT_PATH_EXTRUDE_LABEL,
     object_path_extrude_enabled,
@@ -289,11 +395,11 @@ fn object_path_extrude_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<ObjectPathExtrude>(params, OBJECT_PATH_EXTRUDE_ID) else {
         return false;
     };
+    // A set's every ring has to hold the one face its cap becomes, so a ring the mesh cannot carry
+    // switches the cell off instead of leaving a body that evaluates to an error (X100).
     valid_extrusion_height(params.height)
-        && session
-            .project()
-            .object_path(params.object)
-            .is_ok_and(|path| path.to_contour().is_ok_and(|contour| validate_extrusion_contour(&contour).is_ok()))
+        && extrusion_rings(session.project(), params.object)
+            .is_ok_and(|rings| rings.iter().all(|ring| validate_extrusion_contour(ring).is_ok()))
 }
 
 fn object_path_extrude_run(
@@ -312,14 +418,41 @@ fn object_path_extrude_run(
             ),
         });
     }
-    let path = project.object_path(params.object)?;
-    let contour = path.to_contour().map_err(|error| CommandError::InvalidParams {
-        command: OBJECT_PATH_EXTRUDE_ID,
-        message: format!("the path must be a closed ring: {error}"),
-    })?;
-    evaluate_contour(OBJECT_PATH_EXTRUDE_ID, &contour)?;
-    project.extrude_object_path(params.object, params.height)?;
+    let rings = extrusion_rings(project, params.object)?;
+    for ring in &rings {
+        evaluate_contour(OBJECT_PATH_EXTRUDE_ID, ring)?;
+    }
+    // A set becomes one body per ring and a path becomes one body in place; one command, because
+    // both are the same drawing and the cell that runs it does not ask which one it holds (X100).
+    if project.object_contours(params.object).is_ok() {
+        project.extrude_object_contours(params.object, params.height)?;
+    } else {
+        project.extrude_object_path(params.object, params.height)?;
+    };
     Ok(CommandOutcome::changed())
+}
+
+/// The rings an extrudable drawing holds, one body each.
+///
+/// A path is one ring and a contour set is one ring per piece a boolean left, so the cell and the
+/// command read both payloads the same way; a node with another payload is refused as a path, which
+/// is the payload the command has always named.
+fn extrusion_rings(project: &Project, id: Id) -> Result<Vec<Contour>, CommandError> {
+    let ring = |path: &Path| {
+        path.to_contour().map_err(|error| CommandError::InvalidParams {
+            command: OBJECT_PATH_EXTRUDE_ID,
+            message: format!("the path must be a closed ring: {error}"),
+        })
+    };
+    let object = project.object(id).ok_or(ProjectError::NodeNotFound { id })?;
+    let geometry = object.geometry();
+    if let Some(path) = geometry.as_path() {
+        return ring(path).map(|contour| vec![contour]);
+    }
+    if let Some(set) = geometry.as_contours() {
+        return set.paths().iter().map(ring).collect();
+    }
+    Err(ProjectError::NotAPathObject { id }.into())
 }
 
 /// Stable id of the extrusion height command.
@@ -329,17 +462,17 @@ pub const OBJECT_EXTRUDE_HEIGHT_SET_ID: &str = "object.extrude.height.set";
 pub const OBJECT_EXTRUDE_HEIGHT_SET_LABEL: Message = Message::CmdSetExtrusionHeight;
 
 /// Parameters for `object.extrude.height.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectExtrudeHeightSet {
     /// The constructive object whose extrusion height changes.
     pub object: Id,
-    /// Positive extrusion height along `+Z`.
+    /// Positive extrusion height along `+Z`, in micrometres.
     pub height: Length,
 }
 
 /// The `object.extrude.height.set` command.
-pub(crate) const OBJECT_EXTRUDE_HEIGHT_SET: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_EXTRUDE_HEIGHT_SET: CommandSpec = CommandSpec::new::<ObjectExtrudeHeightSet>(
     OBJECT_EXTRUDE_HEIGHT_SET_ID,
     OBJECT_EXTRUDE_HEIGHT_SET_LABEL,
     object_extrude_height_set_enabled,
@@ -377,6 +510,207 @@ fn object_extrude_height_set_run(
     Ok(CommandOutcome::changed())
 }
 
+/// Stable id of the boolean-step command.
+pub const OBJECT_BOOLEAN_SET_ID: &str = "object.boolean.set";
+
+/// User-facing label of the boolean-step command.
+pub const OBJECT_BOOLEAN_SET_LABEL: Message = Message::CmdSetBoolean;
+
+/// Parameters for `object.boolean.set`.
+///
+/// The step is appended to the target's history, so it applies to the body the previous features
+/// built, and it freezes the cutter's shape at this moment: the result is a body of its own that a
+/// later edit to the source never changes (ADR 0197).
+///
+/// The cutter is spent by the operation — it leaves the tree in the same revision and the same undo
+/// entry, which is what leaves one body behind — unless the maker marked it as a tool, because a
+/// tool is what a workshop owns and applies again ([`model::Object::is_tool`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectBooleanSet {
+    /// The constructive body that gains the step.
+    pub object: Id,
+    /// The operation the step applies.
+    pub op: BooleanOp,
+    /// The constructive object whose solid is the second operand and, unless it is marked a tool,
+    /// the object this command spends.
+    pub tool: Id,
+}
+
+/// The `object.boolean.set` command.
+pub(crate) const OBJECT_BOOLEAN_SET: CommandSpec = CommandSpec::new::<ObjectBooleanSet>(
+    OBJECT_BOOLEAN_SET_ID,
+    OBJECT_BOOLEAN_SET_LABEL,
+    object_boolean_set_enabled,
+    object_boolean_set_run,
+);
+
+fn object_boolean_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID) else {
+        return false;
+    };
+    let project = session.project();
+    params.object != params.tool
+        && is_solid_body(project, params.object)
+        && is_solid_body(project, params.tool)
+        && cutter_shape(project, params).is_ok()
+}
+
+/// Whether a node is a solid body: a drawn body or a primitive, and nothing else.
+///
+/// Both are bodies: a drawn one is a ring swept on Z with a history of steps, a primitive is a
+/// shape's parameters with the steps cut from it. A baked mesh and a panel are solids the document
+/// holds for other reasons and neither takes a step (ADR 0197).
+fn is_solid_body(project: &Project, id: Id) -> bool {
+    project.object(id).is_some_and(|object| {
+        let geometry = object.geometry();
+        geometry.as_constructive().is_some() || geometry.as_primitive().is_some()
+    })
+}
+
+/// The body a boolean freezes as its tool, as the document stores it.
+fn tool_body(project: &Project, id: Id) -> Option<ToolBody> {
+    let geometry = project.object(id)?.geometry();
+    if let Some(body) = geometry.as_constructive() {
+        return Some(ToolBody::Constructive(body.clone()));
+    }
+    geometry.as_primitive().map(|body| ToolBody::Primitive(body.clone()))
+}
+
+/// The cutter's shape as the step freezes it, in the target's own frame, named as the source is.
+///
+/// The tool is resolved here and nowhere else: the step stores a value, so nothing downstream can
+/// depend on a node that may be spent, moved or renamed a moment later (ADR 0197).
+fn cutter_shape(project: &Project, params: ObjectBooleanSet) -> Result<BooleanTool, CommandError> {
+    let invalid = |message: String| CommandError::InvalidParams { command: OBJECT_BOOLEAN_SET_ID, message };
+    if params.object == params.tool {
+        return Err(CommandError::Model(ProjectError::BooleanToolIsTheTarget { id: params.object }));
+    }
+    if !is_solid_body(project, params.object) {
+        return Err(CommandError::Model(ProjectError::NotASolidBody { id: params.object }));
+    }
+    let tool = project
+        .object(params.tool)
+        .ok_or(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }))?;
+    let Some(shape) = tool_body(project, params.tool) else {
+        return Err(CommandError::Model(ProjectError::BooleanToolNotABody { id: params.tool }));
+    };
+    let world =
+        project.world_placement(params.tool).ok_or_else(|| invalid("the cutter has no world frame".to_owned()))?;
+    let placement = project.placement_in_parent(params.object, world).map_err(CommandError::Model)?;
+    BooleanTool::new(tool.name(), shape, placement).map_err(|error| invalid(error.to_string()))
+}
+
+fn object_boolean_set_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectBooleanSet>(params, OBJECT_BOOLEAN_SET_ID)?;
+    let tool = cutter_shape(project, params)?;
+    // A cutter the maker did not mark as a tool is spent by the operation, so the result is one
+    // body rather than a body and the shape that cut it.
+    let keep = project.object(params.tool).is_some_and(|object| object.is_tool());
+    let consume = if keep { None } else { Some(params.tool) };
+    project.apply_boolean(params.object, Boolean::new(params.op, tool), consume)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the tool-mark command.
+pub const OBJECT_TOOL_SET_ID: &str = "object.tool.set";
+
+/// User-facing label of the tool-mark command.
+pub const OBJECT_TOOL_SET_LABEL: Message = Message::CmdSetToolMark;
+
+/// Parameters for `object.tool.set`.
+///
+/// The mark says what a body is for: a **tool** passes through parts, survives the boolean it takes
+/// part in and may be applied again (ADR 0197). It is a property of the object and nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectToolSet {
+    /// The geometry object whose mark changes.
+    pub object: Id,
+    /// Whether the body is a tool.
+    pub tool: bool,
+}
+
+/// The `object.tool.set` command.
+pub(crate) const OBJECT_TOOL_SET: CommandSpec = CommandSpec::new::<ObjectToolSet>(
+    OBJECT_TOOL_SET_ID,
+    OBJECT_TOOL_SET_LABEL,
+    object_tool_set_enabled,
+    object_tool_set_run,
+);
+
+fn object_tool_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectToolSet>(params, OBJECT_TOOL_SET_ID) else {
+        return false;
+    };
+    session.project().object(params.object).is_some()
+}
+
+fn object_tool_set_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectToolSet>(params, OBJECT_TOOL_SET_ID)?;
+    project.set_object_tool(params.object, params.tool)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the boolean-step removal command.
+pub const OBJECT_BOOLEAN_REMOVE_ID: &str = "object.boolean.remove";
+
+/// User-facing label of the boolean-step removal command.
+pub const OBJECT_BOOLEAN_REMOVE_LABEL: Message = Message::CmdRemoveBoolean;
+
+/// Parameters for `object.boolean.remove`.
+///
+/// The index is a position in the feature history; index zero is the body's own extrusion and is
+/// refused, because removing it would leave a history with nothing to build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectBooleanRemove {
+    /// The constructive body whose history changes.
+    pub object: Id,
+    /// The position of the step in the history.
+    pub index: usize,
+}
+
+/// The `object.boolean.remove` command.
+pub(crate) const OBJECT_BOOLEAN_REMOVE: CommandSpec = CommandSpec::new::<ObjectBooleanRemove>(
+    OBJECT_BOOLEAN_REMOVE_ID,
+    OBJECT_BOOLEAN_REMOVE_LABEL,
+    object_boolean_remove_enabled,
+    object_boolean_remove_run,
+);
+
+fn object_boolean_remove_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<ObjectBooleanRemove>(params, OBJECT_BOOLEAN_REMOVE_ID) else {
+        return false;
+    };
+    session
+        .project()
+        .object(params.object)
+        .and_then(|object| object.geometry().as_constructive())
+        .is_some_and(|body| matches!(body.features().get(params.index), Some(model::Feature::Boolean(_))))
+}
+
+fn object_boolean_remove_run(
+    project: &mut Project,
+    _catalog: &catalog::Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<ObjectBooleanRemove>(params, OBJECT_BOOLEAN_REMOVE_ID)?;
+    project.remove_object_boolean(params.object, params.index)?;
+    Ok(CommandOutcome::changed())
+}
+
 /// Stable id of the path creation command.
 pub const OBJECT_PATH_CREATE_ID: &str = "object.path.create";
 
@@ -384,7 +718,7 @@ pub const OBJECT_PATH_CREATE_ID: &str = "object.path.create";
 pub const OBJECT_PATH_CREATE_LABEL: Message = Message::CmdCreatePath;
 
 /// Parameters for `object.path.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathCreate {
     /// Id of the container that receives the new object.
@@ -399,7 +733,7 @@ pub struct ObjectPathCreate {
 }
 
 /// The `object.path.create` command.
-pub(crate) const OBJECT_PATH_CREATE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_CREATE: CommandSpec = CommandSpec::new::<ObjectPathCreate>(
     OBJECT_PATH_CREATE_ID,
     OBJECT_PATH_CREATE_LABEL,
     object_path_create_enabled,
@@ -434,7 +768,7 @@ pub const OBJECT_PATH_REPLACE_ID: &str = "object.path.replace";
 pub const OBJECT_PATH_REPLACE_LABEL: Message = Message::CmdReplacePath;
 
 /// Parameters for `object.path.replace`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectPathReplace {
     /// The path object whose drawing changes.
@@ -444,7 +778,7 @@ pub struct ObjectPathReplace {
 }
 
 /// The `object.path.replace` command.
-pub(crate) const OBJECT_PATH_REPLACE: CommandSpec = CommandSpec::new(
+pub(crate) const OBJECT_PATH_REPLACE: CommandSpec = CommandSpec::new::<ObjectPathReplace>(
     OBJECT_PATH_REPLACE_ID,
     OBJECT_PATH_REPLACE_LABEL,
     object_path_replace_enabled,
@@ -476,7 +810,7 @@ pub const OBJECT_COLLAPSE_ID: &str = "object.collapse";
 pub const OBJECT_COLLAPSE_LABEL: Message = Message::CmdCollapseToMesh;
 
 /// Parameters for `object.collapse`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectCollapse {
     /// The constructive or primitive object to bake.
@@ -484,8 +818,12 @@ pub struct ObjectCollapse {
 }
 
 /// The `object.collapse` command.
-pub(crate) const OBJECT_COLLAPSE: CommandSpec =
-    CommandSpec::new(OBJECT_COLLAPSE_ID, OBJECT_COLLAPSE_LABEL, object_collapse_enabled, object_collapse_run);
+pub(crate) const OBJECT_COLLAPSE: CommandSpec = CommandSpec::new::<ObjectCollapse>(
+    OBJECT_COLLAPSE_ID,
+    OBJECT_COLLAPSE_LABEL,
+    object_collapse_enabled,
+    object_collapse_run,
+);
 
 /// Whether a geometry payload is derived from parameters and can be baked to a mesh.
 fn is_derived(geometry: &Geometry) -> bool {
@@ -518,7 +856,7 @@ fn object_collapse_run(
         Geometry::Primitive(primitive) => {
             evaluate_primitive(primitive).map_err(|error| evaluation(error.to_string()))?
         }
-        Geometry::Mesh(_) | Geometry::Path(_) => {
+        Geometry::Mesh(_) | Geometry::Path(_) | Geometry::Contours(_) => {
             return Err(ProjectError::NotDerivedObject { id: params.object }.into());
         }
     };
@@ -530,7 +868,7 @@ fn object_collapse_run(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use model::{ContourSegment, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
+    use model::{ContourSegment, Contours, DEFAULT_BANDS, DEFAULT_SEGMENTS, EulerAngles, PivotLocal, Revision};
     use testkit::{millimetres, open_path, sample_catalog, sample_project};
     use units::Degrees;
 
@@ -541,7 +879,7 @@ mod tests {
     /// A sphere 100 mm across at the scene root.
     fn sphere_params(session: &Session) -> Value {
         let size = Length::from_millimetres(100).expect("size");
-        let primitive = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere");
+        let primitive = Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere").base();
         serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
             name: "Sphere".to_owned(),
@@ -549,6 +887,255 @@ mod tests {
             placement: Placement::IDENTITY,
         })
         .expect("params serialize")
+    }
+
+    /// Three constructive bodies at the scene root: two slabs 100 x 100 x 18, one above the other,
+    /// and a cutter 50 x 50 x 200 that passes through both, so a difference leaves a square hole.
+    fn boolean_scene() -> (Session, Id, Id, Id) {
+        let slab = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
+            millimetres(18),
+        )
+        .expect("a slab");
+        let second = slab.clone();
+        let cutter = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a cutter"),
+            millimetres(200),
+        )
+        .expect("a cutter");
+        let cutter_at =
+            Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+        let root = model::Container::new(
+            Id::new(1).expect("id"),
+            "Root",
+            Placement::IDENTITY,
+            vec![
+                model::Object::new(
+                    Id::new(3).expect("id"),
+                    "Slab",
+                    Placement::IDENTITY,
+                    Geometry::Constructive(slab.clone()),
+                )
+                .into(),
+                model::Object::new(Id::new(4).expect("id"), "Cutter", cutter_at, Geometry::Constructive(cutter)).into(),
+                model::Object::new(
+                    Id::new(5).expect("id"),
+                    "Second slab",
+                    Placement::new(geom::DVec3::new(0.0, 0.0, 100.0), geom::DQuat::IDENTITY).expect("a placement"),
+                    Geometry::Constructive(second.clone()),
+                )
+                .into(),
+            ],
+        );
+        let project = Project::new(root).expect("a valid project");
+        (
+            Session::with_directory(project, sample_catalog()),
+            Id::new(3).expect("id"),
+            Id::new(5).expect("id"),
+            Id::new(4).expect("id"),
+        )
+    }
+
+    fn boolean_params(object: Id, op: &str, tool: Id) -> Value {
+        serde_json::json!({ "object": object.get(), "op": op, "tool": tool.get() })
+    }
+
+    #[test]
+    fn a_boolean_step_spends_its_cutter_in_one_revision_and_one_undo_entry() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+
+        let outcome = session
+            .dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter))
+            .expect("the step is stored");
+
+        assert_eq!(outcome, CommandOutcome::changed());
+        assert_eq!(session.project().revision().get(), 1, "one command, one revision");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        let step = body.booleans().next().expect("one step");
+        assert_eq!(step.tool().name(), "Cutter", "the step froze the cutter's shape and its name");
+        assert_eq!(step.tool().placement().translation(), geom::DVec3::new(25.0, 25.0, -10.0));
+        assert!(session.project().object(cutter).is_none(), "the cutter is spent by the operation");
+        assert!(session.can_undo());
+
+        session.undo().expect("undo");
+        assert_eq!(session.project().revision().get(), 2, "undo advances the revision to invalidate caches");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(body.booleans().count(), 0);
+        assert!(session.project().object(cutter).is_some(), "undo brings the cutter back");
+    }
+
+    /// A drawn slab, a drawn cutter through it, and two balls: every pairing a body boolean has.
+    fn primitive_scene() -> (Session, Id, Id, Id) {
+        let slab = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
+            millimetres(18),
+        )
+        .expect("a slab");
+        let cutter = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a cutter"),
+            millimetres(200),
+        )
+        .expect("a cutter");
+        let cutter_at =
+            Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+        let ball = Primitive::sphere(millimetres(20), 16, 8).expect("a ball");
+        let small = Primitive::sphere(millimetres(10), 16, 8).expect("a smaller ball");
+        let slab_id = Id::new(3).expect("id");
+        let cutter_id = Id::new(4).expect("id");
+        let ball_id = Id::new(5).expect("id");
+        let root = model::Container::new(
+            Id::new(1).expect("id"),
+            "Root",
+            Placement::IDENTITY,
+            vec![
+                model::Object::new(slab_id, "Slab", Placement::IDENTITY, Geometry::Constructive(slab)).into(),
+                model::Object::new(cutter_id, "Cutter", cutter_at, Geometry::Constructive(cutter)).into(),
+                model::Object::new(ball_id, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).into(),
+                model::Object::new(
+                    Id::new(6).expect("id"),
+                    "Cutter ball",
+                    Placement::IDENTITY,
+                    Geometry::Primitive(small),
+                )
+                .into(),
+            ],
+        );
+        let project = Project::new(root).expect("a valid project");
+        (Session::with_directory(project, sample_catalog()), slab_id, cutter_id, ball_id)
+    }
+
+    #[test]
+    fn a_primitive_is_a_body_in_both_directions() {
+        // The owner's case: a sphere is a solid, so a block cuts it and it cuts a block. The step is
+        // stored on whichever body is the target, and the ✓ leaves one body behind (ADR 0197).
+        let (mut session, slab, cutter, sphere) = primitive_scene();
+        let spec = CommandRegistry::new().get(OBJECT_BOOLEAN_SET_ID).expect("registered");
+
+        // A block cuts the ball: the target is the primitive, the tool a drawn body.
+        let params = boolean_params(sphere, "difference", cutter);
+        assert!(spec.enabled(&session, &params), "a primitive is a target");
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &params).expect("the step is stored on the ball");
+        let body = session.project().object(sphere).expect("the ball").geometry().as_primitive().expect("a primitive");
+        assert_eq!(body.steps().len(), 1, "the ball carries the step");
+        assert_eq!(body.base().kind(), PrimitiveKind::Sphere, "and keeps its parameters");
+        assert!(session.project().object(cutter).is_none(), "the cutter is spent");
+
+        // A ball cuts the slab: the tool is the primitive.
+        let cutter_ball = session.project().root().children().iter().find_map(|node| match node {
+            model::Node::Object(object) if object.name() == "Cutter ball" => Some(object.id()),
+            _ => None,
+        });
+        let Some(cutter_ball) = cutter_ball else {
+            return;
+        };
+        let params = boolean_params(slab, "difference", cutter_ball);
+        assert!(spec.enabled(&session, &params), "a primitive is a tool");
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &params).expect("the step is stored on the slab");
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        let step = body.booleans().next().expect("one step");
+        assert!(matches!(step.tool().body(), model::ToolBody::Primitive(_)), "the step froze the ball's parameters");
+
+        // Neither is a solid: a panel is not a boolean operand, and the command says so.
+        let panel = session.project().root().children().iter().find_map(|node| match node {
+            model::Node::Panel(panel) => Some(panel.id()),
+            _ => None,
+        });
+        if let Some(panel) = panel {
+            let params = boolean_params(panel, "difference", sphere);
+            assert!(!spec.enabled(&session, &params), "a panel is not a body");
+        }
+    }
+
+    #[test]
+    fn collapsing_a_primitive_with_a_step_is_refused_in_words() {
+        // A ball with a notch has no analytic mesh, so baking it is an error the maker can read
+        // rather than a mesh of the plain ball — the same refusal a drawn body with a step has.
+        let (mut session, _slab, cutter, sphere) = primitive_scene();
+        session
+            .dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(sphere, "difference", cutter))
+            .expect("a step on the ball");
+
+        let value = serde_json::to_value(ObjectCollapse { object: sphere }).expect("params");
+        assert!(session.dispatch(OBJECT_COLLAPSE_ID, &value).is_err(), "a body with a step does not bake");
+        assert!(
+            session.project().object(sphere).is_some_and(|object| object.geometry().as_primitive().is_some()),
+            "the body is untouched"
+        );
+    }
+
+    #[test]
+    fn a_marked_cutter_is_kept_and_cuts_a_second_body() {
+        let (mut session, slab, other, cutter) = boolean_scene();
+        session
+            .dispatch(OBJECT_TOOL_SET_ID, &serde_json::json!({ "object": cutter.get(), "tool": true }))
+            .expect("mark the cutter as a tool");
+
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("the first step");
+        let after_first = session.project().revision();
+        assert!(session.project().object(cutter).is_some(), "a marked tool survives the operation");
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(other, "difference", cutter)).expect("the second step");
+
+        assert_eq!(session.project().revision().get(), after_first.get() + 1, "one step, one revision");
+        for body in [slab, other] {
+            let constructive = session.project().object(body).expect("a body").geometry().as_constructive();
+            assert!(
+                constructive
+                    .is_some_and(|body| body.booleans().next().is_some_and(|step| step.tool().name() == "Cutter")),
+                "both bodies carry the shape they cut with"
+            );
+        }
+        assert!(session.project().object(cutter).is_some(), "one tool, two bodies");
+        session.undo().expect("undo the second step");
+        let first = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(first.booleans().count(), 1, "the first step survives");
+        let second =
+            session.project().object(other).expect("the second slab").geometry().as_constructive().expect("a body");
+        assert_eq!(second.booleans().count(), 0, "the second step is undone");
+    }
+
+    #[test]
+    fn a_refused_boolean_names_the_reason_and_writes_nothing() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+        let root = Id::new(1).expect("id");
+
+        // A body cannot be cut with itself.
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", slab)),
+            Err(CommandError::Model(ProjectError::BooleanToolIsTheTarget { id: slab }))
+        );
+        // The cutter must be a constructive body: id 1 is the root container.
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "union", root)),
+            Err(CommandError::Model(ProjectError::BooleanToolNotABody { id: root }))
+        );
+        // A baked mesh is a body but not a constructive one: it has no ring to sweep.
+        let revision = session.project().revision();
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+        assert_eq!(session.project().revision().get(), revision.get() + 1, "the accepted step wrote once");
+        assert_eq!(session.project().object(cutter), None, "and spent its cutter");
+    }
+
+    #[test]
+    fn a_boolean_step_is_removed_by_its_position() {
+        let (mut session, slab, _other, cutter) = boolean_scene();
+        session.dispatch(OBJECT_BOOLEAN_SET_ID, &boolean_params(slab, "difference", cutter)).expect("a step");
+
+        let remove = serde_json::json!({ "object": slab.get(), "index": 1 });
+        let outcome = session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &remove).expect("the step is removed");
+        assert_eq!(outcome, CommandOutcome::changed());
+        let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+        assert_eq!(body.features().len(), 1, "the extrusion stays");
+        assert!(session.project().object(cutter).is_none(), "the spent cutter does not return");
+
+        let extrusion = serde_json::json!({ "object": slab.get(), "index": 0 });
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &extrusion),
+            Err(CommandError::Model(ProjectError::NoSuchBoolean { id: slab, index: 0 }))
+        );
+        assert_eq!(
+            session.dispatch(OBJECT_BOOLEAN_REMOVE_ID, &serde_json::json!({ "object": slab.get(), "index": 4 })),
+            Err(CommandError::Model(ProjectError::NoSuchBoolean { id: slab, index: 4 }))
+        );
     }
 
     #[test]
@@ -584,7 +1171,7 @@ mod tests {
             let params = serde_json::to_value(ObjectPrimitiveCreate {
                 parent: session.project().root().id(),
                 name: "Primitive".to_owned(),
-                primitive: primitive.clone(),
+                primitive: primitive.base(),
                 placement: Placement::IDENTITY,
             })
             .expect("params serialize");
@@ -653,7 +1240,7 @@ mod tests {
         assert_eq!(session.project().object_primitive(id), Ok(&original));
 
         let smoother = Primitive::sphere(Length::from_millimetres(60).expect("radius"), 24, 12).expect("sphere");
-        let value = serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: smoother.clone() })
+        let value = serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: smoother.base() })
             .expect("params serialize");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
         assert!(spec.enabled(&session, &value));
@@ -676,7 +1263,7 @@ mod tests {
         let value = serde_json::to_value(ObjectPrimitiveCreate {
             parent: session.project().root().id(),
             name: "Ball".to_owned(),
-            primitive: Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere"),
+            primitive: Primitive::from_kind(PrimitiveKind::Sphere, size).expect("a sphere").base(),
             placement: Placement::IDENTITY,
         })
         .expect("params serialize");
@@ -695,7 +1282,7 @@ mod tests {
 
         let replacement = Primitive::sphere(Length::from_millimetres(10).expect("radius"), 8, 4).expect("sphere");
         let value =
-            serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: replacement }).expect("params");
+            serde_json::to_value(ObjectPrimitiveReplace { object: id, primitive: replacement.base() }).expect("params");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
         assert!(!spec.enabled(&session, &value), "a baked mesh has no parameters");
         assert!(session.dispatch(OBJECT_PRIMITIVE_REPLACE_ID, &value).is_err());
@@ -715,7 +1302,7 @@ mod tests {
         let before = session.project().revision();
         let value = serde_json::to_value(ObjectPrimitiveReplace {
             object: id,
-            primitive: Primitive::sphere(millimetres(20), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("a sphere"),
+            primitive: Primitive::sphere(millimetres(20), DEFAULT_SEGMENTS, DEFAULT_BANDS).expect("a sphere").base(),
         })
         .expect("params");
         let spec = CommandRegistry::new().get(OBJECT_PRIMITIVE_REPLACE_ID).expect("registered");
@@ -908,6 +1495,81 @@ mod tests {
         assert_eq!(baked, evaluated, "the viewport and the collapse share one evaluator");
     }
 
+    /// A box 200 × 300 × 600 mm at the scene root, with three independent sides (X105).
+    fn cuboid_params(session: &Session, sides: [Length; 3]) -> Value {
+        let [width, depth, height] = sides;
+        serde_json::to_value(ObjectCuboidCreate {
+            parent: session.project().root().id(),
+            name: "Block".to_owned(),
+            width,
+            depth,
+            height,
+            placement: Placement::IDENTITY,
+        })
+        .expect("params serialize")
+    }
+
+    #[test]
+    fn a_box_is_one_body_from_three_sides() {
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let sides = [
+            Length::from_millimetres(200).expect("width"),
+            Length::from_millimetres(300).expect("depth"),
+            Length::from_millimetres(600).expect("height"),
+        ];
+        let value = cuboid_params(&session, sides);
+        let spec = CommandRegistry::new().get(OBJECT_CUBOID_CREATE_ID).expect("registered");
+        assert!(spec.enabled(&session, &value), "three sides and a container is a box");
+        assert_eq!(spec.label(), Message::ToolBox, "the command prints the word on the ribbon cell");
+        let id = session.dispatch(OBJECT_CUBOID_CREATE_ID, &value).expect("create the box").created_id().expect("id");
+        assert_eq!(session.project().revision().get(), 1, "one command, one revision");
+        let object = session.project().object(id).expect("the box");
+        let constructive = object.geometry().as_constructive().expect("a body, not a parameter set");
+        assert_eq!(
+            constructive.contour().expect("the base ring").bounds_micrometres(),
+            ([-100_000, -150_000], [100_000, 150_000]),
+            "the local zero is the centre of the base face"
+        );
+        assert_eq!(
+            constructive.extrude_feature().map(model::Extrude::height),
+            Some(sides[2]),
+            "the third side is the sweep"
+        );
+        let mesh = mesh::evaluate_constructive(constructive).expect("the derived mesh");
+        assert_eq!((mesh.positions().len(), mesh.faces().len()), (8, 6), "one box, not four walls");
+        assert_eq!(
+            mesh.bounds_micrometres(),
+            ([-100_000, -150_000, 0], [100_000, 150_000, 600_000]),
+            "the body spans the three sides it was given"
+        );
+        session.undo().expect("undo the box");
+        assert!(session.project().object(id).is_none(), "one undo entry holds the whole create");
+        assert!(!session.can_undo(), "there is nothing behind the create");
+    }
+
+    #[test]
+    fn a_box_side_outside_the_range_is_refused_without_mutating() {
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let side = Length::from_millimetres(100).expect("a side");
+        let cases = [
+            [Length::ZERO, side, side],
+            [Length::from_millimetres(-100).expect("a negative side"), side, side],
+            [side, side, Length::from_micrometres(model::MAX_CONTOUR_COORDINATE.micrometres() + 1)],
+        ];
+        let spec = CommandRegistry::new().get(OBJECT_CUBOID_CREATE_ID).expect("registered");
+        for sides in cases {
+            let value = cuboid_params(&session, sides);
+            assert!(!spec.enabled(&session, &value), "{sides:?} cannot be a box");
+            let refusal = session.dispatch(OBJECT_CUBOID_CREATE_ID, &value).expect_err("a bad side is refused");
+            assert!(
+                refusal.to_string().contains("width") || refusal.to_string().contains("height"),
+                "the refusal names the side: {refusal}"
+            );
+        }
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal writes nothing");
+        assert!(!session.can_undo());
+    }
+
     #[test]
     fn a_bad_height_or_a_mesh_object_is_refused_without_mutating() {
         let mut session = Session::with_directory(sample_project(), sample_catalog());
@@ -1053,6 +1715,52 @@ mod tests {
 
         session.undo().expect("one undo restores the drawing");
         assert_eq!(session.project().object_path(id), Ok(&stored));
+    }
+
+    #[test]
+    fn a_contour_set_is_extruded_one_body_per_ring_in_one_revision_and_one_undo() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+        let set = Contours::new(vec![left.clone(), right.clone()]).expect("a contour set");
+        let id = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set object");
+        let children = project.root().children().len();
+        let mut session = Session::with_directory(project, sample_catalog());
+
+        let value =
+            serde_json::to_value(ObjectPathExtrude { object: id, height: millimetres(18) }).expect("params serialize");
+        let spec = CommandRegistry::new().get(OBJECT_PATH_EXTRUDE_ID).expect("registered");
+        assert!(spec.enabled(&session, &value), "the cell runs on a drawing of several rings");
+        let before = session.project().revision();
+        session.dispatch(OBJECT_PATH_EXTRUDE_ID, &value).expect("both rings become bodies");
+
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"), "one revision");
+        assert_eq!(session.project().root().children().len(), children + 1, "the set became two bodies");
+        let first = session.project().object(id).expect("the node stays");
+        assert_eq!(first.name(), "Union", "the first body keeps the drawing's name");
+        let body = first.geometry().as_constructive().expect("the drawing is a body now");
+        assert_eq!(body.path(), &left, "the first body owns the first ring");
+        assert_eq!(body.height(), Some(millimetres(18)), "each body carries the typed height");
+        let sibling = session
+            .project()
+            .root()
+            .children()
+            .iter()
+            .filter_map(|child| child.as_object())
+            .find(|object| object.name() == "Union 2")
+            .expect("the second body");
+        let body = sibling.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &right, "the second body owns the second ring");
+        assert_eq!(body.height(), Some(millimetres(18)));
+        assert!(session.project().object_contours(id).is_err(), "the set is consumed");
+        assert!(!spec.enabled(&session, &value), "a body is not extruded a second time");
+
+        session.undo().expect("one undo restores the whole drawing");
+        assert_eq!(session.project().object_contours(id).map(Contours::len), Ok(2), "the set is back, whole");
+        assert_eq!(session.project().root().children().len(), children, "and the second body is gone");
+        assert!(!session.can_undo(), "the whole expansion was one entry");
     }
 
     #[test]

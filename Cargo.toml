@@ -7,7 +7,7 @@ default-members = ["crates/*", "app"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 rust-version = "1.95"
 
 [workspace.dependencies]
@@ -24,9 +24,11 @@ param = { path = "crates/param" }
 mesh = { path = "crates/mesh" }
 project = { path = "crates/project" }
 export = { path = "crates/export" }
+final = { path = "crates/final" }
 scene = { path = "crates/scene" }
 render = { path = "crates/render" }
 engine = { path = "crates/engine" }
+mcp = { path = "crates/mcp" }
 ui = { path = "crates/ui" }
 testkit = { path = "crates/testkit" }
 
@@ -52,6 +54,25 @@ proc-macro2 = { version = "1.0", features = ["span-locations"] }
 # sheet on macOS, the common item dialog on Windows. No GTK, so it is not a second GUI toolkit, and
 # nothing C is compiled: the portal's D-Bus client is loaded at run time (ADR 0182).
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal", "wayland"] }
+# The MCP protocol over the process's own standard streams: Apache-2.0, pure Rust, and the only
+# crate allowed to depend on it and on its runtime. No editor path awaits it: the tools dispatch
+# through `Session::batch`, which is synchronous (ADR 0185, ADR 0186).
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-io"] }
+# The runtime the protocol runs on, in `mcp` alone. `rt` is the whole runtime a served session
+# needs, and `net` with `time` are the local control channel's: one loopback listener and the
+# deadline the handshake answers on (ADR 0186, ADR 0188).
+tokio = { version = "1.54", default-features = false, features = ["rt", "io-std", "io-util", "sync", "net", "time"] }
+# The assistant's outbound wire: one blocking OpenAI-compatible client, in `mcp` alone, with the
+# operating system's TLS. `default-features = false` keeps `rustls` and its C crypto provider out of
+# the tree; the exception this needs is `openssl-sys` without its `vendored` feature, and the gate
+# proves it over the resolved graph (ADR 0189).
+ureq = { version = "3.5", default-features = false, features = ["json", "native-tls"] }
+# The bytes of the channel's run token, from the operating system's generator: MIT OR Apache-2.0,
+# pure Rust (a syscall on every platform, no C source) and already in the tree through `uuid`.
+getrandom = "0.3"
+# The parameter schema a command publishes to a model or a CLI: a derive over the `serde` struct
+# that already validates the parameters, so the description cannot drift from the parser (ADR 0185).
+schemars = { version = "1.2", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 syn = { version = "2.0", features = ["full", "visit"] }

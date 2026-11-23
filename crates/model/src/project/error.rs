@@ -11,10 +11,14 @@ use crate::*;
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ProjectError {
     /// The file was written by a newer or otherwise unsupported schema.
+    ///
+    /// The number is carried as the file spells it, because the number is a sentence a person reads
+    /// and not a key: a value that is not a whole number names itself, and an absent one reads as
+    /// `missing` instead of a type error.
     #[error("unsupported schema version {found}; this build supports {supported}")]
     UnsupportedSchemaVersion {
-        /// The version found in the document.
-        found: u32,
+        /// The version found in the document, or the word saying there is none.
+        found: String,
         /// The version supported by this build.
         supported: u32,
     },
@@ -189,11 +193,37 @@ pub enum ProjectError {
         /// The node that was asked.
         id: Id,
     },
+    /// The node is not a solid body, so no boolean step can be appended to it.
+    #[error("node {id} is not a solid body")]
+    NotASolidBody {
+        /// The rejected node.
+        id: Id,
+    },
     /// The node is not a constructive object, so it has no contour or feature history.
     #[error("node {id} is not a constructive object")]
     NotConstructiveObject {
         /// The node that was asked.
         id: Id,
+    },
+    /// A boolean was asked to consume the very body it was applied to.
+    #[error("object {id} cannot be cut with itself")]
+    BooleanToolIsTheTarget {
+        /// The body that was both target and cutter.
+        id: Id,
+    },
+    /// The cutter a boolean step was built from is not a constructive body.
+    #[error("node {id} is not a constructive body, so it cannot cut anything")]
+    BooleanToolNotABody {
+        /// The node the command was handed as a cutter.
+        id: Id,
+    },
+    /// The feature index is outside the history, or names the extrusion a body cannot lose.
+    #[error("object {id} has no boolean step {index}")]
+    NoSuchBoolean {
+        /// The body whose features were asked for.
+        id: Id,
+        /// The rejected feature index.
+        index: usize,
     },
     /// The node is not a parametric primitive, so it has no primitive parameters.
     #[error("node {id} is not a primitive object")]
@@ -210,6 +240,18 @@ pub enum ProjectError {
     /// The node is not a path object, so it has no flat drawing to replace.
     #[error("node {id} is not a path object")]
     NotAPathObject {
+        /// The node that was asked.
+        id: Id,
+    },
+    /// The node is not a contour-set object, so it has no set of rings.
+    #[error("node {id} is not a contour set")]
+    NotAContoursObject {
+        /// The node that was asked.
+        id: Id,
+    },
+    /// The node is not a free-form geometry object, so it carries no object attribute.
+    #[error("node {id} is not a geometry object")]
+    NotAnObject {
         /// The node that was asked.
         id: Id,
     },

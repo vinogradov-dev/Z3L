@@ -381,40 +381,145 @@ impl GizmoSettings {
     }
 }
 
-/// The *Snapping* section: what an object drag captures and stops at, and how near it must come.
+/// The *Snapping* section: what a pointer captures, what a drag stops at, and how near it must come.
 ///
 /// Snapping is a taste and a workshop standard, so the values are the workspace's and never the
-/// document's: turning the planes off costs no undo entry and leaves no revision behind. The model
-/// owns what each value means (`model::SnapSettings`, `model::MoveSettings`) and the shell hands them
-/// over once when a drag starts, so a change applies to the next drag and never to the one under the
-/// hand (ADR 0146). The floor is a stop beside them rather than a capture: it answers whether a body
-/// may sink below Z = 0 at all (X87, ADR 0177).
+/// document's: turning a kind off costs no undo entry and leaves no revision behind. The model owns
+/// what each value means (`model::SnapKinds`, `model::SnapSettings`, `model::MoveSettings`) and the
+/// shell hands them over — once when a drag starts, every frame to a pointer tool — so a change
+/// applies to the next pointer position and never bends a drag already under the hand (ADR 0146,
+/// U116). The floor is a stop beside them rather than a capture: it answers whether a body may sink
+/// below Z = 0 at all (X87, ADR 0177).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SnapSettings {
-    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
+    /// Whether the world coordinate planes X=0, Y=0 and Z=0 capture, the floor included: the
+    /// `axis` kind of the set.
     ///
     /// Until a house-wall tool exists they stand in for the walls of a room: a base cabinet against
     /// the back wall of a shop and a piece standing on the floor are the same snap.
     pub planes: bool,
     /// Whether another product's envelope captures a drag with its virtual faces.
     pub frames: bool,
-    /// How near a surface must be to capture a drag, in millimetres; zero captures nothing.
+    /// How near a surface must be to capture, in millimetres; zero captures nothing.
     pub tolerance_mm: u32,
     /// Whether the invisible floor at Z = 0 stops every moved body.
     ///
-    /// It is a stop and not a snap, so it holds whatever the two switches above say, and a workspace
-    /// that turns it off has no floor at all (ADR 0177).
+    /// It is a stop and not a snap, so it holds whatever the switches say, and a workspace that
+    /// turns it off has no floor at all (ADR 0177).
     pub floor: bool,
+    /// The pointer's own kinds: one switch per kind, all on in a fresh workspace (U116).
+    pub kinds: PointerKinds,
+    /// How a snap reads a corner above the drawing plane: the point itself, or its foot on the
+    /// plane (U119, `model::SnapMode`).
+    pub mode: model::SnapMode,
+}
+
+/// The pointer's snap kinds: what one click may capture in the scene.
+///
+/// The switches are saved under the names of the kinds the resolver answers with
+/// (`model::SnapKind`), so the Settings page, the View tab's Snaps group and a file written on
+/// another machine name the same ten things. A workspace written before the section existed snaps
+/// everything, which is the fresh default.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PointerKinds {
+    /// A corner.
+    #[serde(default = "on")]
+    pub vertex: bool,
+    /// A crossing of two edges.
+    #[serde(default = "on")]
+    pub intersection: bool,
+    /// The middle of an edge.
+    #[serde(default = "on")]
+    pub midpoint: bool,
+    /// A centre.
+    #[serde(default = "on")]
+    pub centre: bool,
+    /// A perpendicular foot.
+    #[serde(default = "on")]
+    pub perpendicular: bool,
+    /// A tangent point.
+    #[serde(default = "on")]
+    pub tangent: bool,
+    /// A point on an edge.
+    #[serde(default = "on")]
+    pub edge: bool,
+    /// A point on a face.
+    #[serde(default = "on")]
+    pub face: bool,
+    /// The drawing plane's grid.
+    #[serde(default = "on")]
+    pub grid: bool,
+}
+
+/// The default of a switch a workspace written before the section did not carry: on.
+fn on() -> bool {
+    true
+}
+
+impl Default for PointerKinds {
+    fn default() -> Self {
+        Self {
+            vertex: true,
+            intersection: true,
+            midpoint: true,
+            centre: true,
+            perpendicular: true,
+            tangent: true,
+            edge: true,
+            face: true,
+            grid: true,
+        }
+    }
 }
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance_mm: DEFAULT_SNAP_MM, floor: true }
+        Self {
+            planes: true,
+            frames: true,
+            tolerance_mm: DEFAULT_SNAP_MM,
+            floor: true,
+            kinds: PointerKinds::default(),
+            mode: model::SnapMode::default(),
+        }
     }
 }
 
 impl SnapSettings {
+    /// The kinds the pointer resolver reads: every switch of the section as one value.
+    pub fn kinds(&self) -> model::SnapKinds {
+        model::SnapKinds {
+            vertex: self.kinds.vertex,
+            intersection: self.kinds.intersection,
+            midpoint: self.kinds.midpoint,
+            centre: self.kinds.centre,
+            perpendicular: self.kinds.perpendicular,
+            tangent: self.kinds.tangent,
+            edge: self.kinds.edge,
+            face: self.kinds.face,
+            axis: self.planes,
+            grid: self.kinds.grid,
+        }
+    }
+
+    /// Writes the kinds back into the section, so a toggle in a tab survives the restart.
+    pub fn set_kinds(&mut self, kinds: model::SnapKinds) {
+        self.planes = kinds.axis;
+        self.kinds = PointerKinds {
+            vertex: kinds.vertex,
+            intersection: kinds.intersection,
+            midpoint: kinds.midpoint,
+            centre: kinds.centre,
+            perpendicular: kinds.perpendicular,
+            tangent: kinds.tangent,
+            edge: kinds.edge,
+            face: kinds.face,
+            grid: kinds.grid,
+        };
+    }
+
     /// The value the move rule reads: the same facts, with the tolerance as the document's own unit so
     /// the model never sees a millimetre as a number.
     pub fn move_settings(&self) -> model::MoveSettings {
@@ -422,7 +527,7 @@ impl SnapSettings {
         model::MoveSettings {
             axes: model::MoveAxes::Document,
             snaps: Some(model::SnapSettings {
-                planes: self.planes,
+                kinds: self.kinds(),
                 frames: self.frames,
                 tolerance: units::Length::from_micrometres(tolerance * 1000),
             }),
@@ -518,6 +623,159 @@ pub struct PanelsSettings {
     pub inspector: PanelState,
 }
 
+/// The *Assistant* section: the local control channel an agent attaches to, the agent process the
+/// panel starts, the endpoint a model is asked at, and the endpoints a person has agreed to.
+///
+/// The channel is on for a fresh workspace because a feature a person has to discover a flag for is a
+/// feature that does not exist (ADR 0188). Its exposure is one machine, one account and one token that
+/// dies with the process, and this switch is the one place a workshop closes the door.
+///
+/// Two ways to give the panel a model, and the process wins: a command the workshop types starts an
+/// agent that owns the model loop (ADR 0230), and an endpoint is the OpenAI-compatible wire a cloud
+/// provider and a server on this machine answer the same way (ADR 0189). Both are empty by default,
+/// so a fresh workspace sends nothing anywhere.
+///
+/// The key is not here and never will be: it comes from `Z3L_AGENT_KEY` or from a file beside this
+/// one, and the settings file is the kind of file people copy between machines. The consent list is
+/// the only record of what a person agreed to send, one entry per endpoint, and clearing an entry is
+/// how they ask to be asked again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AssistantSettings {
+    /// Whether the window offers the loopback control channel.
+    pub attach: bool,
+    /// The command an agent process is started with: one program and its arguments, on one line.
+    pub agent: String,
+    /// The OpenAI-compatible base URL a model is asked at (`https://host/v1`); empty for none.
+    pub endpoint: String,
+    /// The model name the endpoint answers with; empty for none.
+    pub model: String,
+    /// The endpoints a person has agreed to send a conversation to, oldest first.
+    pub consent: Vec<String>,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self { attach: true, agent: String::new(), endpoint: String::new(), model: String::new(), consent: Vec::new() }
+    }
+}
+
+/// Why a typed base URL cannot be used as one endpoint.
+///
+/// The wire appends `/chat/completions` to whatever the field holds, so an address that is not one
+/// absolute `http(s)` URL produces a request to a path nobody serves — the owner met this as a plain
+/// HTTP 404 after a URL was pasted into a URL that was already in the field. The settings page says
+/// which clause is wrong before a message leaves; [`AssistantSettings::endpoint_to_ask`] stops the
+/// request while the clause stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointProblem {
+    /// A second `http://` or `https://` inside the address: a URL pasted into a URL.
+    Doubled,
+    /// The address does not start with `http://` or `https://`.
+    Scheme,
+    /// Nothing between the scheme and the first `/`, `?` or `#`.
+    Host,
+    /// A space or a line break, which no address carries.
+    Space,
+    /// The completion path is already there; the client appends it and a second one is a 404.
+    Completion,
+}
+
+impl EndpointProblem {
+    /// The clause the settings page and the panel read, never a sentence of its own.
+    pub fn message(self) -> Message {
+        match self {
+            Self::Doubled => Message::AssistantEndpointDoubled,
+            Self::Scheme => Message::AssistantEndpointNeedsScheme,
+            Self::Host => Message::AssistantEndpointNoHost,
+            Self::Space => Message::AssistantEndpointSpace,
+            Self::Completion => Message::AssistantEndpointHasCompletion,
+        }
+    }
+
+    /// The sentence the settings page draws and the panel repeats.
+    pub fn sentence(self, lang: Lang) -> String {
+        Message::AssistantEndpointProblem.with(lang, [self.message().text(lang)])
+    }
+}
+
+/// The problem with `endpoint`, or `None` when it is usable or empty.
+///
+/// Empty is not a problem: a workspace with no endpoint is a workspace that asks nothing, and the
+/// page says how to name one rather than calling the empty field wrong.
+fn endpoint_problem(endpoint: &str) -> Option<EndpointProblem> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+    if endpoint.chars().any(char::is_whitespace) {
+        return Some(EndpointProblem::Space);
+    }
+    let Some(rest) = endpoint.strip_prefix("https://").or_else(|| endpoint.strip_prefix("http://")) else {
+        return Some(EndpointProblem::Scheme);
+    };
+    if rest.contains("://") {
+        return Some(EndpointProblem::Doubled);
+    }
+    if endpoint.trim_end_matches('/').ends_with("/chat/completions") {
+        return Some(EndpointProblem::Completion);
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if host.is_empty() {
+        return Some(EndpointProblem::Host);
+    }
+    None
+}
+
+impl AssistantSettings {
+    /// The reason the typed address cannot be sent to, or `None` when it can or is empty.
+    pub fn endpoint_problem(&self) -> Option<EndpointProblem> {
+        endpoint_problem(&self.endpoint)
+    }
+
+    /// The endpoint a message would go to, or `None` when no model is configured.
+    ///
+    /// It answers with the endpoint as the person typed it, trimmed, so the consent list and the
+    /// request name the same string. An address the client cannot use is not an endpoint: the page
+    /// names the wrong clause and no request leaves. The agent process is not an endpoint and is not
+    /// asked here.
+    pub fn endpoint_to_ask(&self) -> Option<String> {
+        let endpoint = self.endpoint.trim();
+        let model = self.model.trim();
+        (endpoint_problem(endpoint).is_none() && !endpoint.is_empty() && !model.is_empty()).then(|| endpoint.to_owned())
+    }
+
+    /// The reason this workspace's model cannot be asked, when it names a wrong address.
+    ///
+    /// An empty address or model is not a problem but an unconfigured assistant, so it answers
+    /// `None`; the page still shows a wrong address while the person fills the rest in.
+    pub fn problem(&self) -> Option<EndpointProblem> {
+        if self.endpoint.trim().is_empty() || self.model.trim().is_empty() {
+            return None;
+        }
+        self.endpoint_problem()
+    }
+
+    /// Whether the person has agreed to send a conversation to `endpoint`.
+    pub fn consents(&self, endpoint: &str) -> bool {
+        self.consent.iter().any(|held| held == endpoint)
+    }
+
+    /// Remembers one endpoint's agreement, once, at the end of the list.
+    pub fn remember_consent(&mut self, endpoint: &str) {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() || self.consents(endpoint) {
+            return;
+        }
+        self.consent.push(endpoint.to_owned());
+    }
+
+    /// Forgets one endpoint's agreement, so the next message to it asks again.
+    pub fn forget_consent(&mut self, endpoint: &str) {
+        self.consent.retain(|held| held != endpoint);
+    }
+}
+
 /// Everything the workspace remembers between runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -540,6 +798,8 @@ pub struct Settings {
     pub ribbon: RibbonSettings,
     /// The visibility and fold of the two side panels.
     pub panels: PanelsSettings,
+    /// The local control channel an agent attaches to.
+    pub assistant: AssistantSettings,
 }
 
 impl Default for Settings {
@@ -554,6 +814,7 @@ impl Default for Settings {
             recent: Vec::new(),
             ribbon: RibbonSettings::default(),
             panels: PanelsSettings::default(),
+            assistant: AssistantSettings::default(),
         }
     }
 }
@@ -716,11 +977,13 @@ pub enum SettingsSection {
     Panels,
     /// The shortcut table.
     Shortcuts,
+    /// The assistant: the local control channel an agent attaches to.
+    Assistant,
 }
 
 impl SettingsSection {
     /// Every section in the order the window lists them.
-    pub const ALL: [Self; 4] = [Self::Appearance, Self::Viewport, Self::Panels, Self::Shortcuts];
+    pub const ALL: [Self; 5] = [Self::Appearance, Self::Viewport, Self::Panels, Self::Shortcuts, Self::Assistant];
 
     /// The user-visible name.
     pub const fn label(self) -> Message {
@@ -729,6 +992,7 @@ impl SettingsSection {
             Self::Viewport => Message::SectionViewport,
             Self::Panels => Message::SectionPanels,
             Self::Shortcuts => Message::SectionShortcuts,
+            Self::Assistant => Message::SectionAssistant,
         }
     }
 }
@@ -750,7 +1014,7 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
     let mut outcome = SettingsOutcome::default();
     let lang = settings.appearance.language.lang();
     let response = Modal::new(Id::unique("settings_window")).show(ctx, |ui| {
-        ui.set_width(640.0);
+        ui.set_width(760.0);
         ui.horizontal(|ui| {
             ui.heading(crate::text(ui.ctx(), Message::SettingsTitle));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -769,13 +1033,14 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
             });
             ui.separator();
             ui.vertical(|ui| {
-                ui.set_min_width(430.0);
-                ui.set_min_height(320.0);
+                ui.set_min_width(540.0);
+                ui.set_min_height(420.0);
                 outcome.changed |= match *section {
                     SettingsSection::Appearance => appearance_ui(ui, settings, lang),
                     SettingsSection::Viewport => viewport_ui(ui, settings, lang),
                     SettingsSection::Panels => panels_ui(ui, settings, lang),
                     SettingsSection::Shortcuts => shortcuts_ui(ui, lang),
+                    SettingsSection::Assistant => assistant_ui(ui, settings, lang),
                 };
             });
         });
@@ -902,6 +1167,101 @@ fn preset_card(ui: &mut Ui, settings: &mut Settings, preset: theme::ThemePreset,
 fn swatch(ui: &mut Ui, fill: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 10.0), egui::Sense::hover());
     ui.painter().rect_filled(rect, egui::CornerRadius::same(2), fill);
+}
+
+/// The *Assistant* page: the door an agent attaches to, the process it starts, the endpoint it asks
+/// and the endpoints a person has agreed to send to.
+///
+/// The page names both places a support question lands — the channel switch and the token file in the
+/// settings folder — because a person answering "my agent cannot see the window" has to know which of
+/// the two is the door (ADR 0188). It also names the key's two homes and the one file the key is
+/// never in, so "why is it not configured" has an answer a person can read (ADR 0189). Nothing here
+/// reaches the network by itself: the channel binds loopback, and a message leaves only after the
+/// panel has asked once per endpoint.
+fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
+    ui.heading(Message::SectionAssistant.text(lang));
+    ui.label(Message::AssistantWays.text(lang));
+
+    // The address first: it is the path a person without an agent installation takes, and the
+    // process is the advanced one. A single field per line and a full-width box keep a pasted URL
+    // visible, which is where the doubled address of J22 came from.
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(egui::RichText::new(Message::AssistantByAddress.text(lang)).strong());
+    ui.label(Message::AssistantEndpoint.text(lang));
+    let mut changed = ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.endpoint)
+                .hint_text(Message::AssistantEndpointHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
+        .changed();
+    if let Some(problem) = settings.assistant.endpoint_problem() {
+        let sentence = Message::AssistantEndpointProblem.with(lang, [problem.message().text(lang)]);
+        ui.label(egui::RichText::new(sentence).color(theme::warn(ui)));
+    } else {
+        ui.label(egui::RichText::new(Message::AssistantEndpointHint.text(lang)).small().color(theme::text_dim(ui)));
+    }
+    ui.label(Message::AssistantModel.text(lang));
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.model)
+                .hint_text(Message::AssistantModelHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
+        .changed();
+    ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantWhatNext.text(lang)).small().color(theme::text_dim(ui)));
+
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(egui::RichText::new(Message::AssistantByProcess.text(lang)).strong());
+    changed |= ui
+        .checkbox(&mut settings.assistant.attach, Message::AttachChannel.text(lang))
+        .on_hover_text(Message::AttachChannelHint.text(lang))
+        .changed();
+    ui.label(egui::RichText::new(Message::AttachChannelHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(Message::AgentCommand.text(lang));
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.agent)
+                .hint_text(Message::AgentCommandHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
+        .changed();
+    ui.label(egui::RichText::new(Message::AgentCommandHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantProcessWins.text(lang)).small().color(theme::text_dim(ui)));
+
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(Message::AssistantConsentList.text(lang));
+    if settings.assistant.consent.is_empty() {
+        ui.label(egui::RichText::new(Message::AssistantConsentNone.text(lang)).small().color(theme::text_dim(ui)));
+    }
+    // The list is read before it is written: a forget clicked this frame lands after the rows that
+    // drew, so the row under the pointer is the row that disappears and no other. A row is also the
+    // fastest way back from a mistyped address: *Use again* puts the remembered one in the field,
+    // which is the first-run help a workshop already has without naming a provider in code.
+    let mut forget = None;
+    let mut again = None;
+    for endpoint in &settings.assistant.consent {
+        ui.horizontal(|ui| {
+            ui.label(endpoint.as_str());
+            if ui.button(Message::AssistantConsentUse.text(lang)).clicked() {
+                again = Some(endpoint.clone());
+            }
+            if ui.button(Message::AssistantConsentForget.text(lang)).clicked() {
+                forget = Some(endpoint.clone());
+            }
+        });
+    }
+    if let Some(endpoint) = again {
+        settings.assistant.endpoint = endpoint;
+        changed = true;
+    }
+    if let Some(endpoint) = forget {
+        settings.assistant.forget_consent(&endpoint);
+        changed = true;
+    }
+    changed
 }
 
 /// The *Panels* page: the two floating side panels and the opacity they share with the chrome.
@@ -1032,6 +1392,17 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     // piece lands on when it is dragged (N21, ADR 0146).
     ui.add_space(theme::STEP);
     ui.label(egui::RichText::new(Message::Snapping.text(lang)).strong());
+    // How a capture reads a corner above the plane is the section's first choice: the switches
+    // below decide what may capture, this decides what the capture is (U119).
+    ui.horizontal(|ui| {
+        ui.label(Message::SnapMode.text(lang));
+        for mode in model::SnapMode::ALL {
+            changed |= ui
+                .radio_value(&mut settings.snaps.mode, mode, crate::snap::mode_word(mode).text(lang))
+                .on_hover_text(crate::snap::mode_hint(mode).text(lang))
+                .changed();
+        }
+    });
     changed |= ui
         .checkbox(&mut settings.snaps.planes, Message::SnapPlanes.text(lang))
         .on_hover_text(Message::SnapPlanesHint.text(lang))
@@ -1040,6 +1411,27 @@ fn viewport_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         .checkbox(&mut settings.snaps.frames, Message::SnapFrames.text(lang))
         .on_hover_text(Message::SnapFramesHint.text(lang))
         .changed();
+    // The pointer's kinds, one row each: the same ten the View tab's Snaps group switches, so a
+    // maker who learns the set in one place finds it in the other (U116). The coordinate planes
+    // above are the `axis` kind and are not repeated here.
+    for kind in model::SnapKind::ALL.into_iter().filter(|kind| *kind != model::SnapKind::Axis) {
+        let slot = match kind {
+            model::SnapKind::Vertex => &mut settings.snaps.kinds.vertex,
+            model::SnapKind::Intersection => &mut settings.snaps.kinds.intersection,
+            model::SnapKind::Midpoint => &mut settings.snaps.kinds.midpoint,
+            model::SnapKind::Centre => &mut settings.snaps.kinds.centre,
+            model::SnapKind::Perpendicular => &mut settings.snaps.kinds.perpendicular,
+            model::SnapKind::Tangent => &mut settings.snaps.kinds.tangent,
+            model::SnapKind::Edge => &mut settings.snaps.kinds.edge,
+            model::SnapKind::Face => &mut settings.snaps.kinds.face,
+            model::SnapKind::Grid => &mut settings.snaps.kinds.grid,
+            model::SnapKind::Axis => continue,
+        };
+        changed |= ui
+            .checkbox(slot, crate::snap::word(kind).text(lang))
+            .on_hover_text(crate::snap::hint(kind).text(lang))
+            .changed();
+    }
     ui.horizontal(|ui| {
         ui.label(Message::SnapTolerance.text(lang));
         changed |= ui
@@ -1178,7 +1570,14 @@ mod tests {
                 roll_step_degrees: 5,
             },
             gizmo: GizmoSettings { handle_points: 48, ring_percent: 7 },
-            snaps: SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false },
+            snaps: SnapSettings {
+                planes: false,
+                frames: true,
+                tolerance_mm: 12,
+                floor: false,
+                kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+                mode: model::SnapMode::Foot,
+            },
             pointer: PointerSettings { cursor_size: 20, crosshair: true },
             recent: vec![PathBuf::from("/tmp/cabinet.z3l"), PathBuf::from("/tmp/shelf.z3l")],
             ribbon: RibbonSettings {
@@ -1191,6 +1590,13 @@ mod tests {
             panels: PanelsSettings {
                 scene: PanelState { visible: false, expanded: true },
                 inspector: PanelState { visible: true, expanded: false },
+            },
+            assistant: AssistantSettings {
+                attach: false,
+                agent: String::new(),
+                endpoint: "https://api.example.com/v1".to_owned(),
+                model: "a-model".to_owned(),
+                consent: vec!["https://api.example.com/v1".to_owned()],
             },
         }
     }
@@ -1208,7 +1614,176 @@ mod tests {
         assert_eq!(restored.panels.inspector, PanelState { visible: true, expanded: false });
         assert_eq!(restored.appearance.icon_color, IconColor::Never);
         assert_eq!(restored.gizmo, GizmoSettings { handle_points: 48, ring_percent: 7 });
-        assert_eq!(restored.snaps, SnapSettings { planes: false, frames: true, tolerance_mm: 12, floor: false });
+        assert_eq!(
+            restored.snaps,
+            SnapSettings {
+                planes: false,
+                frames: true,
+                tolerance_mm: 12,
+                floor: false,
+                kinds: PointerKinds { grid: false, ..PointerKinds::default() },
+                mode: model::SnapMode::Foot,
+            }
+        );
+    }
+
+    #[test]
+    fn the_snap_mode_survives_a_restart_and_a_file_written_before_it_existed_keeps_the_foot() {
+        // 3D is the other reading a maker asks for, so the setting writes it and the file carries it
+        // back; the whole section is one value, so the mode is one of its switches (U119).
+        let mut settings = Settings::default();
+        settings.snaps.mode = model::SnapMode::Space;
+        let json = settings.to_json().expect("serialise");
+        let restored = Settings::from_json(&json).expect("parse");
+        assert_eq!(restored.snaps.mode, model::SnapMode::Space, "the mode survives a restart");
+        assert_eq!(restored.snaps.mode.target(), model::SnapTarget::InPlane, "and answers as the 3D reading");
+
+        // A file written before the mode existed lands in the default, the 2.5D reading: a top view
+        // lines a board up with its shadow, which is the work a furniture maker does there.
+        let old = Settings::from_json(r#"{"version":1,"snaps":{"planes":true}}"#).expect("parse");
+        assert_eq!(old.snaps.mode, model::SnapMode::Foot, "2.5D is the reading a fresh workspace starts in");
+        assert_eq!(old.snaps.mode.target(), model::SnapTarget::Foot);
+    }
+
+    #[test]
+    fn the_channel_switch_is_on_for_a_workspace_that_never_heard_of_it() {
+        // A file from before the assistant section exists opens with the channel on: the default is
+        // the feature, and the switch is only how a workshop closes it (ADR 0188).
+        let settings = Settings::from_json(r#"{"version":1,"appearance":{"ui_scale":125}}"#).expect("parse");
+        assert!(settings.assistant.attach, "a fresh workspace lets a local agent reach the window");
+        assert_eq!(settings.appearance.ui_scale, 125, "and the rest of the file is the workspace's");
+
+        let off = Settings::from_json(r#"{"version":1,"assistant":{"attach":false}}"#).expect("parse");
+        assert!(!off.assistant.attach, "a closed door stays closed across a restart");
+        let text = off.to_json().expect("serialise");
+        assert!(!Settings::from_json(&text).expect("reread").assistant.attach);
+    }
+
+    #[test]
+    fn an_agent_process_is_nothing_until_a_workshop_names_one() {
+        // A process that runs a model is not started by a default: an empty command is no agent, and
+        // the one a workshop types is remembered across a restart byte for byte (ADR 0230).
+        let fresh = Settings::default();
+        assert!(fresh.assistant.agent.is_empty(), "a fresh workspace starts no agent process");
+
+        let typed = Settings::from_json(
+            r#"{"version":1,"assistant":{"attach":true,"agent":"npx @zed-industries/claude-code-acp"}}"#,
+        )
+        .expect("parse");
+        assert_eq!(typed.assistant.agent, "npx @zed-industries/claude-code-acp");
+        let text = typed.to_json().expect("serialise");
+        assert_eq!(
+            Settings::from_json(&text).expect("reread").assistant.agent,
+            "npx @zed-industries/claude-code-acp",
+            "the command a person typed survives the write"
+        );
+    }
+
+    #[test]
+    fn a_consent_is_remembered_once_per_endpoint_and_forgetting_it_asks_again() {
+        // ADR 0189: the confirmation is per endpoint, remembered across restarts, and clearing it
+        // re-asks. The empty list is the state a workspace with no model is born in.
+        let mut assistant = AssistantSettings::default();
+        assert!(!assistant.consents("https://api.example.com/v1"), "nothing is agreed to by default");
+        assistant.remember_consent("https://api.example.com/v1");
+        assistant.remember_consent("https://api.example.com/v1");
+        assert_eq!(assistant.consent.len(), 1, "one endpoint is one entry");
+        assert!(assistant.consents("https://api.example.com/v1"));
+        assert!(!assistant.consents("http://127.0.0.1:11434/v1"), "another endpoint is asked about again");
+        assistant.remember_consent("  http://127.0.0.1:11434/v1  ");
+        assert!(assistant.consents("http://127.0.0.1:11434/v1"), "an endpoint is remembered as typed, trimmed");
+
+        let json = Settings { assistant: assistant.clone(), ..Settings::default() }.to_json().expect("serialise");
+        assert_eq!(
+            Settings::from_json(&json).expect("parse").assistant.consent,
+            assistant.consent,
+            "the agreement survives a restart, so the question is asked once"
+        );
+
+        assistant.forget_consent("https://api.example.com/v1");
+        assert!(!assistant.consents("https://api.example.com/v1"), "forgotten, the next message asks again");
+    }
+
+    #[test]
+    fn an_endpoint_is_asked_only_when_the_address_and_the_model_are_both_named() {
+        let mut assistant = AssistantSettings::default();
+        assert_eq!(assistant.endpoint_to_ask(), None, "a fresh workspace asks nothing anywhere");
+        assistant.endpoint = "https://api.example.com/v1".to_owned();
+        assert_eq!(assistant.endpoint_to_ask(), None, "an address with no model is not an endpoint yet");
+        assistant.model = "a-model".to_owned();
+        assert_eq!(assistant.endpoint_to_ask().as_deref(), Some("https://api.example.com/v1"));
+        assistant.endpoint = "  https://api.example.com/v1  ".to_owned();
+        assert_eq!(
+            assistant.endpoint_to_ask().as_deref(),
+            Some("https://api.example.com/v1"),
+            "the endpoint is the string the consent list holds, trimmed"
+        );
+    }
+
+    #[test]
+    fn an_address_the_program_cannot_use_is_named_before_a_request() {
+        // J22: the owner pasted a URL into the URL that was already in the field and the only answer
+        // was the endpoint's 404. The field now names the clause before a message leaves, and an
+        // address with a problem is not an endpoint at all.
+        let mut assistant = AssistantSettings::default();
+        assert_eq!(assistant.endpoint_problem(), None, "an empty field is not wrong");
+        assistant.model = "a-model".to_owned();
+        assistant.endpoint =
+            "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+        assert_eq!(assistant.endpoint_problem(), Some(EndpointProblem::Doubled), "the owner's address");
+        assert_eq!(assistant.endpoint_to_ask(), None, "and it is never asked");
+
+        for (endpoint, problem) in [
+            ("api.example.com/v1", EndpointProblem::Scheme),
+            ("https://", EndpointProblem::Host),
+            ("https://api example.com/v1", EndpointProblem::Space),
+            ("https://api.example.com/v1/chat/completions", EndpointProblem::Completion),
+        ] {
+            assistant.endpoint = endpoint.to_owned();
+            assert_eq!(assistant.endpoint_problem(), Some(problem), "{endpoint}");
+        }
+
+        assistant.endpoint = "http://127.0.0.1:11434/v1".to_owned();
+        assert_eq!(assistant.endpoint_problem(), None, "a server on this machine is a valid address");
+        assert_eq!(assistant.endpoint_to_ask().as_deref(), Some("http://127.0.0.1:11434/v1"));
+    }
+
+    #[test]
+    fn the_settings_file_carries_no_key() {
+        // The assistant section is exactly the five fields below. A sixth that held a secret would
+        // fail here before it could be written to the kind of file people copy between machines.
+        let settings = custom();
+        let json: serde_json::Value = serde_json::from_str(&settings.to_json().expect("serialise")).expect("json");
+        let mut fields: Vec<&str> = json["assistant"]
+            .as_object()
+            .expect("the assistant section is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["agent", "attach", "consent", "endpoint", "model"], "no key, by construction");
+    }
+
+    #[test]
+    fn a_workspace_written_before_the_kinds_existed_snaps_them_all() {
+        // A file from before U116 carries no `kinds` section: every kind is on, exactly as a fresh
+        // workspace is, and the section's own switches keep their values.
+        let settings = Settings::from_json(r#"{"version":1,"snaps":{"planes":false,"tolerance_mm":12}}"#)
+            .expect("parse a file written before the kinds existed");
+        assert_eq!(settings.snaps.kinds, PointerKinds::default(), "every kind is on");
+        assert!(!settings.snaps.planes, "and the switches the file carried keep their values");
+        assert_eq!(settings.snaps.tolerance_mm, 12);
+
+        // One kind off survives the write, and comes back as the model's own value.
+        let mut toggled = settings.clone();
+        let mut kinds = toggled.snaps.kinds();
+        kinds.tangent = false;
+        kinds.axis = true;
+        toggled.snaps.set_kinds(kinds);
+        let json = toggled.to_json().expect("serialise");
+        let restored = Settings::from_json(&json).expect("parse");
+        assert_eq!(restored.snaps.kinds(), kinds, "the toggles survive a restart");
+        assert!(restored.snaps.planes, "the axis kind is the coordinate-planes switch");
     }
 
     #[test]
@@ -1224,7 +1799,7 @@ mod tests {
         assert!(settings.floor);
         let Some(snaps) = settings.snaps else { panic!("the object move snaps") };
         assert_eq!(snaps.tolerance, units::Length::from_micrometres(i64::from(DEFAULT_SNAP_MM) * 1000));
-        assert!(snaps.planes && snaps.frames);
+        assert!(snaps.kinds.axis && snaps.frames);
 
         // A hand-edited file cannot set a tolerance no field offers.
         let json = r#"{"version":1,"snaps":{"planes":false,"frames":false,"tolerance_mm":0}}"#;

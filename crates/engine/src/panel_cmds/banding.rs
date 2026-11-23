@@ -19,6 +19,7 @@ use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBow, EdgeId, Id, ItemId,
     Operation, Project, ProjectError, RingBanding, VertexId,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::Length;
@@ -35,7 +36,7 @@ pub const EDGE_BANDING_SET_ID: &str = "panel.edge_banding.set";
 pub const EDGE_BANDING_SET_LABEL: Message = Message::CmdSetEdgeBanding;
 
 /// Parameters for `panel.edge_banding.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelEdgeBandingSet {
     /// Id of the panel whose edge is banded.
@@ -61,8 +62,12 @@ impl PanelEdgeBandingSet {
 }
 
 /// The `panel.edge_banding.set` command.
-pub(crate) const EDGE_BANDING_SET: CommandSpec =
-    CommandSpec::new(EDGE_BANDING_SET_ID, EDGE_BANDING_SET_LABEL, edge_banding_set_enabled, edge_banding_set_run);
+pub(crate) const EDGE_BANDING_SET: CommandSpec = CommandSpec::new::<PanelEdgeBandingSet>(
+    EDGE_BANDING_SET_ID,
+    EDGE_BANDING_SET_LABEL,
+    edge_banding_set_enabled,
+    edge_banding_set_run,
+);
 
 fn edge_banding_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelEdgeBandingSet::parse(params) else {
@@ -100,7 +105,7 @@ pub const EDGE_BANDING_CLEAR_ID: &str = "panel.edge_banding.clear";
 pub const EDGE_BANDING_CLEAR_LABEL: Message = Message::CmdClearEdgeBanding;
 
 /// Parameters for `panel.edge_banding.clear`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelEdgeBandingClear {
     /// Id of the panel whose edge is cleared.
@@ -117,7 +122,7 @@ impl PanelEdgeBandingClear {
 }
 
 /// The `panel.edge_banding.clear` command.
-pub(crate) const EDGE_BANDING_CLEAR: CommandSpec = CommandSpec::new(
+pub(crate) const EDGE_BANDING_CLEAR: CommandSpec = CommandSpec::new::<PanelEdgeBandingClear>(
     EDGE_BANDING_CLEAR_ID,
     EDGE_BANDING_CLEAR_LABEL,
     edge_banding_clear_enabled,
@@ -152,7 +157,7 @@ pub const CORNER_BANDING_SET_ID: &str = "panel.corner_banding.set";
 pub const CORNER_BANDING_SET_LABEL: Message = Message::CmdSetCornerBanding;
 
 /// Parameters for `panel.corner_banding.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelCornerBandingSet {
     /// Id of the panel whose chamfer is banded.
@@ -178,7 +183,7 @@ impl PanelCornerBandingSet {
 }
 
 /// The `panel.corner_banding.set` command.
-pub(crate) const CORNER_BANDING_SET: CommandSpec = CommandSpec::new(
+pub(crate) const CORNER_BANDING_SET: CommandSpec = CommandSpec::new::<PanelCornerBandingSet>(
     CORNER_BANDING_SET_ID,
     CORNER_BANDING_SET_LABEL,
     corner_banding_set_enabled,
@@ -221,7 +226,7 @@ pub const CORNER_BANDING_CLEAR_ID: &str = "panel.corner_banding.clear";
 pub const CORNER_BANDING_CLEAR_LABEL: Message = Message::CmdClearCornerBanding;
 
 /// Parameters for `panel.corner_banding.clear`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelCornerBandingClear {
     /// Id of the panel whose corner is cleared.
@@ -240,7 +245,7 @@ impl PanelCornerBandingClear {
 }
 
 /// The `panel.corner_banding.clear` command.
-pub(crate) const CORNER_BANDING_CLEAR: CommandSpec = CommandSpec::new(
+pub(crate) const CORNER_BANDING_CLEAR: CommandSpec = CommandSpec::new::<PanelCornerBandingClear>(
     CORNER_BANDING_CLEAR_ID,
     CORNER_BANDING_CLEAR_LABEL,
     corner_banding_clear_enabled,
@@ -272,7 +277,7 @@ pub const RING_BANDING_SET_ID: &str = "panel.ring_banding.set";
 pub const RING_BANDING_SET_LABEL: Message = Message::CmdSetContourBanding;
 
 /// Parameters for `panel.ring_banding.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelRingBandingSet {
     /// Id of the contour panel whose ring segment is banded.
@@ -298,8 +303,12 @@ impl PanelRingBandingSet {
 }
 
 /// The `panel.ring_banding.set` command.
-pub(crate) const RING_BANDING_SET: CommandSpec =
-    CommandSpec::new(RING_BANDING_SET_ID, RING_BANDING_SET_LABEL, ring_banding_set_enabled, ring_banding_set_run);
+pub(crate) const RING_BANDING_SET: CommandSpec = CommandSpec::new::<PanelRingBandingSet>(
+    RING_BANDING_SET_ID,
+    RING_BANDING_SET_LABEL,
+    ring_banding_set_enabled,
+    ring_banding_set_run,
+);
 
 fn ring_banding_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelRingBandingSet::parse(params) else {
@@ -337,7 +346,7 @@ pub const RING_BANDING_CLEAR_ID: &str = "panel.ring_banding.clear";
 pub const RING_BANDING_CLEAR_LABEL: Message = Message::CmdClearContourBanding;
 
 /// Parameters for `panel.ring_banding.clear`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelRingBandingClear {
     /// Id of the contour panel whose ring segment is cleared.
@@ -354,7 +363,7 @@ impl PanelRingBandingClear {
 }
 
 /// The `panel.ring_banding.clear` command.
-pub(crate) const RING_BANDING_CLEAR: CommandSpec = CommandSpec::new(
+pub(crate) const RING_BANDING_CLEAR: CommandSpec = CommandSpec::new::<PanelRingBandingClear>(
     RING_BANDING_CLEAR_ID,
     RING_BANDING_CLEAR_LABEL,
     ring_banding_clear_enabled,
@@ -386,7 +395,7 @@ pub const CORNER_SET_ID: &str = "panel.corner.set";
 pub const CORNER_SET_LABEL: Message = Message::CmdSetCornerFeature;
 
 /// Parameters for `panel.corner.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelCornerSet {
     /// Id of the panel whose corner changes.
@@ -417,7 +426,7 @@ impl PanelCornerSet {
 
 /// The `panel.corner.set` command.
 pub(crate) const CORNER_SET: CommandSpec =
-    CommandSpec::new(CORNER_SET_ID, CORNER_SET_LABEL, corner_set_enabled, corner_set_run);
+    CommandSpec::new::<PanelCornerSet>(CORNER_SET_ID, CORNER_SET_LABEL, corner_set_enabled, corner_set_run);
 
 fn corner_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelCornerSet::parse(params) else {
@@ -449,7 +458,7 @@ pub const CORNER_CLEAR_ID: &str = "panel.corner.clear";
 pub const CORNER_CLEAR_LABEL: Message = Message::CmdClearCornerFeature;
 
 /// Parameters for `panel.corner.clear`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelCornerClear {
     /// Id of the panel whose corner changes.
@@ -467,7 +476,7 @@ impl PanelCornerClear {
 
 /// The `panel.corner.clear` command.
 pub(crate) const CORNER_CLEAR: CommandSpec =
-    CommandSpec::new(CORNER_CLEAR_ID, CORNER_CLEAR_LABEL, corner_clear_enabled, corner_clear_run);
+    CommandSpec::new::<PanelCornerClear>(CORNER_CLEAR_ID, CORNER_CLEAR_LABEL, corner_clear_enabled, corner_clear_run);
 
 fn corner_clear_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelCornerClear::parse(params) else {
@@ -494,14 +503,14 @@ pub const BOW_SET_ID: &str = "panel.bow.set";
 pub const BOW_SET_LABEL: Message = Message::CmdSetEdgeBow;
 
 /// Parameters for `panel.bow.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelBowSet {
     /// Id of the panel whose edge changes.
     pub panel: Id,
     /// Edge to bow.
     pub edge: EdgeId,
-    /// Signed sagitta: positive outward, negative inward.
+    /// Signed sagitta in micrometres: positive outward, negative inward.
     pub sagitta: Length,
 }
 
@@ -523,7 +532,8 @@ impl PanelBowSet {
 }
 
 /// The `panel.bow.set` command.
-pub(crate) const BOW_SET: CommandSpec = CommandSpec::new(BOW_SET_ID, BOW_SET_LABEL, bow_set_enabled, bow_set_run);
+pub(crate) const BOW_SET: CommandSpec =
+    CommandSpec::new::<PanelBowSet>(BOW_SET_ID, BOW_SET_LABEL, bow_set_enabled, bow_set_run);
 
 fn bow_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelBowSet::parse(params) else {
@@ -555,7 +565,7 @@ pub const BOW_CLEAR_ID: &str = "panel.bow.clear";
 pub const BOW_CLEAR_LABEL: Message = Message::CmdClearEdgeBow;
 
 /// Parameters for `panel.bow.clear`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelBowClear {
     /// Id of the panel whose edge changes.
@@ -573,7 +583,7 @@ impl PanelBowClear {
 
 /// The `panel.bow.clear` command.
 pub(crate) const BOW_CLEAR: CommandSpec =
-    CommandSpec::new(BOW_CLEAR_ID, BOW_CLEAR_LABEL, bow_clear_enabled, bow_clear_run);
+    CommandSpec::new::<PanelBowClear>(BOW_CLEAR_ID, BOW_CLEAR_LABEL, bow_clear_enabled, bow_clear_run);
 
 fn bow_clear_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelBowClear::parse(params) else {

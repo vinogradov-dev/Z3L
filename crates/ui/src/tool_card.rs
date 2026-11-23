@@ -16,6 +16,11 @@
 //! that commits on its own click. A fresh card's field takes the keyboard so its number can be typed
 //! without a click; the shell owns the count of frames it asks for it.
 //!
+//! A tool that asks for no number draws one row — its name, its one switch and its pair — so a
+//! running draft or contour edit keeps its accept and its drop at the hand and the row that names
+//! the tool is the row that holds the buttons (U115). That row is the whole card for those tools: a
+//! plate of two rows would cover the work the hand is measuring.
+//!
 //! Nothing here writes a document. The surface reports the numbers its fields committed, the button
 //! pressed this frame, the field that took Enter and the rectangle it drew, which the shell hands to
 //! `Chrome` for a card, so a press inside one is chrome and never a pick or a camera gesture
@@ -119,15 +124,41 @@ pub struct ToolView {
     pub title: Option<Message>,
     /// The numbers, in the order the tool declares them.
     pub rows: Vec<ToolRow>,
+    /// The tool's one two-state method, drawn beside its name, when it offers one.
+    pub toggle: Option<ToolToggle>,
     /// How the surface offers the tool's one commit.
     pub commit: ToolCommit,
+    /// A line of context under the name, already in the person's language.
+    ///
+    /// An armed boolean prints the base its result is born in here (X99): the frame marks that
+    /// operand with an ink of its own and the card names it, so the picture and the words agree.
+    /// Empty for every tool whose name is the whole story.
+    pub note: Option<String>,
+}
+
+/// The one two-state method a tool offers beside its numbers.
+///
+/// A method with two states is one switch, not two buttons: the words name the state the tool is in,
+/// so a person reads what the next drag does rather than what a press would change it to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolToggle {
+    /// The words of the state the tool is in.
+    pub words: Message,
+    /// Whether the tool is in that state, which draws the switch pressed.
+    pub on: bool,
 }
 
 /// How the tool's commit is offered to the hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolCommit {
-    /// The ✓ and ✕ pair under the rows, beside the gesture's own Enter and Escape.
-    Pair,
+    /// The ✓ and ✕ pair under the rows, beside the gesture's own Enter and Escape, with the words
+    /// the tool's own commit is known by.
+    Pair {
+        /// The hover and accessible name of ✓.
+        apply: Message,
+        /// The hover and accessible name of ✕.
+        cancel: Message,
+    },
     /// The keys alone: the card draws no button, so its field is the only control it holds and the
     /// gesture's Enter commits and Escape cancels (U104).
     Keys,
@@ -138,7 +169,32 @@ pub enum ToolCommit {
 impl ToolView {
     /// A tool with one number, named by its title.
     pub fn height(title: Message, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
-        Self { title: Some(title), rows: vec![ToolRow::height(value, range, decimals)], commit: ToolCommit::Pair }
+        Self {
+            title: Some(title),
+            rows: vec![ToolRow::height(value, range, decimals)],
+            toggle: None,
+            commit: ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
+        }
+    }
+
+    /// A tool that asks for no number: its name and its one commit, drawn as one row (U115).
+    ///
+    /// A running draft and a live contour edit are the two: the shape is already in the scene, so
+    /// the only decisions left are to accept it or to drop it, and both sit on the row that names
+    /// the tool.
+    pub fn actions(title: Option<Message>, commit: ToolCommit) -> Self {
+        Self { title, rows: Vec::new(), toggle: None, commit, note: None }
+    }
+
+    /// The same card with a line of context under its name, in the person's language.
+    ///
+    /// A boolean is the one tool that has something to say beside its name: which operand its result
+    /// is born in (X99). It is a builder rather than a constructor argument, because every other
+    /// tool has nothing to add and a parameter they all pass `None` for is a column of noise.
+    pub fn with_note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
     }
 
     /// A tool whose one number is named by a symbol and nothing else.
@@ -150,7 +206,9 @@ impl ToolView {
         Self {
             title: None,
             rows: vec![lettered(ToolParam::Height, symbol, value, range, decimals)],
+            toggle: None,
             commit: ToolCommit::Keys,
+            note: None,
         }
     }
 
@@ -166,7 +224,7 @@ impl ToolView {
             // starts at the bottom rather than at the smallest positive length.
             rows.push(lettered(ToolParam::TopRadius, "R", top, 0.0..=*range.end(), decimals));
         }
-        Self { title: None, rows, commit: ToolCommit::Keys }
+        Self { title: None, rows, toggle: None, commit: ToolCommit::Keys, note: None }
     }
 
     /// Whether the surface draws anything at all.
@@ -208,6 +266,8 @@ pub struct ToolOutcome {
     pub error: Option<Message>,
     /// The row that took the keyboard, so the caller keeps the focus on one parameter.
     pub focused: Option<ToolParam>,
+    /// Whether the tool's switch was pressed this frame.
+    pub toggle: bool,
 }
 
 impl ToolOutcome {
@@ -311,15 +371,40 @@ pub fn section(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> To
     outcome
 }
 
-/// Draws the title, the rows and the button pair, and reports what they asked for.
+/// Draws the title, the rows, the switch and the button pair, and reports what they asked for.
 fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutcome {
     let lang = language(ui.ctx());
     let mut outcome = ToolOutcome::default();
+    // A tool with no number is one row: its name, its one switch and its pair, so the card costs the
+    // scene a line instead of a plate (U115).
+    let one_row_card = view.rows.is_empty();
     // A tool with one number is named once, in the title: repeating it as a row label would be the
     // same word twice in a 100 pt plate.
     let titled = view.title.is_some() && (view.rows.len() > 1 || view.rows.iter().all(|row| row.label.is_none()));
+    if one_row_card {
+        ui.horizontal(|ui| {
+            if let Some(title) = view.title {
+                ui.label(RichText::new(title.text(lang)).strong());
+            }
+            outcome.toggle |= toggle_ui(ui, view.toggle, lang);
+            pair_ui(ui, view.commit, &mut outcome, lang);
+        });
+        note_ui(ui, view.note.as_deref());
+        return outcome;
+    }
     if titled && let Some(title) = view.title {
-        ui.label(RichText::new(title.text(lang)).strong());
+        // The switch sits beside the name, and a card without one draws the name alone.
+        match view.toggle {
+            Some(_) => {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(title.text(lang)).strong());
+                    outcome.toggle |= toggle_ui(ui, view.toggle, lang);
+                });
+            }
+            None => {
+                ui.label(RichText::new(title.text(lang)).strong());
+            }
+        }
     }
     // A single row carries its own name when it has one: a lettered plate has nothing else to say
     // what the number is, and a titled one keeps the title as its name.
@@ -336,18 +421,49 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
     if let Some(message) = outcome.error {
         ui.colored_label(theme::danger(ui), message.text(lang));
     }
-    if view.commit == ToolCommit::Pair {
+    if matches!(view.commit, ToolCommit::Pair { .. }) {
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            if icons::icon_button(ui, icons::actions::CONFIRM, Message::ApplyEnter.text(lang)).clicked() {
-                outcome.action = Some(ToolAction::Apply);
-            }
-            if icons::icon_button(ui, icons::actions::CANCEL, Message::CancelEsc.text(lang)).clicked() {
-                outcome.action = Some(ToolAction::Cancel);
-            }
-        });
+        ui.horizontal(|ui| pair_ui(ui, view.commit, &mut outcome, lang));
     }
+    note_ui(ui, view.note.as_deref());
     outcome
+}
+
+/// The line of context under a tool's name: quiet type, one line, nothing to press.
+///
+/// A note names what the picture already marks — the base a boolean's result is born in (X99) — so
+/// it is secondary ink at the small size: the reader's eye finds it after the operation's name and
+/// before the ground it sits on.
+fn note_ui(ui: &mut Ui, note: Option<&str>) {
+    let Some(note) = note else {
+        return;
+    };
+    ui.label(RichText::new(note).small().color(theme::text_dim(ui)));
+}
+
+/// The tool's ✓ and ✕, when its commit is the pair; the words are the tool's own.
+///
+/// The cross is `actions::dismiss`, which the style guide gives to closing a surface, and not
+/// `actions::cancel`, the back arrow: a card's ✕ drops the preview and closes the card, and a plain
+/// left arrow beside a check reads as *back* (ADR 0119 names the pair ✓ and ✕).
+fn pair_ui(ui: &mut Ui, commit: ToolCommit, outcome: &mut ToolOutcome, lang: crate::Lang) {
+    let ToolCommit::Pair { apply, cancel } = commit else {
+        return;
+    };
+    if icons::icon_button(ui, icons::actions::CONFIRM, apply.text(lang)).clicked() {
+        outcome.action = Some(ToolAction::Apply);
+    }
+    if icons::icon_button(ui, icons::actions::DISMISS, cancel.text(lang)).clicked() {
+        outcome.action = Some(ToolAction::Cancel);
+    }
+}
+
+/// The tool's one switch: the words of the state it is in, drawn pressed while it holds.
+fn toggle_ui(ui: &mut Ui, toggle: Option<ToolToggle>, lang: crate::Lang) -> bool {
+    let Some(toggle) = toggle else {
+        return false;
+    };
+    ui.selectable_label(toggle.on, toggle.words.text(lang)).clicked()
 }
 
 /// Draws the one row of a plate and reports what it asked for, refusal included.
@@ -447,10 +563,19 @@ mod tests {
 
     /// Draws one card frame at `pointer` and returns what it asked for and the rectangle it took.
     fn run(events: Vec<egui::Event>, pointer: Pos2, scale: f32) -> (ToolOutcome, Rect, Vec<String>) {
+        run_view(view(), events, pointer, scale)
+    }
+
+    /// [`run`] over a card of the caller's own: a tool that is not a height plate.
+    fn run_view(
+        mut tool: ToolView,
+        events: Vec<egui::Event>,
+        pointer: Pos2,
+        scale: f32,
+    ) -> (ToolOutcome, Rect, Vec<String>) {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(scale);
         crate::set_language(&ctx, crate::Lang::En);
-        let mut tool = view();
         let mut outcome = ToolOutcome::default();
         let mut rect = Rect::NOTHING;
         let mut texts = Vec::new();
@@ -465,6 +590,26 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         (outcome, rect, texts)
+    }
+
+    #[test]
+    fn a_one_row_card_prints_the_note_under_its_name() {
+        // X99: the armed boolean marks its base in the frame and names it on the card, so the eye
+        // and the words say the same thing. The note is context: the name and its pair are drawn
+        // first, and the note follows them in the quiet ink.
+        let view = ToolView::actions(
+            Some(Message::ToolSubtract),
+            ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+        )
+        .with_note(Some(Message::BooleanBase.with(crate::Lang::En, ["Ring 2"])));
+        let (_, _, texts) = run_view(view, Vec::new(), Pos2::new(200.0, 200.0), 1.0);
+        let named = texts.iter().position(|text| text == "Subtract").expect("the card names the operation");
+        let note = texts.iter().position(|text| text == "Base: Ring 2").expect("and its base: {texts:?}");
+        assert!(note > named, "the note reads under the operation's name: {texts:?}");
+
+        let bare = ToolView::actions(Some(Message::ToolSubtract), ToolCommit::Keys);
+        let (_, _, texts) = run_view(bare, Vec::new(), Pos2::new(200.0, 200.0), 1.0);
+        assert!(!texts.iter().any(|text| text.starts_with("Base:")), "a tool with no base prints no note");
     }
 
     #[test]
@@ -569,12 +714,135 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_with_no_number_is_one_row_of_its_name_its_switch_and_its_pair() {
+        // U115: a running draft and a live contour edit ask for no number, so their card is the one
+        // row that names the tool and holds its two buttons. The switch is one control with two
+        // states, and the words are the tool's own, so ✓ says what its commit does here.
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let mut tool = ToolView {
+            title: Some(Message::ContourEdit),
+            rows: Vec::new(),
+            toggle: Some(ToolToggle { words: Message::AlongContour, on: false }),
+            commit: ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
+        };
+        let mut outcome = ToolOutcome::default();
+        let mut rect = Rect::NOTHING;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
+                let shown = show(ui, viewport(), Pos2::new(200.0, 200.0), &mut tool, None, 92);
+                outcome = shown.0;
+                rect = shown.1;
+            });
+            texts = texts_of(&output);
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(outcome, ToolOutcome::default(), "a card at rest asks for nothing");
+        assert!(texts.iter().any(|text| text == "Contour edit"), "the row names the tool: {texts:?}");
+        assert!(texts.iter().any(|text| text == "Along contour"), "and holds its one switch: {texts:?}");
+        assert!(rect.height() < 2.0 * crate::theme::STATUS_HEIGHT, "the card is one row tall: {rect:?}");
+    }
+
+    #[test]
+    fn the_pair_reports_the_button_that_was_pressed() {
+        // The two buttons are the tool's own commit and cancel, so the card reports the one pressed
+        // and the shell runs the path that already owns it (U115).
+        for (words, action) in [(Message::FinishEnter, ToolAction::Apply), (Message::CancelEsc, ToolAction::Cancel)] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            ctx.enable_accesskit();
+            crate::set_language(&ctx, crate::Lang::En);
+            let commit = ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc };
+            let mut outcome = ToolOutcome::default();
+            let mut at = None;
+            for frame in 0..5 {
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: at.unwrap_or_default(),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let events = match (frame, at) {
+                    (0, _) | (_, None) => Vec::new(),
+                    (1, Some(at)) => vec![egui::Event::PointerMoved(at)],
+                    (2, Some(_)) => vec![press(true)],
+                    (3, Some(_)) => vec![press(false)],
+                    _ => Vec::new(),
+                };
+                let output = ctx
+                    .run_ui(egui::RawInput { screen_rect: Some(viewport()), events, ..Default::default() }, |ui| {
+                        pair_ui(ui, commit, &mut outcome, crate::Lang::En)
+                    });
+                if frame == 0 {
+                    at = node_center(&output, words.text(crate::Lang::En));
+                    assert!(at.is_some(), "the pair draws `{}`", words.text(crate::Lang::En));
+                }
+                output.drop_without_applying_deltas();
+            }
+            assert_eq!(outcome.action, Some(action), "a press on `{}` asks for it", words.text(crate::Lang::En));
+        }
+    }
+
+    #[test]
+    fn the_switch_reports_one_press() {
+        // The switch has two states and the words name the one the tool is in, so a press asks for
+        // the other one and the caller reads what the tool holds now (U115).
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        ctx.enable_accesskit();
+        crate::set_language(&ctx, crate::Lang::En);
+        let toggle = ToolToggle { words: Message::AlongContour, on: false };
+        let mut pressed = false;
+        let mut at = None;
+        for frame in 0..5 {
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at.unwrap_or_default(),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let events = match (frame, at) {
+                (0, _) | (_, None) => Vec::new(),
+                (1, Some(at)) => vec![egui::Event::PointerMoved(at)],
+                (2, Some(_)) => vec![press(true)],
+                (3, Some(_)) => vec![press(false)],
+                _ => Vec::new(),
+            };
+            let output = ctx
+                .run_ui(egui::RawInput { screen_rect: Some(viewport()), events, ..Default::default() }, |ui| {
+                    pressed |= toggle_ui(ui, Some(toggle), crate::Lang::En)
+                });
+            if frame == 0 {
+                at = node_center(&output, Message::AlongContour.text(crate::Lang::En));
+            }
+            output.drop_without_applying_deltas();
+        }
+        assert!(pressed, "a press on the switch asks for the other state");
+    }
+
+    /// The middle of the accessibility node labelled `label`, so a test can aim at a button.
+    fn node_center(output: &egui::FullOutput, label: &str) -> Option<Pos2> {
+        let update = output.platform_output.accesskit_update.as_ref()?;
+        update.nodes.iter().find_map(|(_, node)| {
+            if node.label() != Some(label) {
+                return None;
+            }
+            let bounds = node.bounds()?;
+            Some(Pos2::new(((bounds.x0 + bounds.x1) / 2.0) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32))
+        })
+    }
+
+    #[test]
     fn a_disabled_row_says_why_and_takes_no_number() {
         let ctx = egui::Context::default();
         crate::set_language(&ctx, crate::Lang::En);
         let mut tool = ToolView {
             title: None,
             commit: ToolCommit::Gesture,
+            toggle: None,
+            note: None,
             rows: vec![ToolRow {
                 param: ToolParam::LowGap,
                 label: Some(FieldLabel::Word(Message::ToolGapLow)),

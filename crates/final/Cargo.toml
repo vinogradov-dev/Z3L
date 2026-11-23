@@ -1,0 +1,36 @@
+[package]
+name = "final"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = { workspace = true }
+geom = { workspace = true }
+# The one file format a final render writes, already in the tree for the interface shots: eight bits
+# per channel, no interlacing, pure Rust. A codec package for every format a person might want would
+# be a dependency this crate does not read (AGENTS.md §4.8).
+png = { workspace = true }
+# Drives the device's futures on the thread that owns them, which is how an error scope is read and a
+# read-back is awaited without an async runtime in this crate. Already in the tree.
+pollster = { workspace = true }
+scene = { workspace = true }
+thiserror = { workspace = true }
+# The device the tracer borrows from the shell: the same major version `render` and `egui-wgpu` are
+# pinned to, so the renderer and the tracer cannot drift into two versions of one API (AGENTS.md §5).
+wgpu = { workspace = true }
+
+[dev-dependencies]
+# A decor's size is a physical length, and the tests build one; the crate itself only reads it.
+units = { workspace = true }
+# The tests build a frame, and a drawable carries the document id it came from; already in the tree
+# through `scene`.
+model = { workspace = true }
+# Parses and validates `shader.wgsl` in tests; already in the tree through `wgpu`.
+naga = { version = "30", features = ["wgsl-in"] }
+# A directory under `target/` for the PNG a test writes, and the reader that proves it is one.
+testkit = { workspace = true }

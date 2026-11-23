@@ -2,9 +2,9 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 28,
-    "revision": 6,
-    "next_id": 12,
+    "schema_version": 32,
+    "revision": 10,
+    "next_id": 14,
     "root": {
       "id": 1,
       "name": "Root",
@@ -60,7 +60,7 @@
             ],
             "machining": [
               {
-                "id": 10,
+                "id": 12,
                 "anchor": {
                   "kind": "face",
                   "side": "A"
@@ -139,6 +139,7 @@
               0
             ],
             "properties": {},
+            "tool": false,
             "geometry": {
               "kind": "constructive",
               "path": {
@@ -200,6 +201,120 @@
                 {
                   "kind": "extrude",
                   "height": 18000
+                },
+                {
+                  "kind": "boolean",
+                  "op": "difference",
+                  "tool": {
+                    "name": "Cutter",
+                    "body": {
+                      "kind": "constructive",
+                      "path": {
+                        "segments": [
+                          {
+                            "kind": "line",
+                            "id": 1,
+                            "start": [
+                              80000,
+                              80000
+                            ],
+                            "end": [
+                              200000,
+                              80000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 2,
+                            "start": [
+                              200000,
+                              80000
+                            ],
+                            "end": [
+                              200000,
+                              100000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 3,
+                            "start": [
+                              200000,
+                              100000
+                            ],
+                            "end": [
+                              80000,
+                              100000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 4,
+                            "start": [
+                              80000,
+                              100000
+                            ],
+                            "end": [
+                              80000,
+                              80000
+                            ]
+                          }
+                        ],
+                        "next_segment_id": 5,
+                        "closed": true,
+                        "shape": "rectangle"
+                      },
+                      "features": [
+                        {
+                          "kind": "extrude",
+                          "height": 40000
+                        }
+                      ]
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "boolean",
+                  "op": "difference",
+                  "tool": {
+                    "name": "Ball cutter",
+                    "body": {
+                      "kind": "primitive",
+                      "base": {
+                        "shape": "sphere",
+                        "radius": 20000,
+                        "segments": 24,
+                        "bands": 12
+                      },
+                      "steps": []
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
+                  }
                 }
               ]
             }
@@ -228,6 +343,7 @@
               0
             ],
             "properties": {},
+            "tool": false,
             "geometry": {
               "kind": "path",
               "segments": [
@@ -247,6 +363,147 @@
               "next_segment_id": 2,
               "closed": false,
               "shape": null
+            }
+          }
+        },
+        {
+          "object": {
+            "id": 10,
+            "name": "Union",
+            "placement": {
+              "translation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "pivot_local": [
+              0,
+              0,
+              0
+            ],
+            "properties": {},
+            "tool": true,
+            "geometry": {
+              "kind": "contours",
+              "paths": [
+                {
+                  "segments": [
+                    {
+                      "kind": "line",
+                      "id": 1,
+                      "start": [
+                        0,
+                        0
+                      ],
+                      "end": [
+                        600000,
+                        0
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 2,
+                      "start": [
+                        600000,
+                        0
+                      ],
+                      "end": [
+                        600000,
+                        400000
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 3,
+                      "start": [
+                        600000,
+                        400000
+                      ],
+                      "end": [
+                        0,
+                        400000
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 4,
+                      "start": [
+                        0,
+                        400000
+                      ],
+                      "end": [
+                        0,
+                        0
+                      ]
+                    }
+                  ],
+                  "next_segment_id": 5,
+                  "closed": true,
+                  "shape": null
+                },
+                {
+                  "segments": [
+                    {
+                      "kind": "line",
+                      "id": 1,
+                      "start": [
+                        200000,
+                        0
+                      ],
+                      "end": [
+                        320000,
+                        0
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 2,
+                      "start": [
+                        320000,
+                        0
+                      ],
+                      "end": [
+                        320000,
+                        80000
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 3,
+                      "start": [
+                        320000,
+                        80000
+                      ],
+                      "end": [
+                        200000,
+                        80000
+                      ]
+                    },
+                    {
+                      "kind": "line",
+                      "id": 4,
+                      "start": [
+                        200000,
+                        80000
+                      ],
+                      "end": [
+                        200000,
+                        0
+                      ]
+                    }
+                  ],
+                  "next_segment_id": 5,
+                  "closed": true,
+                  "shape": "rectangle"
+                }
+              ]
             }
           }
         },
@@ -273,12 +530,100 @@
               0
             ],
             "properties": {},
+            "tool": false,
             "geometry": {
               "kind": "primitive",
-              "shape": "sphere",
-              "radius": 50000,
-              "segments": 32,
-              "bands": 16
+              "base": {
+                "shape": "sphere",
+                "radius": 50000,
+                "segments": 32,
+                "bands": 16
+              },
+              "steps": [
+                {
+                  "op": "difference",
+                  "tool": {
+                    "name": "Block",
+                    "body": {
+                      "kind": "constructive",
+                      "path": {
+                        "segments": [
+                          {
+                            "kind": "line",
+                            "id": 1,
+                            "start": [
+                              -40000,
+                              -40000
+                            ],
+                            "end": [
+                              40000,
+                              -40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 2,
+                            "start": [
+                              40000,
+                              -40000
+                            ],
+                            "end": [
+                              40000,
+                              40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 3,
+                            "start": [
+                              40000,
+                              40000
+                            ],
+                            "end": [
+                              -40000,
+                              40000
+                            ]
+                          },
+                          {
+                            "kind": "line",
+                            "id": 4,
+                            "start": [
+                              -40000,
+                              40000
+                            ],
+                            "end": [
+                              -40000,
+                              -40000
+                            ]
+                          }
+                        ],
+                        "next_segment_id": 5,
+                        "closed": true,
+                        "shape": "rectangle"
+                      },
+                      "features": [
+                        {
+                          "kind": "extrude",
+                          "height": 40000
+                        }
+                      ]
+                    },
+                    "placement": {
+                      "translation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": [
+                        0.0,
+                        0.0,
+                        0.0,
+                        1.0
+                      ]
+                    }
+                  }
+                }
+              ]
             }
           }
         },
@@ -417,7 +762,7 @@
         },
         {
           "container": {
-            "id": 11,
+            "id": 13,
             "name": "Corner cabinet",
             "placement": {
               "translation": [

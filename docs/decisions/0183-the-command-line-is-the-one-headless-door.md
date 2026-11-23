@@ -1,6 +1,7 @@
 # 0183. The command line is the one headless door into the document
 
-- Status: Accepted
+- Status: Accepted; "one headless door" narrowed by 0185, parameter-schema gap closed by 0195,
+  the report set moved into `Session::read` and read by URI by 0196
 - Date: 2026-11-20
 
 ## Context

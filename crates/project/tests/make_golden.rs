@@ -63,9 +63,17 @@ fn scene() -> SceneFile {
         true,
     )
     .expect("a closed ring");
-    let constructive = Constructive::extrude(closed, millimetres(18)).expect("an extrusion");
+    let constructive = Constructive::extrude(closed.clone(), millimetres(18)).expect("an extrusion");
+    let cutter_ring = Path::rectangle([millimetres(200), millimetres(100)], [millimetres(80), millimetres(80)])
+        .expect("a cutting ring");
+    let cutter = Constructive::extrude(cutter_ring, millimetres(40)).expect("a cutting body");
     let drawn = Path::polyline(vec![[Length::ZERO, Length::ZERO], [millimetres(120), millimetres(40)]], false)
         .expect("an open path");
+    // A contour boolean that leaves several pieces stores them as one drawing: the golden carries
+    // the ring set, so a file written by this build is a file the next build loads.
+    let second_ring =
+        Path::rectangle([millimetres(200), Length::ZERO], [millimetres(320), millimetres(80)]).expect("a second ring");
+    let contours = model::Contours::new(vec![closed.clone(), second_ring]).expect("a drawing of two rings");
 
     let mut drawer = Container::new(id(8), "Drawer", Placement::IDENTITY, vec![front.into()]);
     drawer.set_component_marker(true).expect("the drawer is a component");
@@ -75,8 +83,12 @@ fn scene() -> SceneFile {
         Placement::IDENTITY,
         vec![
             shelf.into(),
-            Object::new(id(3), "Top", Placement::IDENTITY, Geometry::Constructive(constructive)).into(),
+            Object::new(id(3), "Top", Placement::IDENTITY, Geometry::Constructive(constructive.clone())).into(),
+            // A body that is the tool of a boolean step: the step names it and the golden carries the
+            // reference, so a file written by this build is a file the next build loads.
+            Object::new(id(11), "Cutter", Placement::IDENTITY, Geometry::Constructive(cutter)).into(),
             Object::new(id(4), "Sketch", Placement::IDENTITY, Geometry::Path(drawn)).into(),
+            Object::new(id(10), "Union", Placement::IDENTITY, Geometry::Contours(contours)).into(),
             Object::new(
                 id(5),
                 "Ball",
@@ -130,6 +142,36 @@ fn scene() -> SceneFile {
         .set_property(id(2), "plug.confirmat", model::PropertyValue::item(ItemId::new(712, 34).expect("a record")))
         .expect("the shelf names the plug a person chose");
     project.set_active_camera(Some(id(6))).expect("an active camera");
+    // An object marked as a tool survives the boolean it took part in, and the flag travels in the
+    // file: the golden carries one marked object so the field is exercised both ways.
+    project.set_object_tool(id(10), true).expect("the union is a tool");
+    // A boolean step freezes the cutter's shape and spends the source: the golden carries the step
+    // and the source removed, so a file written by this build is a file the next build loads.
+    let cutter = project.object(id(11)).expect("the cutter").geometry().as_constructive().expect("a body").clone();
+    let step =
+        model::BooleanTool::new("Cutter", model::ToolBody::Constructive(cutter), Placement::IDENTITY).expect("a tool");
+    project
+        .apply_boolean(id(3), model::Boolean::new(model::BooleanOp::Difference, step), Some(id(11)))
+        .expect("the top is cut by the cutter");
+    // A primitive is a solid body in both directions, so the golden carries both: the ball is cut by
+    // a drawn block, and the top is cut by a ball (ADR 0197).
+    let block_ring = Path::rectangle([millimetres(-40), millimetres(-40)], [millimetres(40), millimetres(40)])
+        .expect("a block ring");
+    let block = Constructive::extrude(block_ring, millimetres(40)).expect("a block");
+    let block_cutter =
+        model::BooleanTool::new("Block", model::ToolBody::Constructive(block), Placement::IDENTITY).expect("a block");
+    project
+        .apply_boolean(id(5), model::Boolean::new(model::BooleanOp::Difference, block_cutter), None)
+        .expect("the ball is cut by a block");
+    let ball_cutter = model::BooleanTool::new(
+        "Ball cutter",
+        model::ToolBody::Primitive(Primitive::sphere(millimetres(20), 24, 12).expect("a ball")),
+        Placement::IDENTITY,
+    )
+    .expect("a ball");
+    project
+        .apply_boolean(id(3), model::Boolean::new(model::BooleanOp::Difference, ball_cutter), None)
+        .expect("the top is cut by a ball");
     // A product reserves a footprint, not only three sides: one corner is cut by a chamfer of two
     // unequal setbacks, so the golden carries the corner rule as offsets and never as an angle
     // (ADR 0159).

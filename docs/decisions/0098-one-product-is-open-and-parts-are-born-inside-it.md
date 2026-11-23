@@ -1,6 +1,6 @@
 # 0098. One product is open, and furniture parts are born inside it
 
-- Status: Accepted; its "creating a product does not open it" clause is amended by 0100
+- Status: Accepted; its "creating a product does not open it" clause is amended by 0100, and the command's own gate by 0226
 - Date: 2026-11-13
 
 ## Context

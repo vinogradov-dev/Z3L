@@ -17,6 +17,7 @@
 //! Changes when: the shape a footprint may take, the corner rule, or the ring's anchor changes.
 
 use geom::Contour as OutlineRing;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -33,7 +34,7 @@ use crate::{
 ///
 /// Validation belongs to [`crate::Envelope`], which is the only value that knows the bounds the shape
 /// has to agree with; [`Footprint::outline`] is the one function that both checks and draws it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Footprint {
     /// The whole rectangle: no corner is cut, which is what a product starts as.
@@ -133,7 +134,13 @@ impl Footprint {
             }
             Self::Ring { contour } => PanelOutline::Contour { contour: contour.clone() },
         };
-        outline.ring_for(size).map_err(FootprintError::Outline)
+        let ring = outline.ring_for(size).map_err(FootprintError::Outline)?;
+        // A drawn ring keeps an arc by its centre, radius and angles, so its joints can miss by the
+        // document's own rounding — tens of micrometres on a metre-scale radius (ADR 0072). The exact
+        // readers — the niche's half-plane cut, a region's containment test — need one boundary, so the
+        // ring is welded on its lines here, once, for every reader. A ring the document's tolerance
+        // cannot close is handed on as it came, and those readers refuse it instead of guessing (N34).
+        Ok(ring.welded(|first, next| crate::joint_tolerance_mm(*first, *next)).unwrap_or(ring))
     }
 }
 

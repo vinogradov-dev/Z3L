@@ -19,7 +19,10 @@
     clippy::unreachable
 )]
 
+mod area_gizmo;
 mod box_gizmo;
+/// The assistant panel: the conversation the turn appends to, and the person's two modes (J7).
+mod chat;
 /// The command line: `z3l export` runs before the window exists (K3).
 mod cli;
 mod contour_gizmo;
@@ -45,9 +48,12 @@ mod mesh_pick;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
+mod preview;
+mod render_place;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;
+mod scene_writer;
 mod settings_store;
 mod shortcuts;
 mod side_panels;
@@ -78,7 +84,8 @@ use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
 use ui::{Palette, TransformMode, icons, theme};
 
-use crate::document::{DeleteRequest, Document, delete_request};
+use crate::chat::ChatAction;
+use crate::document::{DeleteRequest, Document, SnapChoice, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::file_picker::{PickMode, Picker, Started, scene_file};
 use crate::header::{HeaderAction, HeaderState, TabView};
@@ -138,6 +145,17 @@ impl Transform {
             TransformMode::ObjectRotate => Some(Self::ObjectRotate),
         }
     }
+}
+
+/// A tab's session, in the mode the assistant is born in (ADR 0190).
+///
+/// A headless session is created in build: a process that started a tool server made that choice by
+/// starting it, and the command line's own `--dry-run` is its plan. The window is the one place with
+/// a person in front of the switch, so its tabs start in plan and the first answer may only propose —
+/// the switch that lets an agent write is the person's second act.
+fn plan_mode(mut session: engine::Session) -> engine::Session {
+    session.set_agent_mode(engine::AgentMode::Plan);
+    session
 }
 
 /// The window's own view state: what every tab shares and no document owns.
@@ -275,6 +293,10 @@ struct App {
     settings_open: bool,
     /// Whether the Home surface is open.
     home_open: bool,
+    /// Whether the workspace shows the render place instead of the scene (ADR 0211).
+    render_open: bool,
+    /// The render place's numbers, its run and where the last one got to.
+    render_place: render_place::RenderPlace,
     /// The command palette and its last-used order; session state, never document data.
     palette: Palette,
     /// The product-frame card: window chrome, like the File dialogs, so it outlives a tab switch.
@@ -291,6 +313,30 @@ struct App {
     /// Whether the frame should close the window: the context that sends the command is only at
     /// hand there, and quitting is a window operation, not a document one.
     quit_requested: bool,
+    /// The local control channel an agent attaches to, while the settings let it listen.
+    ///
+    /// The channel owns the socket, the token file and its thread; dropping it closes the door and
+    /// removes the file, so a closed window leaves nothing behind for a client to reach (ADR 0188).
+    channel: Option<mcp::Channel>,
+    /// What the channel queued since the last frame: the frame answers it before anything else.
+    mailbox: Option<mcp::Mailbox>,
+    /// The calls taken off the mailbox and not answered yet.
+    ///
+    /// A frame owns the list while it answers it, because an answer borrows the document the call is
+    /// about; the queue itself is the channel's.
+    queued: Vec<mcp::Pending>,
+    /// The number of the frame the window is drawing, counted from one.
+    ///
+    /// The request path names it when it answers a call, so a person reading the log can tell which
+    /// frame landed what an agent asked for — the frame a call waits for is the one that shows it
+    /// (X111).
+    frames: u64,
+    /// Whether the assistant panel is on screen.
+    ///
+    /// The panel is one window over the workspace, so whether it is up, where it sits and how wide
+    /// it is are the shell's; what it says is the active tab's ([`Document::chat`]). The header's
+    /// cell and `Ctrl+J` are one act and both write this flag (X106, ADR 0222, J24).
+    assistant_open: bool,
 }
 
 impl App {
@@ -325,6 +371,7 @@ impl App {
         let watch = directory_watch::Watch::start(root, start.revision);
         let session = empty_session_with(start.directory)?;
         let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        app.apply_channel(ctx);
         if let Some(refusal) = start.refusal {
             log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
             app.failed(refusal);
@@ -391,7 +438,8 @@ impl App {
             colors: theme::scene_colors(ctx.theme()),
             ..Shell::default()
         };
-        let document = Document::new(render_state.as_ref(), &settings, &shell, session, PreservedSections::new())?;
+        let document =
+            Document::new(render_state.as_ref(), &settings, &shell, plan_mode(session), PreservedSections::new())?;
         Ok(Self {
             tabs: Tabs::new(document),
             render_state,
@@ -402,6 +450,8 @@ impl App {
             settings_section: SettingsSection::default(),
             settings_open: false,
             home_open: false,
+            render_open: false,
+            render_place: render_place::RenderPlace::new(),
             palette: Palette::new(),
             product_card: ProductCard::new(),
             settings_notice: loaded.notice,
@@ -409,7 +459,34 @@ impl App {
             pick_tab: None,
             pending_question: None,
             quit_requested: false,
+            channel: None,
+            mailbox: None,
+            queued: Vec::new(),
+            frames: 0,
+            assistant_open: false,
         })
+    }
+
+    /// The active tab's assistant state: the conversation, the backend and the turn.
+    ///
+    /// Every door the assistant panel has reads the tab that is in front, so a message is always
+    /// the front scene's and never a neighbour's (J24).
+    fn chat(&self) -> &crate::chat::Chat {
+        &self.tabs.active().chat
+    }
+
+    /// The active tab's assistant state, mutably.
+    fn chat_mut(&mut self) -> &mut crate::chat::Chat {
+        &mut self.tabs.active_mut().chat
+    }
+
+    /// Shows the assistant panel, or puts it away without touching any tab's conversation.
+    ///
+    /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
+    /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
+    /// (X106, ADR 0222).
+    fn toggle_assistant(&mut self) {
+        self.assistant_open = !self.assistant_open;
     }
 
     /// Reports a failure in the active tab's status bar.
@@ -451,6 +528,14 @@ impl App {
         let Some((order, answer)) = self.picker.take() else {
             return;
         };
+        // A render's destination belongs to the place, not to a tab: the answer lands wherever the
+        // run will read it, and the page keeps drawing while the file manager is up (ADR 0182).
+        if order.mode == PickMode::Image {
+            if let Some(path) = answer {
+                self.render_place.set_path(path);
+            }
+            return;
+        }
         // The pick is the asking tab's (ADR 0081): its answer lands there even when another tab was
         // activated behind the file manager's own window.
         let Some(asking) = self.pick_tab.take() else {
@@ -470,8 +555,10 @@ impl App {
             // without one becomes a file the next *Open* can see.
             PickMode::Save => FileAction::Save(scene_file(path)),
             // The editor never asks for a price list: that pick belongs to the directory application.
-            PickMode::Prices => {
-                log::warn!("a price list was picked for a scene: nothing to read");
+            PickMode::Prices | PickMode::Image => {
+                // Both are answered before this point: the price list belongs to the directory
+                // application, and an image to the render place.
+                log::warn!("a pick that is not a scene reached the tab that asked for it");
                 return;
             }
         };
@@ -502,6 +589,9 @@ impl App {
                 self.settings_open = true;
                 self.settings_notice = None;
             }
+            // The assistant's cell and its key are one act: the panel is the shell's, and the mode
+            // switch inside it is the person's (ADR 0190, ADR 0222).
+            HeaderAction::Assistant => self.toggle_assistant(),
             HeaderAction::CollapsePanels => self.shell.panels.toggle_collapse_all(),
             HeaderAction::HidePanels => self.shell.panels.toggle_hide_all(),
             HeaderAction::ToggleRibbon => {
@@ -509,6 +599,9 @@ impl App {
                 self.tabs.active_mut().set_ribbon_open(open);
                 self.sync_ribbon_fold();
             }
+            // A gesture is the window's view state: the band arms it for every tab and no document
+            // is written (ADR 0113, U115).
+            HeaderAction::SetMode(mode) => self.shell.mode = mode,
             HeaderAction::NewTab => {
                 if let Err(error) = self.new_tab() {
                     self.failed(error);
@@ -516,7 +609,11 @@ impl App {
             }
             HeaderAction::ActivateTab(id) => {
                 self.tabs.activate(id);
+                // A document tab is the way back from the render place: the place is a view of the
+                // scene in front, never a replacement for it (ADR 0211).
+                self.render_open = false;
             }
+            HeaderAction::Render => self.render_open = !self.render_open,
             HeaderAction::CloseTab(id) => self.close_tab(id, lang),
         }
     }
@@ -692,7 +789,13 @@ impl App {
     fn empty_tab(&mut self, id: TabId) {
         let directory = self.tabs.active().session.directory_shared();
         let built = empty_session_with(directory).and_then(|session| {
-            Document::new(self.render_state.as_ref(), &self.settings, &self.shell, session, PreservedSections::new())
+            Document::new(
+                self.render_state.as_ref(),
+                &self.settings,
+                &self.shell,
+                plan_mode(session),
+                PreservedSections::new(),
+            )
         });
         match built {
             Ok(document) => {
@@ -701,6 +804,329 @@ impl App {
                 }
             }
             Err(error) => self.failed(error),
+        }
+    }
+
+    /// Opens or closes the local control channel, so the settings switch is the door (ADR 0188).
+    ///
+    /// The channel listens only while the window is open and only while the workspace allows it: a
+    /// switch pressed in the Settings window takes effect on that frame, and a closed window removes
+    /// the token file a client would have read. The context is the one thing a channel cannot know
+    /// (`mcp` is forbidden `egui`), so the frame hands it in as the wake a queued call rings (X111).
+    fn apply_channel(&mut self, ctx: &egui::Context) {
+        if !self.settings.assistant.attach {
+            if let Some(channel) = self.channel.take() {
+                log::info!(target: "z3l::shell", "the control channel on port {} is closed", channel.port());
+            }
+            self.mailbox = None;
+            self.queued.clear();
+            return;
+        }
+        if self.channel.is_some() || self.mailbox.is_some() {
+            return;
+        }
+        let Some(folder) = self.settings_store.folder().map(std::path::Path::to_path_buf) else {
+            log::info!(target: "z3l::shell", "no settings folder is known, so no agent can reach this window");
+            return;
+        };
+        self.attach_channel(&folder, ctx);
+    }
+
+    /// Opens the channel in `folder`, keeping the window when it cannot be opened.
+    ///
+    /// A second window is the ordinary case, not an error a person has to solve: the first window's
+    /// channel is the one a client reaches, and this one stays without a door and says so in the log
+    /// (ADR 0188).
+    ///
+    /// The mailbox is told what to do the moment a call arrives: ask this window for a frame. A
+    /// window paints on input, so a call that lands while the person is not touching it would
+    /// otherwise wait for a pointer that may never come (X111, ADR 0225).
+    fn attach_channel(&mut self, folder: &Path, ctx: &egui::Context) -> bool {
+        match mcp::Channel::open(folder) {
+            Ok((channel, mailbox)) => {
+                log::info!(
+                    target: "z3l::shell",
+                    "an agent may reach this window on 127.0.0.1:{}; the token is in {}",
+                    channel.port(),
+                    channel.published_at().display()
+                );
+                let window = ctx.clone();
+                mailbox.watch(std::sync::Arc::new(move || window.request_repaint()));
+                self.channel = Some(channel);
+                self.mailbox = Some(mailbox);
+                true
+            }
+            Err(error) => {
+                log::warn!(target: "z3l::shell", "{error}");
+                false
+            }
+        }
+    }
+
+    /// Answers every call the channel queued, at the frame boundary.
+    ///
+    /// The queue is taken before anything this frame derives from it, so a command lands between
+    /// frames and never inside a gesture, and the scene the person sees on this frame is the scene
+    /// the agent left (ADR 0187). Two rules keep the answer honest (X107, ADR 0223):
+    ///
+    /// * a call that moves the document waits for the first frame that has the window to itself — a
+    ///   piece in hand or a question waiting for the person delays the call instead of refusing it,
+    ///   because a refusal says nothing about the edit that a late frame would perform;
+    /// * a call whose caller has gone is dropped before anything reads it, so no change lands for a
+    ///   caller that gave up at the channel's deadline and will never hear about it;
+    /// * the frame that answers asks for the frame after it, and the call rings the window the
+    ///   moment it is queued (`Mailbox::watch`), so nothing here waits for a pointer a person has to
+    ///   bring (X111, ADR 0225).
+    ///
+    /// Reads are answered whatever the window is doing: a question about the document moves nothing.
+    fn serve_channel(&mut self, ctx: &egui::Context) {
+        if let Some(mailbox) = self.mailbox.as_mut() {
+            self.queued.extend(mailbox.drain());
+        }
+        let mut held = Vec::new();
+        let mut moved = false;
+        for pending in std::mem::take(&mut self.queued) {
+            if pending.abandoned() {
+                log::info!(
+                    target: "z3l::shell",
+                    "a call was dropped: the client gave up before the window reached it"
+                );
+                continue;
+            }
+            if self.gesture_in_flight() && matches!(pending.call(), mcp::Call::Dispatch(_)) {
+                held.push(pending);
+                continue;
+            }
+            moved |= matches!(pending.call(), mcp::Call::Dispatch(_));
+            let answer = self.answer_channel(pending.call());
+            // The answer reaches the caller inside the frame and before the frame is painted, so
+            // the frame it names is the one that landed the change (X111).
+            log::info!(
+                target: "z3l::shell",
+                "the window answered a {} in frame {}",
+                pending.call().word(),
+                self.frames
+            );
+            pending.answer(answer);
+        }
+        self.queued = held;
+        if moved || !self.queued.is_empty() {
+            // A call that landed asks for the frame that shows it, and a held one asks for the frame
+            // that can answer it: asking here is what keeps an agent's call from waiting for a
+            // pointer that may never come (ADR 0223, X111).
+            ctx.request_repaint();
+        }
+    }
+
+    /// Answers one call against the document a person is looking at.
+    ///
+    /// [`Self::serve_channel`] decides what may be answered in this frame: a dispatch is only handed
+    /// here by a frame that has the window to itself (ADR 0187, ADR 0223).
+    fn answer_channel(&mut self, call: &mcp::Call) -> mcp::Answer {
+        match call {
+            mcp::Call::List(request) => mcp::listing(&self.tabs.active().session, request.command.as_deref()),
+            mcp::Call::Ask(query) => mcp::asking(&self.tabs.active().session, *query),
+            // Undoing is the person's own Ctrl+Z, performed by the tab whose history holds the entry
+            // a caller is taking back; the session's dirty marker follows it, so the tab row says the
+            // document moved (ADR 0190, ADR 0230).
+            mcp::Call::Undo => mcp::undo(&mut self.tabs.active_mut().session),
+            mcp::Call::Findings => mcp::Answer::ok(mcp::findings(&self.tabs.active().session)),
+            mcp::Call::Inspect => match serde_json::to_value(self.window_state()) {
+                Ok(value) => mcp::Answer::ok(value),
+                // A window state is plain data by construction; a caller that reaches this arm is
+                // told so instead of being handed a value that is not the window.
+                Err(error) => mcp::Answer::refused(format!("the window cannot be reported: {error}")),
+            },
+            mcp::Call::Preview(request) => {
+                // The picture is drawn with the device the window already owns, and the framing is
+                // the document's, so the picture a caller reads is the one a headless process draws
+                // (ADR 0228).
+                let previewer = self.render_state.clone().map(preview::ScenePreview::new);
+                mcp::preview(&self.tabs.active().session, request, previewer.as_ref().map(|p| p as &dyn mcp::Previewer))
+            }
+            mcp::Call::Dispatch(request) => {
+                // A batch that arrives while a chat turn is open lands in the turn's own edit scope,
+                // so a process that edits in several calls of one message leaves one undo entry
+                // (ADR 0187, ADR 0230). The scope is read before the document is borrowed.
+                let scope = self.chat().scope();
+                let document = self.tabs.active_mut();
+                // The save a caller asks for is the person's *Save* performed on their document, so
+                // it goes through the same writer and to the same file (X114). A scene that was
+                // never saved has no file yet, and the door says so instead of choosing a path.
+                let writer = document.save_sink();
+                let sink = writer.as_ref().map(|writer| writer as &dyn mcp::SceneSink);
+                let answer = mcp::dispatch(&mut document.session, request, mcp::Door::Window { sink, scope });
+                if answer.written() {
+                    document.mark_saved();
+                }
+                answer
+            }
+        }
+    }
+
+    /// Whether a gesture holds the window, so a command would land in the middle of it.
+    ///
+    /// A dispatch happens between frames and so can never interleave with a gizmo drag; the two
+    /// gestures that outlive a frame are a piece carried by the pointer and a question waiting for
+    /// the person's answer, and both mean "not now" rather than "move the document" (ADR 0187).
+    fn gesture_in_flight(&self) -> bool {
+        self.pending_question.is_some() || self.tabs.active().holding_piece()
+    }
+
+    /// Gives every tab the model the workspace names, and takes it away when it names none.
+    ///
+    /// Two ways to one loop (ADR 0189, ADR 0230), and the process wins: a command the workshop typed
+    /// starts an agent that owns the loop itself, and the endpoint is the OpenAI-compatible wire the
+    /// panel asks only while that command is empty. Both are settings and the channel is the
+    /// window's, so the two are read every frame and every tab is handed the answer; a backend this
+    /// shell did not create — a test's script — is left alone.
+    ///
+    /// Every tab and not only the one in front: the backend is part of the tab's own conversation, so
+    /// a settings change reaches the scenes that are not on screen and a tab that comes forward is
+    /// already able to send (J24). A tab with a turn in flight keeps its backend until that turn is
+    /// over, because the answer belongs to the process that is running it.
+    ///
+    /// The key is not read here: it belongs to the message that needs it, so no frame touches the
+    /// file and the homes are named by the sentence a turn answers with when neither has one.
+    fn apply_assistant(&mut self) {
+        let assistant = self.settings.assistant.clone();
+        let program = mcp::Program::parse(&assistant.agent);
+        // A process wins the loop, so a wrong address matters only while no process is named: the
+        // panel then answers the clause the settings page would have shown (ADR 0189).
+        let problem = match (&program, assistant.problem()) {
+            (None, Some(problem)) => Some(problem),
+            _ => None,
+        };
+        let endpoint = match (program.clone(), assistant.endpoint_to_ask()) {
+            (None, Some(base_url)) => Some(mcp::Endpoint::new(base_url, assistant.model.trim())),
+            _ => None,
+        };
+        let folder = self.settings_store.folder().map(std::path::Path::to_path_buf);
+        let channel_open = self.channel.is_some();
+        for (_, document) in self.tabs.iter_mut() {
+            document.chat.apply_agent(program.clone(), channel_open);
+            document.chat.apply_problem(problem);
+            document.chat.apply_model(endpoint.clone(), folder.clone());
+        }
+    }
+
+    /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
+    ///
+    /// A turn asks the model for one reply per frame and dispatches at most one batch per frame, so
+    /// the person's Stop lands between two calls and a drag is never interleaved with an answer. A
+    /// gesture in flight pauses the turn instead of failing it: the next frame that has the window
+    /// to itself carries on.
+    ///
+    /// Only the tab in front is served, so a turn in a scene the person is not looking at pauses
+    /// where it stopped: its reply stays in flight in its own backend and resumes the frame its tab
+    /// comes forward again, which is what makes switching tabs cost no answer (J24).
+    fn serve_chat(&mut self, lang: text::Lang) {
+        if self.gesture_in_flight() {
+            return;
+        }
+        let document = self.tabs.active_mut();
+        document.chat.serve(&mut document.session, lang);
+    }
+
+    /// Draws the assistant panel and performs the one action it asked for.
+    ///
+    /// The mode switch is the session's, so it survives a panel close and dies with the tab; leaving
+    /// build ends a running turn at its next call boundary, because an answer that started while the
+    /// agent could write must not keep writing after the person dropped to plan (ADR 0190). The
+    /// rules' findings are re-read when the document moves, never per frame: the list is derived and
+    /// the pass walks the tree (ADR 0191). The gesture is handed in so Send waits while a drag or a
+    /// pending question has the window; whether the turn is running is the panel's own state, which
+    /// is what draws Stop.
+    fn assistant(&mut self, ctx: &egui::Context) {
+        if !self.assistant_open {
+            return;
+        }
+        let lang = ui::language(ctx);
+        let mode = self.tabs.active().session.agent_mode();
+        let held = self.gesture_in_flight();
+        let open = &mut self.assistant_open;
+        let document = self.tabs.active_mut();
+        document.chat.refresh_findings(&document.session);
+        match document.chat.show(ctx, open, mode, lang, held) {
+            ChatAction::None => {}
+            ChatAction::Send => {
+                let text = self.chat().input.trim().to_owned();
+                self.send_chat(text, lang);
+            }
+            ChatAction::Stop => self.chat_mut().stop(),
+            ChatAction::AllowEndpoint => self.allow_endpoint(lang),
+            ChatAction::DenyEndpoint => self.chat_mut().clear_consent(),
+            ChatAction::Mode(mode) => {
+                self.chat_mut().stop();
+                self.tabs.active_mut().session.set_agent_mode(mode);
+            }
+            ChatAction::Close => self.assistant_open = false,
+        }
+    }
+
+    /// Sends one message as one turn of the active tab's session, once the endpoint is agreed to.
+    ///
+    /// The question comes before the message: a workspace with an endpoint sends nothing until the
+    /// person has seen what leaves the machine and said yes once for that endpoint (ADR 0189). The
+    /// typed message stays in the field while the card is drawn, so "not now" costs nothing.
+    fn send_chat(&mut self, text: String, lang: text::Lang) {
+        // The key is read when a message is sent and not once per frame: a workspace whose key is
+        // missing reads the sentence that names both homes instead of being asked a question about
+        // a message that cannot go anywhere.
+        if self.chat().asks_an_endpoint()
+            && let Err(error) = mcp::key(self.settings_store.folder())
+        {
+            self.chat_mut().note(error.sentence().to_owned());
+            return;
+        }
+        if let Some(endpoint) = self.chat().unconsented(&self.settings.assistant) {
+            self.chat_mut().request_consent(endpoint);
+            return;
+        }
+        let document = self.tabs.active_mut();
+        document.chat.begin(&mut document.session, text, lang);
+    }
+
+    /// The person agreed to send to the endpoint the panel named: remember it, then send.
+    ///
+    /// The agreement is written now instead of when the settings window closes, because a promise
+    /// that dies with a crash is a promise the program did not keep.
+    fn allow_endpoint(&mut self, lang: text::Lang) {
+        let Some(endpoint) = self.chat_mut().take_consent() else {
+            return;
+        };
+        self.settings.assistant.remember_consent(&endpoint);
+        self.persist_settings();
+        let text = self.chat().input.trim().to_owned();
+        self.send_chat(text, lang);
+    }
+
+    /// The window as `ui_inspect` reports it: the scenes, the one in front, the gesture and the
+    /// selection, which are exactly the facts a headless session cannot have.
+    fn window_state(&self) -> mcp::Window {
+        let active = self.tabs.active_id();
+        let mut index = 0;
+        let mut tabs = Vec::new();
+        for (position, (id, document)) in self.tabs.iter().enumerate() {
+            if id == active {
+                index = position;
+            }
+            tabs.push(mcp::Tab {
+                title: document.file_name(text::Lang::En),
+                path: document.path().map(|path| path.display().to_string()),
+                dirty: document.is_dirty(),
+                revision: document.session.project().revision().get(),
+                product: document.session.active_product().map(model::Id::get),
+            });
+        }
+        let document = self.tabs.active();
+        mcp::Window {
+            tabs,
+            active: index,
+            mode: self.shell.mode.id().to_owned(),
+            selection: document.editor.selected_nodes().iter().map(|id| id.get()).collect(),
+            busy: self.gesture_in_flight(),
+            status: document.last_error.clone(),
         }
     }
 
@@ -938,6 +1364,37 @@ impl App {
             let Self { tabs, shell, settings, .. } = self;
             tabs.active_mut().apply_viewport_settings(&before.viewport, &settings.viewport, shell);
         }
+        // A snap kind the Settings page switched applies to the whole workspace at once, exactly as
+        // the panel visibility does: every tab reads one set (U116). The mode rides with it, because
+        // it is the reading of the same candidates (U119).
+        // The assistant section is the channel's door: a switch pressed here closes or opens it on
+        // this frame, so the file a client reads describes the window that is actually there.
+        if self.settings.assistant != before.assistant {
+            self.apply_channel(ctx);
+        }
+        if self.settings.snaps.kinds() != before.snaps.kinds() || self.settings.snaps.mode != before.snaps.mode {
+            let choice = SnapChoice { kinds: self.settings.snaps.kinds(), mode: self.settings.snaps.mode };
+            for (_, document) in self.tabs.iter_mut() {
+                document.set_snaps(choice);
+            }
+        }
+    }
+
+    /// Writes the snap choice a tab switched into the workspace settings, and into every other tab.
+    ///
+    /// The tab owns the live values — the Snaps group's cells are drawn from them inside that tab —
+    /// and the workspace owns the file, so the shell carries the change across on the frame a cell
+    /// was pressed. The kinds and the mode travel together because they are one section (U116, U119).
+    fn take_snaps(&mut self) {
+        let Some(SnapChoice { kinds, mode }) = self.tabs.active_mut().take_snaps_change() else {
+            return;
+        };
+        self.settings.snaps.set_kinds(kinds);
+        self.settings.snaps.mode = mode;
+        for (_, document) in self.tabs.iter_mut() {
+            document.set_snaps(SnapChoice { kinds, mode });
+        }
+        self.persist_settings();
     }
 
     /// Draws the Home surface and performs the one action it asked for.
@@ -977,10 +1434,146 @@ impl App {
     /// [`egui::Context`] and no window at all (U77), and the chrome the frame gave the window comes
     /// back, so the presses it keeps and the rectangles it hands out are asserted without pixels
     /// (U78).
+    /// Draws the render place in the workspace and performs the one action it asked for.
+    ///
+    /// The page edits the place's own numbers and draws its own report; the shell starts the run,
+    /// stops it and asks the file manager where the image goes. The scene it renders is the one in
+    /// front of the person — the same frame and the same camera the viewport draws — taken at the
+    /// moment the button is pressed and cloned into the worker, so an edit made while it runs does
+    /// not change the image under it (ADR 0210, ADR 0211).
+    fn render_page(&mut self, ui: &mut egui::Ui) {
+        let lang = ui::language(ui.ctx());
+        let scene = self.tabs.active().file_name(lang);
+        let stage = self.render_place.stage();
+        let action = ui::render_page::show(
+            ui,
+            ui::render_page::Page {
+                scene: &scene,
+                settings: self.render_place.settings(),
+                bounds: render_place::RenderPlace::bounds(),
+                stage: &stage,
+            },
+        );
+        match action {
+            Some(ui::render_page::Action::Render) => self.start_render(ui.ctx()),
+            Some(ui::render_page::Action::Cancel) => self.render_place.cancel(),
+            Some(ui::render_page::Action::Choose) => self.ask_for_image(ui.ctx()),
+            Some(ui::render_page::Action::Close) => self.render_open = false,
+            None => {}
+        }
+    }
+
+    /// Starts the run the page asked for, or reports on the place why it could not.
+    fn start_render(&mut self, ctx: &egui::Context) {
+        let document = self.tabs.active();
+        let frame = document.drawn_frame().clone();
+        let camera = document.camera();
+        let revision = document.session.project().revision().get();
+        let state = self.render_state.clone();
+        if let Err(reason) = self.render_place.start(ctx, state.as_ref(), frame, camera, revision) {
+            self.render_place.failed(reason);
+        }
+    }
+
+    /// Asks the system file manager where the image goes, in the folder the scene lives in.
+    fn ask_for_image(&mut self, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
+        let document = self.tabs.active();
+        let folder = file_picker::folder_of(document.path());
+        let name = match document.path().and_then(|path| path.file_stem()) {
+            Some(stem) => format!("{}.{}", stem.to_string_lossy(), file_picker::IMAGE_EXTENSION),
+            None => format!("render.{}", file_picker::IMAGE_EXTENSION),
+        };
+        let order = file_picker::Order { mode: PickMode::Image, folder, name: Some(name), lang };
+        if let Err(error) = self.picker.start(ctx, order) {
+            self.render_place.failed(error);
+        }
+    }
+
+    /// Draws the workspace under the header and returns the chrome it covered.
+    ///
+    /// The ribbon, the viewport, the two floating panels and the view cluster are one surface: the
+    /// panels float over the scene, so the frame's geometry is computed once and handed to the
+    /// viewport, and picking and the split views read exactly the rectangles the panels cover (M2).
+    ///
+    /// While the render place is open this whole surface is replaced by it: a render is a place in
+    /// the work, not a question over the model, and a person who opens it means to see the image,
+    /// the numbers and the progress rather than the cabinet under them (ADR 0211). Nothing floats
+    /// over the place, so the chrome it covers is empty.
+    fn design_area(&mut self, ui: &mut egui::Ui) -> Chrome {
+        let design = ui.available_rect_before_wrap();
+        if self.render_open {
+            self.render_page(ui);
+            self.status_bar(ui);
+            return Chrome::empty();
+        }
+        self.ribbon(ui, design);
+        self.status_bar(ui);
+        // The viewport is the whole area under the header and above the status bar: the panels float
+        // over it, so the rendered scene runs under their translucent fill (M2). The frame's
+        // geometry is computed once and handed to the viewport, so picking and the split views read
+        // exactly the rectangles the panels cover.
+        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        let ribbon_open = self.tabs.active().ribbon_open();
+        let band = self.shell.ribbon_band(viewport, ribbon_open);
+        let band_height = self.shell.ribbon_inset(ribbon_open);
+        let ctx = ui.ctx().clone();
+        let animated_band =
+            ctx.animate_value_with_time(egui::Id::unique("ribbon_band_height"), band_height, ANIMATION_SECONDS);
+        let width = |id: &str, state: ui::settings::PanelState| {
+            let target = if state.expanded { EXPANDED_WIDTH } else { STRIP_WIDTH };
+            ctx.animate_value_with_time(egui::Id::unique((id, "panel_width")), target, ANIMATION_SECONDS)
+        };
+        let top = viewport.top() + panel_top(animated_band);
+        let panels = &self.shell.panels;
+        let rects = PanelRects::of(
+            viewport,
+            top,
+            panels,
+            (width("scene_tree", panels.scene), width("panel_card", panels.inspector)),
+        );
+        let chrome = Chrome {
+            panels: rects,
+            ribbon: band,
+            list: self.shell.list_rect,
+            menu: self.tabs.active().menu_rect(),
+            tool: self.tabs.active().tool_card_rect(),
+        };
+        self.workspace(ui, &chrome);
+        if let Some(rect) = rects.left {
+            self.scene_tree(&ctx, rect);
+        }
+        if let Some(rect) = rects.right {
+            self.panel_card(&ctx, rect);
+        }
+        self.sync_panels();
+        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
+        // write it: the editor recorded the wish and the shell applies it here, after both menus
+        // have drawn (U113).
+        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
+            self.shell.mode = mode;
+        }
+        chrome
+    }
+
     fn frame(&mut self, ui: &mut egui::Ui) -> Chrome {
+        // The frame the request path names when it answers an agent's call: a frame that landed one
+        // is the frame the person sees it in (X111).
+        self.frames = self.frames.saturating_add(1);
         // The system cursor is the base the whole frame starts from: every surface may ask for an
         // icon of its own, and the shell replaces a `Default` with its square at the end (X40).
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        // An agent's call is answered here, between frames, before anything this frame derives: a
+        // command lands in the active document and the scene is built from what it left (ADR 0187).
+        self.serve_channel(ui.ctx());
+        // A chat turn takes the same boundary: one answer per frame, so the person's stop lands
+        // between two calls and the scene this frame draws is what the agent left (ADR 0187).
+        let lang = ui::language(ui.ctx());
+        // An agent process the workspace names is started here, once, and given the channel this
+        // window offers (ADR 0230). A command that is empty, or a channel that is closed, is the
+        // panel's own state and not a failure.
+        self.apply_assistant();
+        self.serve_chat(lang);
         // A directory another application finished writing is swapped in here, at the frame
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
@@ -988,6 +1581,12 @@ impl App {
         // The file manager answers on its own schedule, so its path is taken at the same boundary
         // and becomes the open or the save the gesture would have been (ADR 0182).
         self.take_pick(ui.ctx());
+        // A finished render is taken at the same boundary, and a run in flight asks for the next
+        // frame so its counter keeps moving even while the person is back in the document
+        // (ADR 0211).
+        if self.render_place.take_finished() || self.render_place.is_running() {
+            ui.ctx().request_repaint();
+        }
         // The language is workspace settings, published once per frame so every surface draws the
         // same words without threading a `Lang` through every signature (U49); the icon-colour mode
         // is published the same way, so the rasteriser never needs the settings threaded to it.
@@ -1009,14 +1608,19 @@ impl App {
         // A modal — the Settings window, the Home surface, the palette, a destructive question —
         // owns the keys for the frame it is up, so typing into a field never saves, undoes, reframes
         // or leaves a tool, and a question never answers itself with a second Delete.
+        //
+        // The assistant panel is a window, not a modal: it may be open while the person works, so it
+        // keeps Escape and the tool keys for "handle_keys" but not the shell's Delete, Save or Undo.
+        // Treating it as a modal is what made Delete do nothing with the chat open (X123).
         let modals = self.settings_open
             || self.home_open
             || self.palette.is_open()
             || self.product_card.is_open()
             || self.pending_question.is_some();
+        let chat_open = self.assistant_open;
         {
             let Self { tabs, shell, .. } = self;
-            tabs.active_mut().handle_keys(ui, modals, shell);
+            tabs.active_mut().handle_keys(ui, modals || chat_open, shell);
         }
         if let Err(error) = self.tabs.active_mut().sync_selection() {
             self.failed(error);
@@ -1025,6 +1629,9 @@ impl App {
             let shortcuts = take_shortcuts(ui.ctx());
             if shortcuts.palette {
                 self.palette.open();
+            }
+            if shortcuts.assistant {
+                self.toggle_assistant();
             }
             let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
@@ -1075,7 +1682,7 @@ impl App {
                         id,
                         title: document.file_name(ui::language(ui.ctx())),
                         dirty: document.is_dirty(),
-                        active: id == active,
+                        active: id == active && !self.render_open,
                     })
                     .collect(),
                 can_undo: self.tabs.active().can_undo(),
@@ -1083,6 +1690,9 @@ impl App {
                 ribbon_open: self.tabs.active().ribbon_open(),
                 panels_hidden: !self.shell.panels.any_visible(),
                 panels_collapsed: self.shell.panels.all_collapsed(),
+                mode: self.shell.mode,
+                render_open: self.render_open,
+                assistant_open: self.assistant_open,
             }
         };
         let mut header_action = None;
@@ -1103,53 +1713,7 @@ impl App {
         }
         self.answer_question(ui.ctx());
 
-        let design = ui.available_rect_before_wrap();
-        self.ribbon(ui, design);
-        self.status_bar(ui);
-        // The viewport is the whole area under the header and above the status bar: the panels float
-        // over it, so the rendered scene runs under their translucent fill (M2). The frame's
-        // geometry is computed once and handed to the viewport, so picking and the split views read
-        // exactly the rectangles the panels cover.
-        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
-        let ribbon_open = self.tabs.active().ribbon_open();
-        let band = self.shell.ribbon_band(viewport, ribbon_open);
-        let band_height = self.shell.ribbon_inset(ribbon_open);
-        let ctx = ui.ctx().clone();
-        let animated_band =
-            ctx.animate_value_with_time(egui::Id::unique("ribbon_band_height"), band_height, ANIMATION_SECONDS);
-        let width = |id: &str, state: ui::settings::PanelState| {
-            let target = if state.expanded { EXPANDED_WIDTH } else { STRIP_WIDTH };
-            ctx.animate_value_with_time(egui::Id::unique((id, "panel_width")), target, ANIMATION_SECONDS)
-        };
-        let top = viewport.top() + panel_top(animated_band);
-        let panels = &self.shell.panels;
-        let rects = PanelRects::of(
-            viewport,
-            top,
-            panels,
-            (width("scene_tree", panels.scene), width("panel_card", panels.inspector)),
-        );
-        let chrome = Chrome {
-            panels: rects,
-            ribbon: band,
-            list: self.shell.list_rect,
-            menu: self.tabs.active().menu_rect(),
-            tool: self.tabs.active().tool_card_rect(),
-        };
-        self.workspace(ui, &chrome);
-        if let Some(rect) = rects.left {
-            self.scene_tree(&ctx, rect);
-        }
-        if let Some(rect) = rects.right {
-            self.panel_card(&ctx, rect);
-        }
-        self.sync_panels();
-        // A node menu's four gestures are window state too, and the tab that drew the entry cannot
-        // write it: the editor recorded the wish and the shell applies it here, after both menus
-        // have drawn (U113).
-        if let Some(mode) = self.tabs.active_mut().take_mode_request() {
-            self.shell.mode = mode;
-        }
+        let chrome = self.design_area(ui);
         self.command_palette(ui);
         // The cluster's *Configure…* link is drawn inside the viewport, which only has the shell;
         // the window owns the Settings modal, so it opens it here on the same frame (U64).
@@ -1159,6 +1723,8 @@ impl App {
             self.settings_notice = None;
         }
         self.settings_window(ui.ctx());
+        self.assistant(ui.ctx());
+        self.take_snaps();
         self.product_frame_card(ui.ctx());
         self.home_surface(ui.ctx());
         self.draw_work_cursor(ui.ctx());
@@ -1178,6 +1744,11 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        // The channel's file outlives nothing: a clean exit removes it, so a reader that cannot
+        // connect reads "no window is open here" and never a token nobody answers (ADR 0188).
+        if let Some(channel) = self.channel.take() {
+            channel.shutdown();
+        }
         self.persist_settings();
     }
 }

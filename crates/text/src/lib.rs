@@ -208,6 +208,31 @@ mod tests {
     }
 
     #[test]
+    fn every_brace_in_the_table_is_a_placeholder() {
+        // `with` splices an argument where a `{}` sits, so any other brace — a `{0}`, an unmatched
+        // `{` — reaches the status bar as itself and the sentence reads half-written (X99 found
+        // two rows that did exactly that). A row that means a literal brace says so by not having
+        // one: the table is a sentence, not a format string.
+        for message in Message::ALL {
+            for lang in Lang::ALL {
+                let text = message.text(lang);
+                let braces: Vec<(usize, char)> =
+                    text.char_indices().filter(|(_, character)| *character == '{' || *character == '}').collect();
+                for (pair, brace) in braces.chunks(2).enumerate() {
+                    assert_eq!(brace.len(), 2, "{message:?} in {lang:?} has an unmatched brace: {text:?}");
+                    assert_eq!(brace[0].1, '{', "{message:?} in {lang:?} closes a brace it never opens: {text:?}");
+                    assert_eq!(brace[1].1, '}', "{message:?} in {lang:?} opens a brace it never closes: {text:?}");
+                    assert_eq!(
+                        brace[1].0,
+                        brace[0].0 + 1,
+                        "{message:?} in {lang:?} carries something other than a bare `{{}}` at {pair}, which `with` cannot fill: {text:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_counted_message_agrees_with_russian_numbers() {
         assert_eq!(Message::test_points(1).text(Lang::Ru), "1 точка");
         assert_eq!(Message::test_points(3).text(Lang::Ru), "3 точки");

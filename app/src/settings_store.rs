@@ -84,6 +84,12 @@ impl SettingsStore {
         self.path.as_deref()
     }
 
+    /// The folder the workspace lives in: the settings file, the nomenclature directory and the
+    /// control channel's token file all sit in it, so a workshop moves them by copying one folder.
+    pub(crate) fn folder(&self) -> Option<&Path> {
+        self.path().and_then(Path::parent)
+    }
+
     /// The folder the workshop's nomenclature directory lives in, beside the settings file.
     ///
     /// Settings and the directory sit beside each other in the application's config folder, so a
@@ -204,6 +210,12 @@ mod tests {
 
     use super::*;
 
+    /// The 3D reading, which is not the default: a file from before the mode existed must open in the
+    /// default, so the round trip is only proved by a value the default is not (U119).
+    fn model_mode() -> model::SnapMode {
+        model::SnapMode::Space
+    }
+
     /// A scratch directory this test owns.
     fn scratch(name: &str) -> PathBuf {
         scratch_dir(&format!("settings-{name}"))
@@ -219,6 +231,7 @@ mod tests {
         settings.snaps.frames = true;
         settings.snaps.tolerance_mm = 12;
         settings.snaps.floor = false;
+        settings.snaps.mode = model_mode();
         settings.appearance.panel_opacity = 70;
         settings.recent.push(PathBuf::from("/tmp/cabinet.z3l"));
         settings
@@ -255,6 +268,7 @@ mod tests {
             (false, true, 12, false),
             "the snapping section and its floor survive the file"
         );
+        assert_eq!(loaded.settings.snaps.mode, model_mode(), "and the reading of a candidate above the plane does");
         assert!(!directory.join(format!("{FILE_NAME}.tmp")).exists(), "the temporary file is renamed away");
     }
 

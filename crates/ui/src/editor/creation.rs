@@ -21,7 +21,7 @@ use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
 use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
     CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, PanelNominalSize, PanelOutline, Placement,
-    Primitive, Project,
+    PrimitiveShape, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -117,6 +117,10 @@ impl Editor {
     ///
     /// The created part becomes the selection and is returned, so a caller that drew it can name the
     /// node it just cut without reading the selection back.
+    ///
+    /// The interface's own rule is asked here, before the command: a part is offered only inside the
+    /// open piece (ADR 0098). The command itself writes wherever its parameters name, because a
+    /// caller that is not a person has no open piece to speak of (ADR 0226).
     #[allow(clippy::too_many_arguments)]
     pub fn create_panel_sized(
         &mut self,
@@ -129,6 +133,8 @@ impl Editor {
         placement: Placement,
         class: Option<ClassCode>,
     ) -> Result<Id, String> {
+        engine::allow_creation(session.project(), parent, session.active_product())
+            .map_err(|refusal| refusal.to_string())?;
         let material = Self::panel_material(session)?;
         let name = Self::free_name(session, parent, &name);
         let params = json(&PanelCreate { parent, name, nominal_size, material, placement, class, outline, bevels })?;
@@ -160,11 +166,12 @@ impl Editor {
 
     /// Creates the product frame the card describes and opens it, in one user action.
     ///
-    /// The command is `product.create`; opening the new frame is a session view operation that
-    /// follows it (ADR 0098, ADR 0100). The frame lands at the deterministic product placement —
-    /// the origin in an empty scene, else beside the nearest piece and clear of every envelope —
-    /// and the container is armed, so the next part is born inside it without another gesture.
-    /// A frame is a top-level piece, so its parent is the scene root.
+    /// The command is `product.create`, and the session opens the frame it makes in the same act
+    /// (ADR 0100, X112), so this method arms and selects it and nothing here opens a product. The
+    /// frame lands at the deterministic product placement — the origin in an empty scene, else
+    /// beside the nearest piece and clear of every envelope — and the container is armed, so the
+    /// next part is born inside it without another gesture. A frame is a top-level piece, so its
+    /// parent is the scene root.
     pub fn create_product(&mut self, session: &mut Session, draft: ProductDraft, lang: Lang) -> Result<(), String> {
         let project = session.project();
         let root = project.root().id();
@@ -177,7 +184,6 @@ impl Editor {
         let Some(id) = outcome.created_id() else {
             return Ok(());
         };
-        session.open_product(id);
         self.arm_creation(session.project(), id);
         self.selection.replace(id);
         self.initialized = true;
@@ -204,7 +210,12 @@ impl Editor {
         // with the arm: a report row never names a space the pointer left (ADR 0118).
         self.void_armed = false;
         self.void.clear();
+        // The area under the pointer belongs to the pull that armed it, so a mode that no longer
+        // owns the pointer drops the highlighted face too (G4).
+        self.area_pull = None;
+        self.area.clear();
         self.box_draft = None;
+        self.boolean = None;
     }
 
     /// The base being pulled, once the sketch has drawn it.
@@ -252,8 +263,8 @@ impl Editor {
     /// The class is the registry's general-product placeholder, because a drawn gesture names no
     /// type; the card is the entry that does. The name is that class's label in the current
     /// language, the same name the card gives when its class is left alone, so the card and the
-    /// gesture produce the same document. Opening the new frame is a session view operation that
-    /// follows the command, exactly as it does from the card (ADR 0098, ADR 0100).
+    /// gesture produce the same document. The command opens the frame it makes, in the same act
+    /// (ADR 0100, X112), as it does from the card.
     fn create_drawn_product(
         &mut self,
         session: &mut Session,
@@ -269,7 +280,6 @@ impl Editor {
         let Some(id) = outcome.created_id() else {
             return Ok(());
         };
-        session.open_product(id);
         self.arm_creation(session.project(), id);
         self.selection.replace(id);
         self.initialized = true;
@@ -286,7 +296,7 @@ impl Editor {
         &mut self,
         session: &mut Session,
         parent: Id,
-        primitive: Primitive,
+        primitive: PrimitiveShape,
         placement: Placement,
         scope: Option<EditScope>,
     ) -> Result<Id, String> {
@@ -307,7 +317,7 @@ impl Editor {
         scope: Option<EditScope>,
         session: &mut Session,
         object: Id,
-        primitive: Primitive,
+        primitive: PrimitiveShape,
     ) -> Result<(), String> {
         let params = json(&ObjectPrimitiveReplace { object, primitive })?;
         dispatch_in(scope, session, OBJECT_PRIMITIVE_REPLACE_ID, &params).map(|_| ())
@@ -342,7 +352,7 @@ impl Editor {
     }
 
     /// Selects the node a create command returned and marks the editor as initialised.
-    fn select_created(&mut self, id: Option<Id>) {
+    pub(super) fn select_created(&mut self, id: Option<Id>) {
         let Some(id) = id else {
             return;
         };

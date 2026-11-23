@@ -11,6 +11,22 @@ pub(crate) const STATE_PREFIX: &str = "STATE:";
 /// that merely mentions the word keeps it.
 pub(crate) const ENTRY_LABELS: &[&str] = &["Rules", "Why", "Shape", "Done", "Commits"];
 
+/// The label of the `files:` hint, which the entry format writes in lower case.
+pub(crate) const FILES_LABEL: &str = "files";
+
+/// The spelling the entry format declares for a label typed in any case.
+///
+/// Reading ignores case — an entry written `shape:` is still the `Shape` field, so a gate that
+/// refused to see it would lose the body — but writing does not: the file carries one spelling per
+/// label, and a command that accepted `--field shape` must land `Shape:` rather than teach the plan
+/// a second one (P21).
+pub(crate) fn canonical_label(label: &str) -> Option<&'static str> {
+    if label.eq_ignore_ascii_case(FILES_LABEL) {
+        return Some(FILES_LABEL);
+    }
+    ENTRY_LABELS.iter().copied().find(|known| known.eq_ignore_ascii_case(label))
+}
+
 /// The keys the `STATE:` line carries. Anything else is a key nobody reads, and a plan that grows
 /// one by accident is a plan whose owner believes something is checked that is not.
 pub(crate) const STATE_KEYS: &[&str] = &["milestone", "phase", "task", "state", "base", "updated"];

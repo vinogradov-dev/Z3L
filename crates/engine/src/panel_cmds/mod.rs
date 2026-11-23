@@ -9,6 +9,7 @@
 //! Changes when: a panel command area is added, split or removed.
 
 mod banding;
+mod fill;
 mod machining;
 mod panel;
 
@@ -26,6 +27,9 @@ pub use banding::{
     PanelBowClear, PanelBowSet, PanelCornerBandingClear, PanelCornerBandingSet, PanelCornerClear, PanelCornerSet,
     PanelEdgeBandingClear, PanelEdgeBandingSet, PanelRingBandingClear, PanelRingBandingSet,
 };
+
+pub(crate) use fill::FILL;
+pub use fill::{FILL_ID, FILL_LABEL, PanelFill};
 
 pub(crate) use machining::{MACHINING_ADD, MACHINING_MOVE, MACHINING_REMOVE, MACHINING_UPDATE};
 pub use machining::{

@@ -4,14 +4,17 @@ use std::sync::Arc;
 
 use catalog::Directory;
 use geom::Contact;
-use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError};
+use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError, WorkshopProfile};
 use param::EdgeBandProfile;
 use serde_json::Value;
+use thiserror::Error;
 
+use crate::batch::{self, BatchEffect, BatchOptions, BatchReport, BatchStep};
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
 use crate::no_contact::NoContact;
 use crate::preview::Preview;
+use crate::read::{self, Query, QueryError};
 use crate::resolve;
 
 /// One edit by the user — a drag or a run of keystrokes — as a single undo entry.
@@ -21,6 +24,17 @@ use crate::resolve;
 /// hand touched it instead of the frame before the last one (ADR 0092).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EditScope(u64);
+
+/// Why the product a caller named cannot be opened.
+///
+/// A refusal here writes nothing: opening is session view state, so an id that is not a product is
+/// the only way the act fails, and the sentence is the one both doors print.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("no product has id {id}; name a product of the scene")]
+pub struct OpenProductError {
+    /// The id that is not a product of the document.
+    pub id: Id,
+}
 
 /// The edit scope that is open right now, and whether it already owns an undo entry.
 #[derive(Clone, Copy, Debug)]
@@ -54,12 +68,55 @@ pub struct Session {
     /// installed keeps the world-box reading, which is what the document did before the port existed
     /// (ADR 0179).
     contact: Arc<dyn Contact>,
+    /// The workshop's own numbers the inspector reads.
+    ///
+    /// Settings and never document data (`PROJECT.md`, §Domain specifications): the scene file does
+    /// not carry it, so the same document opened in another shop is measured by that shop's gaps and
+    /// sheet. The shell seeds it from the workspace settings (J12); a session born without one uses
+    /// the record's defaults.
+    profile: WorkshopProfile,
     /// The one product the user is working in, or `None` while every product is closed.
     ///
     /// Openness is view state per session (ADR 0098, ADR 0029): it is opened and closed by a view
     /// operation, never by a command and never written to the scene file. A tab owns its session,
     /// so two tabs keep two different products open.
     active_product: Option<Id>,
+    /// What an agent attached to this session may do with the document; see [`AgentMode`].
+    ///
+    /// The mode is view state (ADR 0029, ADR 0190), so it is never serialised, never enters the
+    /// history and dies with the session. A headless session is created in [`AgentMode::Build`],
+    /// because a process that started a tool server made that choice by starting it; the window's
+    /// tab sets its own mode on creation, and that mode starts at [`AgentMode::Plan`].
+    agent: AgentMode,
+}
+
+/// What an agent attached to a session may do with the document it is looking at.
+///
+/// Two modes, held by the session and switched by the person, never by the model (ADR 0190):
+/// [`AgentMode::Plan`] answers every agent batch with the dry run the command line already has, so
+/// the person reads what *would* land, and [`AgentMode::Build`] lets it land as one undo entry.
+/// The switch gates the agent doors — the tool server, the attached channel and a chat turn — and
+/// never the person's own commands, which dispatch straight into the session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentMode {
+    /// The agent answers with a plan: the same commands run on a copy and nothing is written.
+    #[default]
+    Plan,
+    /// The agent's batch lands, as one undo entry per call.
+    Build,
+}
+
+impl AgentMode {
+    /// The word the wire and the panel print for this mode.
+    ///
+    /// It is English because a tool answer is a contract a model reads, not a sentence the
+    /// interface translates; the panel draws its own words from `text::Message` (ADR 0135).
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Plan => "plan",
+            Self::Build => "build",
+        }
+    }
 }
 
 impl Session {
@@ -86,7 +143,9 @@ impl Session {
             next_scope: 0,
             preview: Preview::new(),
             contact: Arc::new(NoContact),
+            profile: WorkshopProfile::default(),
             active_product: None,
+            agent: AgentMode::Build,
         }
     }
 
@@ -102,6 +161,32 @@ impl Session {
     /// The contact adapter this session measures a body with.
     pub fn contact(&self) -> &dyn Contact {
         &*self.contact
+    }
+
+    /// The workshop's numbers the inspector reads, as the workspace settings will seed them.
+    pub fn profile(&self) -> &WorkshopProfile {
+        &self.profile
+    }
+
+    /// Replaces the workshop's numbers: a setting changes, no revision and no undo entry.
+    pub fn set_profile(&mut self, profile: WorkshopProfile) {
+        self.profile = profile;
+    }
+
+    /// The same session reading `profile` instead of the record's defaults.
+    pub fn with_profile(mut self, profile: WorkshopProfile) -> Self {
+        self.profile = profile;
+        self
+    }
+
+    /// The mistakes the rules can prove, in the report's stable order, writing nothing.
+    ///
+    /// The pass reads the document, the catalogue, the profile and the contact adapter the session
+    /// already holds, so the tool, the command line and the panel cannot disagree about a finding
+    /// (ADR 0191). It is a derivation like [`Session::panel_diagnostics`]: no revision moves and the
+    /// history never sees it.
+    pub fn inspect(&self) -> Vec<crate::inspect::Finding> {
+        crate::inspect::inspect(&self.project, &self.directory, &self.profile, &*self.contact)
     }
 
     /// The one open product, or `None` when every product is closed (ADR 0098).
@@ -125,6 +210,16 @@ impl Session {
         true
     }
 
+    /// Opens the product a caller named, or says why the id is not one.
+    ///
+    /// A door that is not the window — the command line's `--product` and the tool surface's
+    /// `product` field — has no double click to point at, so it names an id and needs one sentence
+    /// when the id is not a product. The rule stays [`Session::open_product`]'s: one product is
+    /// open, opening replaces the previous one, and nothing of the document moves (ADR 0098).
+    pub fn open_named_product(&mut self, id: Id) -> Result<(), OpenProductError> {
+        if self.open_product(id) { Ok(()) } else { Err(OpenProductError { id }) }
+    }
+
     /// Closes the open product, so no product is being worked in.
     pub fn close_product(&mut self) {
         self.active_product = None;
@@ -141,6 +236,16 @@ impl Session {
         {
             self.active_product = None;
         }
+    }
+
+    /// What an agent attached to this session may do with the document (ADR 0190).
+    pub const fn agent_mode(&self) -> AgentMode {
+        self.agent
+    }
+
+    /// Switches the agent's mode. This is the person's act, and it writes no document field.
+    pub fn set_agent_mode(&mut self, mode: AgentMode) {
+        self.agent = mode;
     }
 
     /// The current document. Commands are the only way to mutate it.
@@ -233,6 +338,16 @@ impl Session {
     /// Resolves the derived issues of one panel against the session directory.
     pub fn panel_diagnostics(&self, panel_id: Id) -> Vec<PanelDiagnostic> {
         diagnose_panel(&self.project, &self.directory, panel_id)
+    }
+
+    /// Answers one question about the scene, reading it and writing nothing.
+    ///
+    /// The five questions are the read model of [`Query`] and every answer reuses the derivation
+    /// that already owns it, so a headless caller, the assistant and the window cannot disagree
+    /// about what the document holds. A question never enters the history and never moves the
+    /// revision: [`Session::can_undo`] and `project().revision()` are the same after it as before.
+    pub fn read(&self, query: Query) -> Result<Value, QueryError> {
+        read::answer(self, query)
     }
 
     /// Whether an earlier document state can be restored.
@@ -344,19 +459,185 @@ impl Session {
         Ok(outcome)
     }
 
+    /// Runs a batch of commands as one operation and reports what it created, changed and removed.
+    ///
+    /// The steps run in order inside one edit scope, so a batch that lands is one undo entry
+    /// (ADR 0183). They run on a copy of the document, and the copy is installed only when the batch
+    /// may land, which is what keeps the promises of ADR 0198 honest: an all-or-nothing batch that
+    /// refuses leaves the document — revision, history, saved marker — exactly as it was, and a
+    /// `dry_run` answers with the same report while writing nothing at all.
+    ///
+    /// A batch that is not atomic installs the steps that ran before a refusal and reports
+    /// [`BatchEffect::PartlyLanded`], instead of claiming the whole list applied. A `dry_run` wins
+    /// over both: nothing is installed, so [`BatchReport::effect`] says `Planned` and the report is
+    /// what would have landed.
+    pub fn batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(None, steps, options)
+    }
+
+    /// Runs a batch as part of an open edit, so the whole edit is one undo entry.
+    ///
+    /// This is what a chat turn needs (ADR 0187): several answers of one message land inside one
+    /// scope, so `undo` takes the whole message back in one step. The scope is a token minted by
+    /// [`Session::edit_scope`]; a scope that is not the open one starts a fresh entry instead of
+    /// merging into history it does not own, exactly as [`Session::dispatch_in`] does.
+    pub fn batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The one batch path, with the scope it may merge into, or `None` for its own entry.
+    fn batch_in_scope(&mut self, scope: Option<EditScope>, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        let mut trial = self.trial();
+        let reports = batch::run(&mut trial, steps);
+        let refused = reports.iter().any(|step| step.refusal().is_some());
+        let applied_any = reports.iter().any(|step| step.refusal().is_none());
+        let effect = if options.is_dry_run() {
+            BatchEffect::Planned
+        } else if !refused {
+            BatchEffect::Landed
+        } else if applied_any && !options.is_atomic() {
+            BatchEffect::PartlyLanded
+        } else {
+            BatchEffect::RolledBack
+        };
+        // The document the batch started from is still this session's: the trial is the only one
+        // that ran, so the diff needs no copy of the state before the batch.
+        let report = BatchReport::new(effect, reports, &self.project, trial.project());
+        if report.landed() && report.content_changed() {
+            // A step that made a piece left it open on the copy, exactly as one dispatch does
+            // (X112); the report carries the document, so the session takes the view state back
+            // from the trial along with it.
+            let open_product = trial.active_product;
+            self.land(trial.project, scope);
+            self.active_product = open_product;
+            self.retain_active_product();
+        }
+        report
+    }
+
+    /// Runs a batch an agent asked for, in the mode the person left the session in (ADR 0190).
+    ///
+    /// It is the one dispatcher of the agent doors: the tool server, the attached channel and a
+    /// chat turn all come through here, so a session in [`AgentMode::Plan`] answers every one of
+    /// them with the dry run and nothing else can be made to write. In [`AgentMode::Build`] the
+    /// request's own options stand, `atomic` and `dry_run` included.
+    ///
+    /// The person's own dispatch is deliberately not this call: a switch that silenced the
+    /// person's own field would be a mode over the whole editor, and ADR 0190 makes it a switch
+    /// over the agent.
+    pub fn agent_batch(&mut self, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(None, steps, options)
+    }
+
+    /// The same for a turn that lands several answers as one undo entry.
+    ///
+    /// A chat message is one entry (ADR 0187), so the shell mints one scope per turn and hands every
+    /// batch of that turn to this call: the first one pushes the state before the message and the
+    /// rest replace the document inside the same entry.
+    pub fn agent_batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
+        self.agent_batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// The agent's one batch path, in the person's mode and possibly inside an edit scope.
+    fn agent_batch_in_scope(
+        &mut self,
+        scope: Option<EditScope>,
+        steps: &[BatchStep],
+        options: BatchOptions,
+    ) -> BatchReport {
+        let options = match self.agent {
+            AgentMode::Build => options,
+            AgentMode::Plan => options.dry_run(true),
+        };
+        self.batch_in_scope(scope, steps, options)
+    }
+
+    /// A copy of this session for a batch to run in before anything lands.
+    ///
+    /// It shares the directory and the contact adapter (both are `Arc`s) and starts from the same
+    /// document, saved marker and open product, with an empty history: a batch measures exactly what
+    /// the window measures, and its own history is thrown away with the copy. The copy costs the
+    /// document twice — once as content and once as the saved marker the session keeps beside it —
+    /// which a turn of many commands pays once.
+    fn trial(&self) -> Self {
+        Self {
+            project: self.project.clone(),
+            saved_project: self.saved_project.clone(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            dirty: self.dirty,
+            directory: Arc::clone(&self.directory),
+            directory_version: self.directory_version,
+            edit: None,
+            next_scope: self.next_scope,
+            profile: WorkshopProfile::default(),
+            preview: Preview::new(),
+            contact: Arc::clone(&self.contact),
+            active_product: self.active_product,
+            agent: self.agent,
+        }
+    }
+
+    /// Installs a batch's document as one undo entry.
+    ///
+    /// Installing is the batch's only write: the state the batch started from becomes the entry
+    /// `undo` restores, the redo branch the batch invalidates is dropped, the saved marker decides
+    /// whether the document is dirty, and a product the batch deleted stops being the open one.
+    ///
+    /// A batch is its own entry, so it closes an edit scope that happened to be open, the way a plain
+    /// dispatch does: a drag that lands afterwards must not merge into the entry this batch pushed,
+    /// or one undo would take the person's drag and somebody else's batch back together. A batch that
+    /// was handed a scope which is already open and holds the state before the turn merges into it
+    /// instead, which is how one message stays one entry (ADR 0187).
+    fn land(&mut self, project: Project, scope: Option<EditScope>) {
+        let merged = matches!(
+            (scope, self.edit),
+            (Some(scope), Some(open)) if open.scope == scope && open.snapshot_pushed && !self.undo.is_empty()
+        );
+        let previous = std::mem::replace(&mut self.project, project);
+        if !merged {
+            // The entry holds the state before this batch; a scope that was handed in stays open so
+            // the next batch of the same turn merges into it.
+            self.edit = scope.map(|scope| OpenEdit { scope, snapshot_pushed: true });
+            self.undo.push(previous);
+            self.redo.clear();
+        }
+        self.dirty = !self.project.same_content(&self.saved_project);
+        self.retain_active_product();
+    }
+
     /// Runs one command on a copy of the document and installs the result.
     ///
     /// Returns the command's outcome and the document as it was before it, which is what the history
-    /// keeps; a failed command leaves the current document untouched. The creation guard is asked
-    /// after the command ran on the copy and before the copy is installed, so a furniture part that
-    /// no open product may receive writes nothing and records no history (ADR 0098).
+    /// keeps; a failed command leaves the current document untouched. The command's own `run` is the
+    /// only gate: whether a piece is open is the interface's question, asked by the surfaces that
+    /// offer the command, so a caller that names a product may write in it (ADR 0226). A command
+    /// that creates a product leaves it open, because making a frame is one act with opening it
+    /// (ADR 0100, X112).
     fn run(&mut self, id: &str, params: &Value) -> Result<(CommandOutcome, Project), CommandError> {
         let spec = CommandRegistry::new().get(id).ok_or_else(|| CommandError::UnknownCommand { id: id.to_owned() })?;
         let mut working = self.project.clone();
         let outcome = spec.run(&mut working, &self.directory, params, &*self.contact)?;
-        spec.creation_refusal(self, params).map_err(|refusal| CommandError::creation(spec.id(), refusal))?;
         let previous = std::mem::replace(&mut self.project, working);
+        self.follow_created_product(&outcome);
         Ok((outcome, previous))
+    }
+
+    /// Points the session at the product a command just created, in the same act (ADR 0100).
+    ///
+    /// A frame is created, opened and drawn as one step (ADR 0100), and a door that is not the
+    /// window has no second act to take: a caller that made a piece over the command line or the
+    /// tool surface could not open it, so the first part after it was refused although the answer
+    /// held everything it needed (X112). The document is asked whether the node the command made is
+    /// a product rather than a list of the commands that create one, so a creation path that
+    /// arrives later follows the same rule.
+    fn follow_created_product(&mut self, outcome: &CommandOutcome) {
+        let Some(id) = outcome.created_id() else {
+            return;
+        };
+        if self.project.container(id).is_some_and(|container| container.is_product()) {
+            self.active_product = Some(id);
+        }
     }
 
     /// Pushes the state before a command and drops the redo branch it invalidates.
@@ -401,11 +682,12 @@ impl Session {
 mod tests {
     use super::*;
 
+    use crate::batch::{BatchEffect, BatchOptions, BatchStep};
     use model::{
         ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
-        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, MachiningAnchor, MachiningParams, PanelContourError,
-        PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue, RectCorner, RectEdge,
-        Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
+        PanelContourError, PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue,
+        RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -416,7 +698,7 @@ mod tests {
     };
     use units::Length;
 
-    use crate::class_rules::{ClassRefusal, CreationRefusal, Dimension};
+    use crate::class_rules::{ClassRefusal, Dimension};
     use crate::node_cmds::{
         AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup,
         NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany,
@@ -426,8 +708,8 @@ mod tests {
     use crate::panel_cmds::{
         PanelBowClear, PanelBowSet, PanelContourCreate, PanelCornerBandingClear, PanelCornerBandingSet,
         PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMachiningAdd,
-        PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear,
-        PanelRingBandingSet,
+        PanelMachiningUpdate, PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize,
+        PanelRingBandingClear, PanelRingBandingSet,
     };
 
     fn sample_session() -> Session {
@@ -453,6 +735,26 @@ mod tests {
             outline: None,
             bevels: Vec::new(),
         }
+    }
+
+    /// A reference to what the step named `side` made.
+    fn side_reference() -> Value {
+        serde_json::json!({ "$ref": "side" })
+    }
+
+    /// The banding request that bands the bottom edge of some panel: a typed request, because the
+    /// only thing a reference changes is the id the `panel` field holds.
+    fn banding_request(panel: Value) -> Value {
+        let mut request = json_params(&PanelEdgeBandingSet {
+            panel: Id::new(1).expect("a placeholder id"),
+            edge: RectEdge::Bottom.id(),
+            material: sample_edge_material_id(),
+            included_in_size: true,
+        });
+        if let Some(object) = request.as_object_mut() {
+            object.insert("panel".to_owned(), panel);
+        }
+        request
     }
 
     fn cutout_request(panel: Id, shape: CutoutShape, depth: CutoutDepth, entry: FaceSide) -> PanelMachiningAdd {
@@ -517,31 +819,28 @@ mod tests {
     }
 
     #[test]
-    fn a_furniture_part_needs_the_open_product_and_names_why_not() {
-        // No product at all: the editor asks for one first.
+    fn a_part_is_written_where_its_parameters_name_and_the_interface_asks_for_the_open_product() {
+        // The command's parameters decide where a part is written: a caller that names a container
+        // writes there, whether or not a piece is open. The open product is the *button's* rule, so
+        // the same request is refused by `enabled` and accepted by the dispatch (ADR 0226).
         let mut session = sample_session();
-        let before = session.project().revision();
-        let params = json_params(&panel_create(&session, "Back"));
-        assert!(!CommandRegistry::new().get("panel.create").expect("registered").enabled(&session, &params));
-        assert!(matches!(
-            session.dispatch("panel.create", &params),
-            Err(CommandError::CreationRefused { command: "panel.create", refusal: CreationRefusal::NoProductOpen })
-        ));
-        assert_eq!(session.project().revision(), before, "a refusal writes nothing");
-        assert!(!session.can_undo(), "a refusal records no history");
-
-        // The open product does not own the root: the target is outside it.
-        let mut session = product_session();
         let root = session.project().root().id();
-        let at_root = json_params(&PanelCreate { parent: root, ..panel_create(&session, "Back") });
-        assert!(!CommandRegistry::new().get("panel.create").expect("registered").enabled(&session, &at_root));
-        assert!(matches!(
-            session.dispatch("panel.create", &at_root),
-            Err(CommandError::CreationRefused { command: "panel.create", refusal: CreationRefusal::ProductClosed })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        let params = json_params(&PanelCreate { parent: root, ..panel_create(&session, "Back") });
+        let spec = CommandRegistry::new().get("panel.create").expect("registered");
+        assert!(!spec.enabled(&session, &params), "the button waits for an open product");
+        let before = session.project().revision();
+        let id = session
+            .dispatch("panel.create", &params)
+            .expect("a caller that names its parent writes")
+            .created_id()
+            .expect("a panel id");
+        assert_eq!(session.project().parent_of(id), Some(root));
+        assert!(session.project().revision() > before, "the write is the command's own");
+        session.undo().expect("one undo step");
+        assert_eq!(session.project().panel(id), None, "one undo takes the whole creation back");
 
-        // A second product is closed while the first is open, so its parts wait too.
+        // A second product is closed while the first is open: its parts wait for the interface, and a
+        // caller that names that piece writes in it.
         let (mut project, first) = sample_product_project();
         let root = project.root().id();
         let envelope = Envelope::new(
@@ -556,24 +855,34 @@ mod tests {
         let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(second), "the second product is open");
         let closed = json_params(&PanelCreate { parent: first, ..panel_create(&session, "Back") });
-        assert!(matches!(
-            session.dispatch("panel.create", &closed),
-            Err(CommandError::CreationRefused { refusal: CreationRefusal::ProductClosed, .. })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        assert!(!spec.enabled(&session, &closed), "the part of a closed piece is not offered");
+        let id = session
+            .dispatch("panel.create", &closed)
+            .expect("the caller named the piece it is sure about")
+            .created_id()
+            .expect("a panel id");
+        assert_eq!(session.project().product_of(id), Some(first), "the part belongs to the piece it named");
 
-        // The contour panel is a part through the same gate.
+        // The contour panel is a part by the same rule: its button waits, its dispatch does not.
         let (mut session, source) = session_with_contour_source();
         let contour = json_params(&contour_panel_create(&session, source, "Top"));
         session.close_product();
-        assert!(matches!(
-            session.dispatch("panel.contour.create", &contour),
-            Err(CommandError::CreationRefused {
-                command: "panel.contour.create",
-                refusal: CreationRefusal::NoProductOpen
-            })
-        ));
-        assert!(!session.can_undo(), "a refusal records no history");
+        let contour_spec = CommandRegistry::new().get("panel.contour.create").expect("registered");
+        assert!(!contour_spec.enabled(&session, &contour), "no open piece, no offered button");
+        assert!(session.dispatch("panel.contour.create", &contour).is_ok(), "a caller names the piece");
+    }
+
+    #[test]
+    fn the_registry_names_what_a_command_builds_and_gates_nothing_by_the_session() {
+        // The level is a description of the node a command makes, printed by a discovery surface. It
+        // is no longer a gate: a command writes where its parameters name, and the open product is
+        // asked by the surfaces that offer it (ADR 0226).
+        let registry = CommandRegistry::new();
+        let create = registry.get("panel.create").expect("registered");
+        assert_eq!(create.creation_level(), Some(Level::Part));
+        assert_eq!(create.creation_word(), Some("part"));
+        assert_eq!(registry.get("panel.contour.create").expect("registered").creation_word(), Some("part"));
+        assert_eq!(registry.get("node.rename").expect("registered").creation_word(), None);
     }
 
     #[test]
@@ -1268,6 +1577,312 @@ mod tests {
     }
 
     #[test]
+    fn a_three_step_batch_is_one_undo_entry() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let first = json_params(&panel_create(&session, "Side"));
+        let second = json_params(&panel_create(&session, "Shelf"));
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let steps = [
+            BatchStep::new("panel.create", first),
+            BatchStep::new("panel.create", second),
+            BatchStep::new("node.rename", rename),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.landed(), "the document holds the batch");
+        assert!(report.refusal().is_none());
+        assert_eq!(report.steps().len(), 3);
+        assert_eq!(report.created().len(), 2, "two panels were created");
+        assert_eq!(report.changed(), [product], "the rename changed the product itself, not its parent");
+        assert!(report.removed().is_empty());
+        assert!(report.content_changed());
+        let container = session.project().container(product).expect("the product is still there");
+        assert_eq!(container.children().len(), 2, "both panels are in the document");
+        assert_eq!(container.name(), "Frame");
+        assert!(session.can_undo() && !session.can_redo());
+
+        session.undo().expect("one undo restores the document");
+        let container = session.project().container(product).expect("the product is still there");
+        assert_eq!(container.children().len(), 0, "one undo removes both panels");
+        assert_eq!(container.name(), "Cabinet", "and takes the rename back");
+        assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_batch_bands_the_panel_an_earlier_step_made() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let banding = banding_request(side_reference());
+        let steps =
+            [BatchStep::new("panel.create", create).named("side"), BatchStep::new("panel.edge_banding.set", banding)];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.refusal().is_none());
+        assert_eq!(report.steps().len(), 2, "both steps ran, so one build is one call");
+        let panel = report.created().first().copied().expect("the batch created the panel");
+        assert_eq!(report.created(), [panel]);
+        assert!(report.changed().is_empty(), "the panel is new, so the report names it created, not changed");
+        let stored = session.project().panel(panel).expect("the panel is in the document");
+        assert_eq!(stored.edge_banding().len(), 1, "the band landed on the node the name meant");
+
+        // Nothing of the reference reaches the document: a saved scene holds ids and no placeholder.
+        let scene = serde_json::to_string(session.project()).expect("the document serializes");
+        assert!(!scene.contains(crate::batch::REFERENCE_KEY), "a saved scene holds no reference");
+
+        // One undo takes the whole build back, the band first and the panel with it.
+        session.undo().expect("one undo restores the document");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+        assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn a_reference_the_batch_cannot_resolve_refuses_and_names_the_step() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+
+        // A step that ran and created no node can be named, and cannot be referred to.
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let made_nothing = [
+            BatchStep::new("node.rename", rename).named("frame"),
+            BatchStep::new("panel.edge_banding.set", banding_request(serde_json::json!({ "$ref": "frame" }))),
+        ];
+        let report = session.batch(&made_nothing, BatchOptions::default());
+        assert_eq!(report.effect(), BatchEffect::RolledBack, "the refusal takes the rename back");
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        assert_eq!(report.steps().len(), 2, "the referring step is the one that refused");
+        let sentence = error.to_string();
+        assert!(sentence.contains("`frame`"), "the refusal names the name: {sentence}");
+        assert!(sentence.contains("step 1"), "and the step that made nothing: {sentence}");
+        assert!(session.project().same_content(&before), "a refused batch writes nothing");
+
+        // A name no step gave, and a name a later step would have given: both are refusals here.
+        let unknown = [
+            BatchStep::new("panel.edge_banding.set", banding_request(serde_json::json!({ "$ref": "ghost" }))),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))).named("ghost"),
+        ];
+        let report = session.batch(&unknown, BatchOptions::default());
+        let (number, error) = report.refusal().expect("the first step refused");
+        assert_eq!(number, 1);
+        let sentence = error.to_string();
+        assert!(sentence.contains("`ghost`"), "the refusal names the name: {sentence}");
+        assert!(sentence.contains("not a name any earlier step"), "and says what a reference needs: {sentence}");
+        assert!(session.project().same_content(&before));
+
+        // A name is claimed once, so a second step may not shadow the first.
+        let duplicate = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))).named("side"),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Shelf"))).named("side"),
+        ];
+        let report = session.batch(&duplicate, BatchOptions::default());
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        let sentence = error.to_string();
+        assert!(sentence.contains("step 1 already named `side`"), "a name is claimed once: {sentence}");
+        assert!(session.project().same_content(&before));
+    }
+
+    #[test]
+    fn a_batch_lands_over_an_open_edit_as_its_own_entry() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let panel = session.dispatch("panel.create", &create).expect("a panel").created_id().expect("an id");
+
+        // A drag is open when the batch arrives: it owns the entry it already pushed.
+        let scope = session.begin_edit();
+        let resize = json_params(&PanelResize { panel, nominal_size: sample_resized_panel_nominal_size() });
+        session.dispatch_in(scope, "panel.resize", &resize).expect("the drag");
+        let rename = json_params(&NodeRename { node: product, name: "Frame".to_owned() });
+        let report = session.batch(&[BatchStep::new("node.rename", rename)], BatchOptions::default());
+        assert_eq!(report.effect(), BatchEffect::Landed);
+
+        session.undo().expect("the first undo takes the batch back alone");
+        assert_eq!(session.project().container(product).expect("product").name(), "Cabinet");
+        assert_eq!(
+            session.project().panel(panel).expect("panel").nominal_size(),
+            sample_resized_panel_nominal_size(),
+            "the drag is still applied"
+        );
+        session.undo().expect("the second undo takes the drag back");
+        assert_eq!(session.project().panel(panel).expect("panel").nominal_size(), sample_panel_nominal_size());
+        session.undo().expect("the third undo takes the panel's creation back");
+        assert!(!session.can_undo(), "the creation, the drag and the batch are three entries");
+    }
+
+    #[test]
+    fn a_refused_step_takes_the_whole_batch_back_and_names_itself() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Shelf"))),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::RolledBack);
+        assert!(!report.landed());
+        assert_eq!(report.steps().len(), 2, "the third step never ran");
+        let (number, error) = report.refusal().expect("the second step refused");
+        assert_eq!(number, 2);
+        let sentence = error.to_string();
+        assert!(sentence.contains("9999"), "the command's own sentence names the node: {sentence}");
+        assert_eq!(report.created().len(), 1, "the report says what the batch would have created");
+        assert!(session.project().same_content(&before), "the document is exactly as it was");
+        assert_eq!(session.project().revision(), before.revision(), "a refused batch moves no revision");
+        assert!(!session.can_undo(), "a refused batch leaves no history");
+        assert!(!session.is_dirty(), "and leaves the saved marker alone");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_dry_run_reports_the_batch_and_writes_nothing() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let steps: Vec<_> = ["Side", "Shelf", "Divider"]
+            .into_iter()
+            .map(|name| BatchStep::new("panel.create", json_params(&panel_create(&session, name))))
+            .collect();
+
+        let report = session.batch(&steps, BatchOptions::ALL_OR_NOTHING.dry_run(true));
+
+        assert_eq!(report.effect(), BatchEffect::Planned);
+        assert!(!report.landed());
+        assert!(report.refusal().is_none());
+        assert_eq!(report.created().len(), 3, "the report names the three creations");
+        assert!(report.content_changed(), "a plan says what would move");
+        assert_eq!(session.project().revision(), before.revision(), "a dry run moves no revision");
+        assert!(!session.can_undo(), "a dry run records no history");
+        assert!(!session.is_dirty());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_session_in_plan_mode_answers_an_agent_batch_with_the_plan() {
+        // ADR 0190: the mode is the person's switch over the agent doors, plan is the dry run the
+        // command line already had, and the person's own dispatch is not what it gates.
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let before = session.project().clone();
+        let steps = [BatchStep::new("panel.create", json_params(&panel_create(&session, "Side")))];
+        session.set_agent_mode(AgentMode::Plan);
+
+        let report = session.agent_batch(&steps, BatchOptions::ALL_OR_NOTHING);
+
+        assert_eq!(report.effect(), BatchEffect::Planned, "a plan says what would land");
+        assert!(!report.landed());
+        assert_eq!(report.created().len(), 1, "and names the node it would create");
+        assert!(session.project().same_content(&before), "and writes nothing");
+        assert_eq!(session.project().revision(), before.revision());
+        assert!(!session.can_undo(), "a plan is not an undo entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+
+        // The person's own command still writes: the switch is the agent's, not the editor's.
+        session
+            .dispatch("panel.create", &json_params(&panel_create(&session, "Side")))
+            .expect("the person's own dispatch is not gated by the agent's mode");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
+
+        session.set_agent_mode(AgentMode::Build);
+        let report = session.agent_batch(&steps, BatchOptions::ALL_OR_NOTHING);
+        assert_eq!(report.effect(), BatchEffect::Landed, "build runs the request's own options");
+        assert!(report.landed());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 2);
+        session.undo().expect("the agent's batch is one entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
+    }
+
+    #[test]
+    fn a_batch_that_keeps_what_it_applies_reports_the_part_it_kept() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::default().atomic(false));
+
+        assert_eq!(report.effect(), BatchEffect::PartlyLanded);
+        assert!(report.landed(), "the step before the refusal stayed");
+        assert_eq!(report.refusal().map(|(number, _)| number), Some(2));
+        assert_eq!(report.created().len(), 1);
+        assert_eq!(session.project().container(product).expect("product").children().len(), 1);
+        session.undo().expect("what the batch kept is one undo entry");
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn a_batch_that_removes_a_node_reports_it_removed() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let create = json_params(&panel_create(&session, "Side"));
+        let panel = session.dispatch("panel.create", &create).expect("a panel").created_id().expect("an id");
+        let steps = [BatchStep::new("node.delete", json_params(&NodeDelete { node: panel }))];
+
+        let report = session.batch(&steps, BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert_eq!(report.removed(), [panel], "the panel is gone by its own id");
+        assert!(report.created().is_empty());
+        assert_eq!(session.project().container(product).expect("product").children().len(), 0);
+    }
+
+    #[test]
+    fn a_dry_run_that_would_refuse_names_the_step_and_moves_nothing() {
+        let mut session = product_session();
+        let before = session.project().clone();
+        let missing = Id::new(9_999).expect("an id");
+        let steps = [
+            BatchStep::new("panel.create", json_params(&panel_create(&session, "Side"))),
+            BatchStep::new(
+                "panel.create",
+                json_params(&PanelCreate { parent: missing, ..panel_create(&session, "Ghost") }),
+            ),
+        ];
+
+        let report = session.batch(&steps, BatchOptions::ALL_OR_NOTHING.dry_run(true));
+
+        assert_eq!(report.effect(), BatchEffect::Planned);
+        assert_eq!(report.refusal().map(|(number, _)| number), Some(2));
+        assert!(session.project().same_content(&before));
+        assert_eq!(session.project().revision(), before.revision());
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn an_empty_batch_leaves_no_entry() {
+        let mut session = product_session();
+
+        let report = session.batch(&[], BatchOptions::default());
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert!(report.steps().is_empty());
+        assert!(!report.content_changed());
+        assert!(!session.can_undo(), "a batch that changed nothing is not a step in the history");
+    }
+
+    #[test]
     fn two_edit_scopes_are_two_undo_entries() {
         let mut session = sample_session();
         let panel_id = Id::new(2).expect("id");
@@ -1554,6 +2169,141 @@ mod tests {
         ));
         assert_eq!(session.project().revision(), Revision::ZERO);
         assert_eq!(session.project().next_id().get(), 5);
+    }
+
+    /// A whole-millimetre cutout rectangle in panel-local coordinates.
+    fn cutout_rect(x: i64, y: i64, width: i64, height: i64) -> CutoutShape {
+        CutoutShape::Rectangle(
+            model::PanelRect::new(
+                millimetres_length(x),
+                millimetres_length(y),
+                millimetres_length(width),
+                millimetres_length(height),
+            )
+            .expect("a cutout rectangle"),
+        )
+    }
+
+    #[test]
+    fn a_cutout_that_splits_the_core_is_refused_without_mutation() {
+        // A through strip across the whole 500 mm width leaves two boards, which is no longer a
+        // panel: the command refuses it before the revision moves or an id is consumed (N30).
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let request = cutout_request(panel_id, cutout_rect(0, 200, 700, 100), CutoutDepth::Through, FaceSide::A);
+        let params = json_params(&request);
+        let registry = CommandRegistry::new();
+        assert!(
+            !registry.get("panel.machining.add").expect("registered").enabled(&session, &params),
+            "the button that chooses the cutout reads the same check"
+        );
+
+        let error = session.dispatch("panel.machining.add", &params).expect_err("a split core");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutSplitsCore { panel }) if panel == panel_id),
+            "the refusal is the split, and it names the panel: {error:?}"
+        );
+        assert!(error.to_string().contains("split the core"), "the sentence names the split: {error}");
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal moves no revision");
+        assert!(!session.can_undo(), "a refusal is no undo entry");
+        assert!(session.project().panel(panel_id).expect("panel").machining().is_empty(), "no record lands");
+    }
+
+    #[test]
+    fn an_update_into_a_splitting_cutout_is_refused_without_mutation() {
+        // The same strip is legal while it is blind; turning it through is the split, and the stored
+        // record keeps the depth it had because the update validates before it writes.
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let strip = cutout_rect(0, 200, 700, 100);
+        let blind =
+            cutout_request(panel_id, strip.clone(), CutoutDepth::Blind { depth: sample_blind_depth() }, FaceSide::A);
+        let machining = session
+            .dispatch("panel.machining.add", &json_params(&blind))
+            .expect("a blind strip")
+            .created_machining_id()
+            .expect("a record");
+        let revision = session.project().revision();
+        let request = PanelMachiningUpdate {
+            panel: panel_id,
+            machining,
+            anchor: MachiningAnchor::face(FaceSide::A),
+            params: MachiningParams::Cutout(Cutout::new(strip, CutoutDepth::Through)),
+        };
+
+        let error = session.dispatch("panel.machining.update", &json_params(&request)).expect_err("a split core");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutSplitsCore { panel }) if panel == panel_id),
+            "the update is refused by the same rule: {error:?}"
+        );
+        assert_eq!(session.project().revision(), revision, "the refused edit moves no revision");
+        let record = session.project().panel(panel_id).expect("panel").machining_by_id(machining).expect("kept");
+        assert_eq!(
+            record.cutout().expect("a cutout").depth(),
+            CutoutDepth::Blind { depth: sample_blind_depth() },
+            "the stored record keeps its depth"
+        );
+        session.undo().expect("one undo");
+        assert!(
+            session.project().panel(panel_id).expect("panel").machining().is_empty(),
+            "the refused update added no history entry of its own"
+        );
+    }
+
+    #[test]
+    fn a_cutout_that_trims_a_narrow_core_is_accepted() {
+        // The material reaches only part of the strip's width: the shaped ring is 220 mm wide, so the
+        // through strip crosses its far edge and trims the end instead of splitting the board. A rule
+        // that measured the nominal box would refuse this, so the check reads the actual core.
+        let mut session = product_session();
+        let product = session.active_product().expect("a product is open");
+        let mm = millimetres_length;
+        let ring = Contour::from_polygon(vec![
+            [Length::ZERO, Length::ZERO],
+            [mm(700), Length::ZERO],
+            [mm(700), mm(220)],
+            [Length::ZERO, mm(220)],
+        ])
+        .expect("a narrow ring");
+        let create = PanelCreate {
+            parent: product,
+            name: "Narrow".to_owned(),
+            nominal_size: PanelNominalSize::new(mm(700), mm(220)).expect("a size"),
+            material: sample_material_id(),
+            placement: Placement::IDENTITY,
+            class: None,
+            outline: Some(PanelOutline::Contour { contour: ring }),
+            bevels: Vec::new(),
+        };
+        let panel_id = session
+            .dispatch("panel.create", &json_params(&create))
+            .expect("a shaped panel")
+            .created_id()
+            .expect("an id");
+        let request = cutout_request(panel_id, cutout_rect(0, 200, 700, 100), CutoutDepth::Through, FaceSide::A);
+
+        session.dispatch("panel.machining.add", &json_params(&request)).expect("a trim is not a split");
+
+        assert_eq!(session.project().panel(panel_id).expect("panel").machining().len(), 1, "the cutout lands");
+    }
+
+    #[test]
+    fn a_cutout_that_removes_the_whole_core_is_refused() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        let request = cutout_request(panel_id, cutout_rect(0, 0, 700, 500), CutoutDepth::Through, FaceSide::A);
+
+        let error = session.dispatch("panel.machining.add", &json_params(&request)).expect_err("no core left");
+
+        assert!(
+            matches!(error, CommandError::Model(ProjectError::CutoutRemovesCore { panel }) if panel == panel_id),
+            "removing every piece is its own refusal: {error:?}"
+        );
+        assert!(error.to_string().contains("remove the whole core"), "the sentence says what is left: {error}");
+        assert_eq!(session.project().revision(), Revision::ZERO, "a refusal moves no revision");
+        assert!(session.project().panel(panel_id).expect("panel").machining().is_empty(), "no record lands");
     }
 
     #[test]
@@ -3122,11 +3872,11 @@ mod tests {
 mod product_tests {
     #![allow(clippy::expect_used)]
 
-    use model::{ClassCode, Envelope};
+    use model::{ClassCode, Envelope, Placement};
     use testkit::{millimetres, sample_catalog, sample_project};
 
     use crate::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
-    use crate::session::Session;
+    use crate::session::{OpenProductError, Session};
 
     fn json_params<T: serde::Serialize>(value: &T) -> serde_json::Value {
         serde_json::to_value(value).expect("params serialize")
@@ -3159,7 +3909,7 @@ mod product_tests {
     #[test]
     fn a_product_is_opened_and_replaced_by_the_next_one_opened() {
         let (mut session, first, second) = session_with_two_products();
-        assert_eq!(session.active_product(), None, "a fresh session works in no product");
+        assert_eq!(session.active_product(), Some(second), "the last piece a command made is the open one");
 
         assert!(session.open_product(first));
         assert_eq!(session.active_product(), Some(first));
@@ -3168,6 +3918,24 @@ mod product_tests {
 
         session.close_product();
         assert_eq!(session.active_product(), None, "closing leaves no product open");
+    }
+
+    #[test]
+    fn a_product_a_command_creates_is_open_in_the_same_act() {
+        // X112: a frame is created, opened and drawn as one step (ADR 0100), so a caller that is
+        // not the window has nothing more to do before the first part.
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let root = session.project().root().id();
+        let params = json_params(&ProductCreate {
+            parent: root,
+            name: "Base cabinet".to_owned(),
+            class: Some(ClassCode::GENERAL_PRODUCT),
+            envelope: box_(),
+            placement: Placement::IDENTITY,
+        });
+
+        let created = session.dispatch(PRODUCT_CREATE_ID, &params).expect("create product").created_id();
+        assert_eq!(created, session.active_product(), "the frame the command made is the open one");
     }
 
     #[test]
@@ -3182,6 +3950,24 @@ mod product_tests {
 
         assert_eq!(session.project().revision(), revision, "opening moves no revision");
         assert_eq!(session.can_undo(), undo_depth, "opening is not an undo entry");
+    }
+
+    #[test]
+    fn a_named_product_opens_or_names_the_id_that_is_not_one() {
+        // The doors that have no pointer — the command line's `--product` and the tool surface's
+        // `product` field — get one sentence for an id that is not a product (ADR 0212).
+        let (mut session, first, second) = session_with_two_products();
+        let root = session.project().root().id();
+
+        assert_eq!(session.open_named_product(first), Ok(()));
+        assert_eq!(session.active_product(), Some(first));
+        assert_eq!(session.open_named_product(second), Ok(()), "another product replaces the first");
+        assert_eq!(session.active_product(), Some(second));
+
+        let refusal = session.open_named_product(root).expect_err("the root is not a product");
+        assert_eq!(refusal, OpenProductError { id: root });
+        assert_eq!(refusal.to_string(), format!("no product has id {root}; name a product of the scene"));
+        assert_eq!(session.active_product(), Some(second), "a refusal leaves the open product alone");
     }
 
     #[test]

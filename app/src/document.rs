@@ -2,9 +2,10 @@
 //!
 //! A document is the whole payload of one tab: the session (project, undo history, dirty marker),
 //! the editor (selection, tools, cards), the evaluation cache and the kernel, the frame evaluated
-//! from them, the split layout and its cameras, the renderer target of this tab and the gizmos that
-//! act on it. Activating another tab swaps this object and nothing else happens — no file is read
-//! or written, so a workspace holds several scenes at once (U45).
+//! from them, the split layout and its cameras, the renderer target of this tab, the gizmos that act
+//! on it and the assistant's conversation for it. Activating another tab swaps this object and
+//! nothing else happens — no file is read or written, so a workspace holds several scenes at once
+//! (U45).
 //!
 //! The split is the one ADR 0029 draws: a document never stores a viewport, a hover highlight or a
 //! window fold. What the *window* decides — the pointer, the armed navigation gesture, the
@@ -31,7 +32,7 @@ use mesh::{EvaluationCache, object_mesh};
 use model::{CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
-use scene::{Camera, Lighting, Polyline, Projection, SELECTION_LINE_COLOR, SceneColors, SceneFrame};
+use scene::{Camera, Lighting, Polyline, Projection, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
 use ui::{
@@ -40,23 +41,26 @@ use ui::{
 };
 use units::Length;
 
+use crate::area_gizmo;
 use crate::box_gizmo::{self, BoxGrips, GripUpdate};
+use crate::chat::Chat;
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
-use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawModifiers};
+use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawInput, DrawModifiers};
 use crate::extrude_gizmo::{ExtrudeEvent, ExtrudeGizmo};
 use crate::file_menu::{FileAction, FileMenu, PreservedSections};
 use crate::fill_gizmo::FillGizmo;
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
-use crate::measure_gizmo::{MeasureGizmo, MeasureModifiers};
+use crate::measure_gizmo::{MeasureGizmo, MeasureInput, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
 use crate::osd;
 use crate::rotate_gizmo::RotateGizmo;
 use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
 use crate::scene_gizmo;
+use crate::scene_writer::SceneWriter;
 use crate::shortcuts::{DraftKey, Shortcuts, drawing_key, take_drawing_shortcut};
 use crate::side_panels::Chrome;
 use crate::strip::{strip_area, view_region};
@@ -88,14 +92,6 @@ const SELECTION_OUTLINE_WIDTH: f32 = 2.25;
 /// Width of the dark underlay below [`SELECTION_OUTLINE_WIDTH`], which keeps the stroke readable
 /// over a light panel.
 const SELECTION_UNDERLAY_WIDTH: f32 = 3.5;
-
-/// The selected-chain stroke, converted from the scene's explicit line colour so the overlay and
-/// the uploaded chain agree.
-const SELECTION_OUTLINE: egui::Color32 = egui::Color32::from_rgb(
-    (SELECTION_LINE_COLOR[0] * 255.0 + 0.5) as u8,
-    (SELECTION_LINE_COLOR[1] * 255.0 + 0.5) as u8,
-    (SELECTION_LINE_COLOR[2] * 255.0 + 0.5) as u8,
-);
 
 /// Dark underlay of the selected-chain stroke, premultiplied so the panel still shows through.
 const SELECTION_UNDERLAY: egui::Color32 = egui::Color32::from_rgba_premultiplied(10, 16, 19, 220);
@@ -269,7 +265,9 @@ impl Target {
 
     /// Uploads one frame of this scene into the target.
     fn upload(&mut self, scene: &SceneFrame) -> Result<(), String> {
-        self.renderer.upload(&self.render_state.device, scene).map_err(|error| error.to_string())
+        self.renderer
+            .upload(&self.render_state.device, &self.render_state.queue, scene)
+            .map_err(|error| error.to_string())
     }
 
     /// Follows the viewport's pixel size; a size the target already has costs nothing.
@@ -335,11 +333,11 @@ pub(crate) struct Document {
     osd: osd::Meter,
     /// The rectangle the tool card drew last frame, so a press on it is chrome and never a pick.
     tool_card_rect: Option<egui::Rect>,
-    /// The point the tool card hangs from, frozen while the pointer is on the card itself.
+    /// The point the tool card hangs from, kept for as long as the card is up.
     ///
-    /// A card that follows the pointer would move away from the hand reaching for its field: the
-    /// anchor is the last point in the scene, and it is kept while the pointer is over the card
-    /// (ADR 0119).
+    /// A card that followed the pointer could never be reached, because the hand that chases it is
+    /// what moves it: the card opens where the hand was and stays there until the tool ends, so its
+    /// fields and its two buttons are within reach (ADR 0119, U115).
     tool_card_anchor: Option<egui::Pos2>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
@@ -371,6 +369,11 @@ pub(crate) struct Document {
     pub(crate) measure_gizmo: MeasureGizmo,
     /// The niche tool's overlay; the cell itself lives in the editor (ADR 0118).
     pub(crate) void_gizmo: VoidGizmo,
+    /// The base node whose overlay holds a contour boolean's preview, while one is armed.
+    ///
+    /// The overlay is the session's and belongs to one node at a time, so the shell remembers whose
+    /// it is and drops it when the mode leaves (G3, ADR 0093).
+    boolean_preview: Option<model::Id>,
     /// The grips of the selected box: four base corners and six faces, one drag each.
     pub(crate) box_grips: BoxGrips,
     /// The rubber band a primary drag on empty space draws, between its press and its release (U103).
@@ -391,6 +394,11 @@ pub(crate) struct Document {
     /// The right-click menu of a running polyline: the kind of the next segment and the way out.
     draft_menu: ui::DraftMenu,
     highlighted: Vec<Id>,
+    /// The base of an armed boolean the last upload marked in the base ink (X99).
+    ///
+    /// The arm is view state, so the frame is re-uploaded when it appears, when the base changes and
+    /// when it is dropped: the ink follows the mode exactly as the selection's does.
+    highlighted_base: Option<Id>,
     /// The selected line chains of the frame last uploaded, already carrying any drag preview, so
     /// the screen-space outline follows a moved path without a frame of lag.
     selected_chains: Vec<Polyline>,
@@ -402,9 +410,48 @@ pub(crate) struct Document {
     uploaded_preview: Option<PreviewKey>,
     /// The failure this tab last reported, drawn by the status bar of the window.
     pub(crate) last_error: Option<String>,
+    /// The nodes the last rebuild could not build, with the sentence each one reports.
+    ///
+    /// A boolean whose tool leaves no solid is a diagnostic on that body, not a dead frame: the
+    /// rest of the scene still draws and still follows the pointer, and this list says which node
+    /// went missing and why (W1).
+    pub(crate) scene_failures: Vec<crate::scene_build::SceneFailure>,
+    /// The sentence the last rebuild reported for its first failure, so the bar can drop it once
+    /// the scene builds again instead of keeping a stale complaint under a working picture.
+    scene_error: Option<String>,
     /// The window's display state, kept so a frame rebuilt outside the viewport draws what the
     /// viewport would.
     display: Display,
+    /// Which snap kinds capture the pointer: the workspace's value, kept live here so a frame reads
+    /// it without a settings lookup and the shell writes the file from it (U116).
+    ///
+    /// It is view state and never document data (ADR 0065): turning a kind off costs no revision and
+    /// leaves no undo entry.
+    snaps: model::SnapKinds,
+    /// How a snap reads a corner above the drawing plane: the workspace's mode, live here for the
+    /// same reason the kinds are (U119).
+    snap_mode: model::SnapMode,
+    /// Whether the kinds or the mode changed since the shell last wrote the workspace settings.
+    snaps_changed: bool,
+    /// This tab's assistant: the conversation, the backend that answers it and the turn in flight.
+    ///
+    /// It sits in the payload because it is the tab's, not the window's: two open scenes hold two
+    /// conversations, and a turn paused by switching tabs resumes where it stopped when the tab is
+    /// in front again (J24). The panel itself — whether it is up and where it sits — is the shell's.
+    pub(crate) chat: Chat,
+}
+
+/// The workspace's snap choice: what may capture the pointer, and how the answer reads.
+///
+/// The two travel together because they are one decision made in two places — a kind's cell in the
+/// Snaps group and the mode's cell beside it — and because the shell writes the whole section of the
+/// workspace file at once (U116, U119).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SnapChoice {
+    /// Which kinds capture the pointer.
+    pub(crate) kinds: model::SnapKinds,
+    /// How a candidate above the tool's plane is read.
+    pub(crate) mode: model::SnapMode,
 }
 
 impl Document {
@@ -427,6 +474,11 @@ impl Document {
         let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), session.active_product())?;
         let scene_bounds = evaluated.bounds;
         let level_bounds = evaluated.levels;
+        // A node the kernel refuses is reported from the first frame, exactly as it is from every
+        // rebuild afterwards (W1).
+        let scene_failures = evaluated.failures.clone();
+        let scene_error = scene_failures.first().map(|failure| failure.message.clone());
+        let last_error = scene_error.clone();
         let fit = home_camera(scene_bounds)?;
         let layout = Layout::new(fit, settings.viewport.opening_view, settings.viewport.style);
         let display = Display::of(&settings.viewport, shell.colors);
@@ -477,6 +529,7 @@ impl Document {
             fill_gizmo: FillGizmo::default(),
             measure_gizmo: MeasureGizmo::default(),
             void_gizmo: VoidGizmo,
+            boolean_preview: None,
             box_grips: BoxGrips::default(),
             band: None,
             distance_fields: DistanceFields::default(),
@@ -486,12 +539,19 @@ impl Document {
             gizmo: gizmo::Gizmo::default(),
             draft_menu: ui::DraftMenu::default(),
             highlighted: Vec::new(),
+            highlighted_base: None,
             selected_chains: Vec::new(),
             uploaded_preview: None,
             level_bounds,
             brackets: Vec::new(),
-            last_error: None,
+            last_error,
+            scene_failures,
+            scene_error,
             display,
+            snaps: settings.snaps.kinds(),
+            snap_mode: settings.snaps.mode,
+            snaps_changed: false,
+            chat: Chat::new(),
         })
     }
 
@@ -518,13 +578,29 @@ impl Document {
 
     /// Writes the scene and marks the document as saved.
     pub(crate) fn save(&mut self, path: &Path) -> Result<(), String> {
-        SceneFile::new(self.session.project().clone())
-            .with_extra(self.extra.clone())
-            .write(path)
-            .map_err(|error| error.to_string())?;
+        SceneWriter::new(path, self.extra.clone()).write(self.session.project())?;
         self.session.mark_saved();
         self.file.set_path(Some(path.to_owned()));
         Ok(())
+    }
+
+    /// The writer a save a caller asked for goes through, or `None` while the scene has no path.
+    ///
+    /// It is the same writer, the same file and the same sections as [`Self::save`]; the channel
+    /// cannot borrow the document itself (the batch holds the session), so it takes the path and the
+    /// sections and writes exactly what the person's *Save* would (X114). A scene that was never
+    /// saved has no file to write, and the caller is told that instead of being given one.
+    pub(crate) fn save_sink(&self) -> Option<SceneWriter> {
+        let path = self.file.path()?;
+        Some(SceneWriter::new(path, self.extra.clone()))
+    }
+
+    /// Marks the document as saved, which is what a file that holds it means.
+    ///
+    /// The path does not move: a save a caller asked for goes to the file the scene already came
+    /// from, and the dirty marker is the one fact the person's tab row and the close question read.
+    pub(crate) fn mark_saved(&mut self) {
+        self.session.mark_saved();
     }
 
     /// The file the scene came from, if it has one.
@@ -680,12 +756,15 @@ impl Document {
         self.file.show(ui)
     }
 
-    /// Re-uploads the frame when the selection moved.
+    /// Re-uploads the frame when the selection or the armed boolean's base moved.
     ///
     /// Selecting is view state, so the revision does not move; the uploaded highlight is the copy
-    /// the last frame was built with, and a difference means the drawn outline is stale.
+    /// the last frame was built with, and a difference means the drawn outline is stale. An armed
+    /// boolean marks its base with its own ink, so arming one is a change to the picture even when
+    /// the selection stands still (X99).
     pub(crate) fn sync_selection(&mut self) -> Result<(), String> {
-        match self.editor.selected_nodes() == self.highlighted {
+        let base = self.editor.boolean_arm().map(|arm| arm.base());
+        match self.editor.selected_nodes() == self.highlighted && base == self.highlighted_base {
             true => Ok(()),
             false => self.upload_scene(),
         }
@@ -700,6 +779,15 @@ impl Document {
         &self.highlighted
     }
 
+    /// The line chains of the frame the last upload built, each with the ink the frame gave it.
+    ///
+    /// This is the frame's own shape list, so a test reads which ring the picture marks as an armed
+    /// boolean's base and which as a picked operand without a GPU (X99).
+    #[cfg(test)]
+    pub(crate) fn highlighted_chains(&self) -> &[Polyline] {
+        &self.selected_chains
+    }
+
     /// The rubber band the last frame drew, or `None` while no drag is live (U103).
     #[cfg(test)]
     pub(crate) fn rubber_band(&self) -> Option<ui::SelectionBand> {
@@ -709,6 +797,16 @@ impl Document {
     /// The frame the last upload built, so a frame test can ask which shapes the viewport drew.
     #[cfg(test)]
     pub(crate) fn frame(&self) -> &SceneFrame {
+        &self.scene
+    }
+
+    /// The frame the viewport draws, for a surface that needs the scene as data rather than as
+    /// pixels.
+    ///
+    /// The render place takes exactly what the viewport shows — the same triangles, the same lights
+    /// and the same camera — so it reads the frame here instead of evaluating a second one
+    /// (`AGENTS.md` §4.2, ADR 0210).
+    pub(crate) fn drawn_frame(&self) -> &SceneFrame {
         &self.scene
     }
 
@@ -763,15 +861,70 @@ impl Document {
         save
     }
 
-    /// Turns the work-plane grid on or off for the tool in front of the person.
+    /// Turns the work-plane grid on or off: the `G` key and the View tab's Snaps group.
     ///
-    /// The key is the shell's, so it is read with the rest of the key table even when no tool runs;
-    /// outside a draft or the ruler the action has nothing to snap and changes nothing. The ruler
-    /// reads the same switch as the drawing tools, because both snap on the one work plane (0051).
+    /// The switch is the workspace's and not a tool's, so the key works with no tool armed and the
+    /// value survives a restart: the shell writes the file whenever a kind changes (U116).
     pub(crate) fn toggle_draw_grid(&mut self) {
-        if self.editor.drawing().is_some() || self.editor.measure().is_some() {
-            self.draw_gizmo.toggle_grid();
+        self.set_snap_kind(model::SnapKind::Grid, !self.snaps.grid);
+    }
+
+    /// Turns every snap kind on or off: the master cell of the View tab's Snaps group.
+    ///
+    /// A press asks for the opposite of what the cell draws: the set goes on unless every kind is
+    /// already on, so a mixed set — one kind switched off by hand — comes back whole in one click
+    /// (U116).
+    pub(crate) fn set_all_snaps(&mut self, on: bool) {
+        if self.snaps.all_on() == on && (on || !self.snaps.any()) {
+            return;
         }
+        self.snaps.set_all(on);
+        self.snaps_changed = true;
+    }
+
+    /// Turns one snap kind on or off, and marks the workspace value as unsaved.
+    pub(crate) fn set_snap_kind(&mut self, kind: model::SnapKind, on: bool) {
+        if self.snaps.enabled(kind) == on {
+            return;
+        }
+        self.snaps.set(kind, on);
+        self.snaps_changed = true;
+    }
+
+    /// Which snap kinds capture the pointer in this tab.
+    pub(crate) const fn snaps(&self) -> model::SnapKinds {
+        self.snaps
+    }
+
+    /// How a snap reads a corner above the drawing plane in this tab.
+    pub(crate) const fn snap_mode(&self) -> model::SnapMode {
+        self.snap_mode
+    }
+
+    /// Makes every snap answer the other way — 2.5D or 3D — and marks the workspace value unsaved.
+    ///
+    /// The mode is a reading of the same candidates, not a kind: it is drawn by one cell of the
+    /// Snaps group and one row of Settings › View, and it survives a restart like the kinds do
+    /// (U119).
+    pub(crate) fn toggle_snap_mode(&mut self) {
+        self.snap_mode = match self.snap_mode {
+            model::SnapMode::Space => model::SnapMode::Foot,
+            model::SnapMode::Foot => model::SnapMode::Space,
+        };
+        self.snaps_changed = true;
+    }
+
+    /// Takes the choice the shell must write into the workspace settings, once.
+    pub(crate) fn take_snaps_change(&mut self) -> Option<SnapChoice> {
+        let changed = core::mem::take(&mut self.snaps_changed);
+        changed.then_some(SnapChoice { kinds: self.snaps, mode: self.snap_mode })
+    }
+
+    /// Installs the workspace's snap choice: a settings section that changed under this tab.
+    pub(crate) fn set_snaps(&mut self, choice: SnapChoice) {
+        self.snaps = choice.kinds;
+        self.snap_mode = choice.mode;
+        self.snaps_changed = false;
     }
 
     /// Removes nodes in one `node.delete.many`, so the whole batch is one undo entry.
@@ -918,6 +1071,7 @@ impl Document {
         let evaluated = evaluate(&mut self.cache, &mut self.kernel, &self.session, self.editor.flags(), product)?;
         self.scene_bounds = evaluated.bounds;
         self.level_bounds = evaluated.levels;
+        self.note_scene_failures(evaluated.failures);
         let mut scene = evaluated.frame;
         self.layout.apply_frame_display(&mut scene);
         self.display.apply(&mut scene);
@@ -935,13 +1089,42 @@ impl Document {
         uploaded
     }
 
+    /// Records the nodes this rebuild could not build and tells the armed boolean about its own.
+    ///
+    /// An armed boolean whose preview the kernel could not turn into a solid is not a result: the
+    /// arm drops its ✓ and keeps the sentence, so Enter refuses instead of storing a step that
+    /// leaves the body undrawable. The arm, the preview and the command ask the document's own
+    /// rule; this is the one part of the answer only the shell can see, because only the shell
+    /// owns the kernel (W1).
+    fn note_scene_failures(&mut self, failures: Vec<crate::scene_build::SceneFailure>) {
+        let message = failures.first().map(|failure| failure.message.clone());
+        match &message {
+            Some(message) => self.last_error = Some(message.clone()),
+            // The scene builds again: the sentence the bar showed for the missing body goes with
+            // it, unless something else has replaced it in the meantime.
+            None if self.last_error == self.scene_error => self.last_error = None,
+            None => {}
+        }
+        self.scene_error = message;
+        if let Some(arm) = self.editor.boolean_arm() {
+            let base = arm.base();
+            if let Some(failure) = failures.iter().find(|failure| failure.id == base) {
+                self.editor.refuse_boolean(failure.message.clone());
+            }
+        }
+        self.scene_failures = failures;
+    }
+
     pub(crate) fn upload_scene(&mut self) -> Result<(), String> {
         let selection = self.editor.selected_nodes();
         let mut geometry = Vec::new();
         for node in self.session.project().top_most_nodes(selection) {
             geometry.extend(self.session.project().geometry_ids_under(node).unwrap_or_default());
         }
-        let frame = self.scene.with_selection_highlight(&geometry);
+        // The base is marked whether or not it is still selected: a click on the tool replaces the
+        // selection, and the frame the result is born in must stay readable (X99).
+        let base = self.editor.boolean_arm().map(|arm| arm.base());
+        let frame = self.scene.with_picks(&geometry, base);
         let frame = match self.preview() {
             Some(Preview::Translation { drawables, delta }) => frame.with_world_translation(drawables, delta),
             Some(Preview::Rotation { drawables, pivot, rotation }) => {
@@ -954,8 +1137,14 @@ impl Document {
             None => frame,
         };
         // Keep the chains of the frame that is about to be uploaded, after every preview, so the
-        // screen-space outline is drawn where the renderer draws the path.
-        self.selected_chains = frame.polylines().iter().filter(|chain| geometry.contains(&chain.id)).cloned().collect();
+        // screen-space outline is drawn where the renderer draws the path. The base is one of them
+        // even when it left the selection, because it is still an operand (X99).
+        self.selected_chains = frame
+            .polylines()
+            .iter()
+            .filter(|chain| base == Some(chain.id) || geometry.contains(&chain.id))
+            .cloned()
+            .collect();
         let started = Instant::now();
         if let Some(target) = self.target.as_mut() {
             target.upload(&frame)?;
@@ -963,6 +1152,7 @@ impl Document {
         self.osd.record_upload(started.elapsed());
         self.highlighted.clear();
         self.highlighted.extend_from_slice(selection);
+        self.highlighted_base = base;
         self.uploaded_preview = self.preview_key();
         Ok(())
     }
@@ -1146,8 +1336,8 @@ impl Document {
 
     /// Closes the running ring and commits it in one step.
     ///
-    /// The only close path: a click on the first draft point, the ribbon's *Close* and the status
-    /// bar's *Close* all end here, so no surface can close a ring and forget to commit it (ADR 0052).
+    /// The only close path: a click on the first draft point and the ribbon's *Close* both end here,
+    /// so no surface can close a ring and forget to commit it (ADR 0052, U115).
     /// The ring is closed before the commit and reopened if the document refuses it, so a refusal
     /// leaves the shape the user drew editable instead of a finished draft that cannot be changed.
     pub(crate) fn close_draft(&mut self, lang: Lang) -> Result<(), String> {
@@ -1190,6 +1380,7 @@ impl Document {
     pub(crate) fn end_drawing(&mut self) -> Result<(), String> {
         self.draw_gizmo.reset();
         self.highlighted.clear();
+        self.highlighted_base = None;
         self.refresh()
     }
 
@@ -1279,18 +1470,20 @@ impl Document {
     ) -> Result<(), String> {
         if self.extrude_gizmo.is_growing() {
             let scope = self.extrude_gizmo.scope();
-            self.editor.extrude_path_in(scope, &mut self.session, object, height, lang)?;
-            self.session.end_edit();
+            self.editor.extrude_in(scope, &mut self.session, object, height, lang)?;
         } else if let Some(top) = top {
             // A cone's ✓ writes both of its numbers into the scope the create opened, so the base
             // and the taper are one entry and the ✓ applies once (ADR 0141).
             let scope = self.extrude_gizmo.scope();
             let primitive = cone_at(self.session.project(), object, height, top)?;
             self.editor.replace_primitive_in(scope, &mut self.session, object, primitive)?;
-            self.session.end_edit();
         } else if extrude_writes(self.extrude_gizmo.committed(), height) {
-            self.editor.set_extrude_height(&mut self.session, object, height)?;
+            // The height joins the scope the pull's body was created in, so a body born from an area
+            // is one undo entry with the height it reaches (G4, ADR 0138).
+            let scope = self.extrude_gizmo.scope();
+            self.editor.set_extrude_height_in(scope, &mut self.session, object, height)?;
         }
+        self.session.end_edit();
         self.extrude_gizmo.cancel();
         self.session.clear_preview();
         self.refresh()
@@ -1585,7 +1778,7 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
-        let card_anchor = self.card_anchor(Some(pointer), card_before);
+        let card_anchor = self.card_anchor(Some(pointer));
         // The point under the pointer names the cell. A pointer that names none — the hand left the
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
         // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
@@ -1797,6 +1990,47 @@ impl Document {
         self.void_gizmo.reset();
     }
 
+    /// Leaves an armed contour boolean and drops the preview it drew; nothing was written.
+    pub(crate) fn cancel_boolean(&mut self) {
+        self.editor.cancel_boolean(&mut self.session);
+        self.boolean_preview = None;
+    }
+
+    /// Rebuilds the boolean's preview from the selection, and drops it when the mode leaves.
+    ///
+    /// The result is the session overlay drawn in place of the base ring, so the person judges the
+    /// picture the ✓ will store and the document never sees it (ADR 0093). It is rebuilt only when
+    /// the picks or the document move, and a refusal keeps the last honest picture off the screen
+    /// and leaves its sentence in the status bar.
+    fn sync_boolean(&mut self, ctx: &egui::Context) {
+        if self.editor.boolean_arm().is_none() {
+            if self.boolean_preview.take().is_some() {
+                self.session.clear_preview();
+            }
+            return;
+        }
+        if self.editor.update_boolean(&mut self.session) {
+            let arm = self.editor.boolean_arm();
+            self.boolean_preview = arm.and_then(|arm| arm.is_ready().then_some(arm.base()));
+            // The bar says what the operation holds and why it draws nothing yet: an armed mode
+            // that only presses a cell leaves the hand guessing which click it waits for (U115).
+            self.last_error = match arm {
+                Some(arm) if !arm.is_ready() => Some(arm.refusal().map(str::to_owned).unwrap_or_else(|| {
+                    Message::BooleanPick.with(ui::language(ctx), [arm.operands().len().saturating_add(1)])
+                })),
+                _ => None,
+            };
+            ctx.request_repaint();
+        }
+    }
+
+    /// Stores the previewed contour boolean as one command (G3).
+    pub(crate) fn commit_boolean(&mut self, lang: ui::Lang) -> Result<(), String> {
+        self.editor.commit_boolean(&mut self.session, lang).map(|_| ())?;
+        self.boolean_preview = None;
+        Ok(())
+    }
+
     /// Feeds the pointer to the armed niche and keeps the reading in the editor's one atom.
     ///
     /// A pointer outside the open product, or a pointer on a widget, leaves the value as it stands:
@@ -1822,6 +2056,62 @@ impl Document {
         if changed {
             ui.ctx().request_repaint();
         }
+    }
+
+    /// Feeds the pointer to the armed area pull and takes the click that starts it.
+    ///
+    /// The pointer names a point in the drawing's own plane; the atom answers the face around it and
+    /// highlights it. A click takes that face: the body is created in a scope of its own and the pull
+    /// arrow adjusts its height in the same scope, so the whole gesture is one undo entry. A face that
+    /// cannot be pulled — one with a hole — writes nothing and says why in the status bar.
+    fn update_area_pull(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        pointer_over_widget: bool,
+    ) {
+        let Some(object) = self.editor.area_pull() else {
+            return;
+        };
+        let pointer = ui.input(|input| input.pointer.latest_pos());
+        let changed = pointer.is_some_and(|pointer| {
+            area_gizmo::point_at(self.session.project(), object, self.scene.camera, rect, pointer)
+                .is_some_and(|point| self.editor.area_measure(self.session.project(), point))
+        });
+        if changed {
+            ui.ctx().request_repaint();
+        }
+        if pointer_over_widget || !response.clicked_by(egui::PointerButton::Primary) {
+            return;
+        }
+        if let Err(error) = self.start_area_pull(ui::language(ui.ctx())) {
+            self.last_error = Some(error);
+        }
+    }
+
+    /// Creates the body the highlighted area names and hands it to the pull arrow.
+    ///
+    /// One `object.area.extrude` in a new edit scope, then the arrow on the body's top face: the ✓
+    /// closes the scope with one undo entry, the ✕ rolls it back and leaves no body behind, and the
+    /// drawing keeps its rings either way (G4).
+    fn start_area_pull(&mut self, lang: text::Lang) -> Result<(), String> {
+        let Some((object, point)) = self.editor.area_pick() else {
+            // Nothing to pull: the sentence says what the pointer rests on, and the document is as it
+            // was, so the tool stays armed for the next click.
+            if let Some(words) = self.editor.area_refusal() {
+                self.last_error = Some(words.text(lang).to_owned());
+            }
+            return Ok(());
+        };
+        let height = self.editor.extrude_height();
+        let scope = self.session.begin_edit();
+        let created = self.editor.extrude_area_in(Some(scope), &mut self.session, object, point, height, lang)?;
+        self.extrude_gizmo.start_created(created, scope, height);
+        if let Err(error) = self.preview_extrude(created, height, None) {
+            self.last_error = Some(error);
+        }
+        self.refresh()
     }
 
     /// Whether this frame's press landed on the tool card rather than on the scene.
@@ -1999,20 +2289,13 @@ impl Document {
     /// it, and a number that leaves the field's range is refused by the field itself, so the preview
     /// keeps the last height the document could hold. A niche's two gaps draw the same card from
     /// `update_fill`, and the inspector draws the same rows from the same draft.
-    fn show_tool_card(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport: egui::Rect,
-        pointer: Option<egui::Pos2>,
-        card_before: Option<egui::Rect>,
-        opacity: u32,
-    ) {
-        let Some(mut view) = self.height_view() else {
+    fn show_tool_card(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, pointer: Option<egui::Pos2>, opacity: u32) {
+        let Some(mut view) = self.card_view(ui::language(ui.ctx())) else {
             // Another mode owns the card this frame — a niche's two gaps were drawn by `update_fill`
             // — and the rectangle is not this path's to clear.
             return;
         };
-        let anchor = self.card_anchor(pointer, card_before);
+        let anchor = self.card_anchor(pointer);
         // An extrusion's pull takes the keyboard when it appears, so its height can be typed without
         // a click; the flag is cleared by the read so the field never holds the focus against the
         // next press. A frame's pull does not: its height is what the hand pulls, and a focused field
@@ -2025,20 +2308,17 @@ impl Document {
         self.apply_tool_outcome(ui.ctx(), reported);
     }
 
-    /// The point the card hangs from: the pointer, or the last scene point while the hand is on the
-    /// card.
+    /// The point the card hangs from: where the hand was when the card opened, and nothing else.
     ///
-    /// A card that followed the pointer would slide out from under the hand reaching for its field,
-    /// so the anchor is frozen across the whole time the pointer is inside the card's rectangle. It
-    /// is the same rule `egui` applies to a tooltip and the one the context menu relies on: a
-    /// floating surface must not move while it is being used.
-    fn card_anchor(&mut self, pointer: Option<egui::Pos2>, card_before: Option<egui::Rect>) -> egui::Pos2 {
-        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
-        if card_before.is_some_and(|card| card.contains(pointer))
-            && let Some(anchor) = self.tool_card_anchor
-        {
+    /// A card that followed the pointer would slide away from the hand reaching for its field — and
+    /// a hand can never catch a surface that moves with it — so the anchor is taken once, when the
+    /// card first draws, and kept until the card closes. It is the rule `egui` applies to a tooltip
+    /// and the one the context menu relies on: a floating surface must not move while it is used.
+    fn card_anchor(&mut self, pointer: Option<egui::Pos2>) -> egui::Pos2 {
+        if let Some(anchor) = self.tool_card_anchor {
             return anchor;
         }
+        let pointer = pointer.or_else(|| self.scene_rect.map(|rect| rect.center())).unwrap_or_default();
         self.tool_card_anchor = Some(pointer);
         pointer
     }
@@ -2067,6 +2347,63 @@ impl Document {
         Some(ToolView::pull(height.millimetres_f64(), top.map(Length::millimetres_f64), range, 3))
     }
 
+    /// The view the card at the pointer draws: a tool's numbers, or a draft's or a contour edit's own
+    /// commit row (U115).
+    ///
+    /// A running draft and a live contour edit ask for no number, so their card is one row that
+    /// names the tool and holds its accept and its drop: the bar reported those two as buttons, and
+    /// the hand that is drawing should not travel to the window's bottom edge to finish. The
+    /// inspector keeps the numbers it already mirrors — `tool_view` — and gains no button row.
+    ///
+    /// The card prints words, so it is built in the person's language: an armed boolean names the
+    /// base its result is born in under the operation's name (X99).
+    pub(crate) fn card_view(&self, lang: ui::Lang) -> Option<ToolView> {
+        if let Some(view) = self.height_view() {
+            return Some(view);
+        }
+        if let Some(draft) = self.editor.drawing() {
+            // A draft the commit would refuse draws no card: a check that answers with a refusal is
+            // worse than no check, and the bar still says what the tool waits for. The draft's own
+            // reading is the rule, so the card and the commit cannot disagree (ADR 0077).
+            if !draft.is_complete() {
+                return None;
+            }
+            return Some(ToolView::actions(
+                Some(draft.tool().label()),
+                ui::ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc },
+            ));
+        }
+        if let Some(arm) = self.editor.boolean_arm() {
+            // A boolean asks for no number: its card is the operation's name and the ✓/✕ pair, and
+            // it draws only once a result is on screen, because a check that answers with a refusal
+            // is worse than no check (ADR 0077).
+            if !arm.is_ready() {
+                return None;
+            }
+            return Some(
+                ToolView::actions(
+                    Some(arm.label()),
+                    ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+                )
+                .with_note(arm.base_note(self.session.project(), lang)),
+            );
+        }
+        self.editor.contour_edit()?;
+        // The corner's motion is the one method of the contour edit: free, or along the segment the
+        // corner starts, and the switch names the state the next drag takes (ADR 0075, U115).
+        let along = self.contour_gizmo.along();
+        Some(ToolView {
+            title: Some(Message::ContourEdit),
+            rows: Vec::new(),
+            toggle: Some(ui::ToolToggle {
+                words: if along { Message::AlongContour } else { Message::FreeMove },
+                on: along,
+            }),
+            commit: ui::ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
+            note: None,
+        })
+    }
+
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
@@ -2083,11 +2420,19 @@ impl Document {
             return Some(ToolView {
                 title: arm.class.label(),
                 rows: distances.rows(),
+                toggle: None,
                 commit: ui::ToolCommit::Gesture,
+                note: None,
             });
         }
         let measured = self.move_distances.as_ref()?;
-        Some(ToolView { title: None, rows: measured.distances.rows(), commit: ui::ToolCommit::Gesture })
+        Some(ToolView {
+            title: None,
+            rows: measured.distances.rows(),
+            toggle: None,
+            commit: ui::ToolCommit::Gesture,
+            note: None,
+        })
     }
 
     /// Takes what a tool's fields committed into the document's armed state.
@@ -2096,8 +2441,14 @@ impl Document {
     /// or re-previews the body, and a gap goes through the distance card's own `apply`, so one number
     /// has one refusal whichever surface the maker typed it into. The ✓ and the ✕ are the shell's
     /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
-    fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
+    pub(crate) fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
         let mut repull = false;
+        // The contour edit's one method is a switch, not a number: its press flips the motion the
+        // next drag takes and writes nothing (U115).
+        if reported.toggle && self.editor.contour_edit().is_some() {
+            self.contour_gizmo.toggle_along();
+            ctx.request_repaint();
+        }
         for edit in &reported.edits {
             let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
                 continue;
@@ -2152,7 +2503,25 @@ impl Document {
         }
         match reported.action {
             Some(ToolAction::Apply) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.boolean_arm().is_some() {
+                    // A boolean's check is its one command: the result the frame shows becomes an
+                    // object and its sources are consumed, all in one undo entry (G3).
+                    if let Err(error) = self.commit_boolean(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.drawing().is_some() {
+                    // A draft's check is its finish: the same path the ribbon's *Close* and a click on
+                    // the first point end in, so one commit has one home (ADR 0052).
+                    if let Err(error) = self.commit_drawing(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.contour_edit().is_some() {
+                    // A contour edit's check is its one command: the working copy becomes the panel's
+                    // outline, the object's contour or the machining record, as one undo entry.
+                    if let Err(error) = self.apply_contour_edit() {
+                        self.last_error = Some(error);
+                    }
+                } else if self.editor.box_draft().is_some() {
                     if let Err(error) = self.finish_box(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
@@ -2164,7 +2533,16 @@ impl Document {
                 }
             }
             Some(ToolAction::Cancel) => {
-                if self.editor.box_draft().is_some() {
+                if self.editor.boolean_arm().is_some() {
+                    // The cross leaves the boolean and drops its preview, exactly as Escape does:
+                    // the pair on the card and the key are one way out, and neither writes.
+                    self.cancel_boolean();
+                } else if self.editor.drawing().is_some() {
+                    // The cross drops the draft and ends the tool; the document never changed.
+                    self.cancel_drawing();
+                } else if self.editor.contour_edit().is_some() {
+                    self.cancel_contour_edit();
+                } else if self.editor.box_draft().is_some() {
                     self.cancel_box();
                 } else {
                     self.cancel_extrude();
@@ -2339,6 +2717,11 @@ impl Document {
         // which is the one on screen while the card stays open. The plates of the point being placed
         // are the same kind of surface: a press on a number is the number's, never a point (ADR 0126).
         let card_before = self.tool_card_rect;
+        // The card's anchor lives as long as the card does: a frame with no card behind it forgets
+        // where the last one opened, so the next card appears at the hand that armed its tool.
+        if card_before.is_none() {
+            self.tool_card_anchor = None;
+        }
         let pointer_on_chrome = dismiss_press
             || pointer.is_some_and(|pointer| {
                 chrome.covers(pointer)
@@ -2474,6 +2857,11 @@ impl Document {
         // The niche names the empty space under the pointer and creates nothing; it owns the press
         // the same way the ruler does, so a click never selects through it (ADR 0118).
         let voiding = interactive && !pointer_on_chrome && self.editor.void_armed();
+        // The area pull owns the next click while it is armed and before its body exists: the pointer
+        // names a face of the drawing the Extrude cell was pressed on, and the click takes it (G4).
+        // Once the body exists the pull arrow owns the pointer, so this yields to `pulling`.
+        let area_pulling =
+            interactive && !pointer_on_chrome && self.editor.area_pull().is_some() && !self.extrude_gizmo.is_active();
         // An armed navigation gesture owns a primary-button drag, but not the other tools: while a
         // contour edit, a draft or a sub-object mode is live, that mode keeps the pointer.
         let navigation = shell.cluster.navigation;
@@ -2484,12 +2872,15 @@ impl Document {
             && !pulling
             && !filling
             && !measuring
-            && !voiding;
-        let mesh_object = if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding {
-            None
-        } else {
-            self.editor.mesh_edit().map(|edit| edit.object())
-        };
+            && !voiding
+            && !area_pulling;
+        let mesh_object =
+            if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding || area_pulling
+            {
+                None
+            } else {
+                self.editor.mesh_edit().map(|edit| edit.object())
+            };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -2502,6 +2893,8 @@ impl Document {
                 project: self.session.project(),
                 object,
                 vertices: &mesh_vertices,
+                kinds: self.snaps,
+                sight: self.editor.flags().sight(),
             };
             self.vertex_gizmo.update(ui, &response, rect, target, pointer_over_widget, handle_length)
         } else {
@@ -2524,12 +2917,14 @@ impl Document {
             // A latched move keeps following the pointer over its own plates, which are the one
             // surface that belongs to the move rather than to the scene.
             if contour_editing || self.contour_gizmo.is_latched() {
+                let input = contour_gizmo::ContourInput { kinds: self.snaps, mode: self.snap_mode };
                 let action = match self.contour_gizmo.update(
                     &response,
                     rect,
                     self.scene.camera,
                     self.session.project(),
                     &mut self.editor,
+                    input,
                 ) {
                     Ok(action) => action,
                     Err(error) => {
@@ -2550,13 +2945,20 @@ impl Document {
                 axis_lock: ui.input(|input| input.modifiers.shift),
                 ignore_snaps: ui.input(|input| input.modifiers.alt),
             };
+            let input = DrawInput {
+                kinds: self.snaps,
+                mode: self.snap_mode,
+                contact: self.session.contact(),
+                pointer_over_widget,
+                modifiers,
+            };
             let action = match self.draw_gizmo.update(
                 &response,
                 rect,
                 self.scene.camera,
+                self.session.project(),
                 &mut self.editor,
-                pointer_over_widget,
-                modifiers,
+                input,
             ) {
                 Ok(action) => action,
                 Err(error) => {
@@ -2595,14 +2997,10 @@ impl Document {
             };
             let changed = self.measure_gizmo.update(
                 &response,
-                rect,
-                self.scene.camera,
                 self.session.project(),
                 self.session.contact(),
                 &mut self.editor,
-                self.draw_gizmo.grid(),
-                pointer_over_widget,
-                modifiers,
+                MeasureInput { camera: self.scene.camera, rect, kinds: self.snaps, pointer_over_widget, modifiers },
             );
             if changed {
                 ui.ctx().request_repaint();
@@ -2614,6 +3012,14 @@ impl Document {
         if voiding {
             self.update_void(ui, &response, rect, pointer_over_widget);
         }
+
+        if area_pulling {
+            self.update_area_pull(ui, &response, rect, pointer_over_widget);
+        }
+
+        // An armed contour boolean shows its result in place of the base ring; the picks are the
+        // selection, so an ordinary click and a Shift-click pick operands (G3).
+        self.sync_boolean(ui.ctx());
 
         if pulling {
             // The pull reads the pointer itself: a press on the arrow starts a drag, the release
@@ -2646,6 +3052,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !area_pulling
             && !self.translate_gizmo.is_following()
             && self.grip_target().is_some();
         if gripping {
@@ -2698,6 +3105,7 @@ impl Document {
                 || filling
                 || measuring
                 || voiding
+                || area_pulling
                 || mesh_object.is_some()
                 || locked_selection.is_some())
         {
@@ -2711,6 +3119,7 @@ impl Document {
             || filling
             || measuring
             || voiding
+            || area_pulling
             || self.box_grips.is_dragging()
             || navigating
             || mesh_object.is_some()
@@ -2779,6 +3188,7 @@ impl Document {
             || filling
             || measuring
             || voiding
+            || area_pulling
             || self.box_grips.is_dragging()
         {
             true
@@ -2902,6 +3312,7 @@ impl Document {
             && !filling
             && !measuring
             && !voiding
+            && !area_pulling
             && mesh_object.is_none()
             && navigation.is_none()
             && !self.translate_gizmo.is_dragging()
@@ -2933,6 +3344,7 @@ impl Document {
             && !pulling
             && !measuring
             && !voiding
+            && !area_pulling
             && !consumed_click
             && response.clicked_by(egui::PointerButton::Secondary)
             && let Some(pointer) = response.interact_pointer_pos()
@@ -2962,6 +3374,7 @@ impl Document {
             && !pulling
             && !measuring
             && !voiding
+            && !area_pulling
             && clicked
             && !pointer_over_gizmo
             && !consumed_click
@@ -3174,6 +3587,8 @@ impl Document {
                 project: self.session.project(),
                 object,
                 vertices: &mesh_vertices,
+                kinds: self.snaps,
+                sight: self.editor.flags().sight(),
             };
             self.vertex_gizmo.paint(ui, rect, target, handle_length);
         } else if pulling {
@@ -3182,6 +3597,12 @@ impl Document {
             self.fill_gizmo.paint(ui, rect, self.scene.camera);
         } else if let Some(measure) = self.editor.measure() {
             self.measure_gizmo.paint(ui, rect, self.scene.camera, measure);
+        } else if area_pulling {
+            // The face under the pointer reads as the plate it is, so the click takes the area the
+            // maker sees and not one a pixel beside it (G4).
+            if let (Some(object), Some(area)) = (self.editor.area().object(), self.editor.area().region()) {
+                area_gizmo::paint(ui, rect, self.scene.camera, self.session.project(), object, area);
+            }
         } else if voiding {
             // The niche draws the cell it names: a wireframe box in the product's own frame, so the
             // void reads through the boards around it, with the three sides at its middle.
@@ -3281,7 +3702,7 @@ impl Document {
             Some(ClusterAction::OpenSettings) => shell.open_settings = true,
             None => {}
         }
-        self.show_tool_card(ui, content, pointer, card_before, opacity);
+        self.show_tool_card(ui, content, pointer, opacity);
         self.show_draft_menu(ui, content, opacity);
         self.paint_view_frames(ui, content, &regions);
         self.show_context_menu(ui, content, opacity);
@@ -3291,7 +3712,7 @@ impl Document {
     ///
     /// A polyline keeps its chain, so the right button cannot finish it the way it finishes a fixed
     /// figure: the menu chooses whether the next segment is straight or an arc — the switch that
-    /// used to sit on Tab — and offers the finish the status bar's *Finish* runs (ADR 0126, 0128).
+    /// used to sit on Tab — and offers the finish the tool card's check runs (ADR 0126, 0128, U115).
     fn show_draft_menu(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, opacity: u32) {
         let Some((arc, can_finish)) = self
             .editor
@@ -3313,8 +3734,8 @@ impl Document {
             ui::DraftMenuChoice::Arc => {
                 self.editor.set_drawing_arc_mode(true);
             }
-            // Finish is the status bar's own finish: the same commit path, so a chain committed
-            // from the menu and from the bar cannot differ.
+            // Finish is the card's own finish: the same commit path, so a chain committed from
+            // the menu, from the card and by Enter cannot differ.
             ui::DraftMenuChoice::Finish => {
                 if let Err(error) = self.commit_drawing(ui::language(ui.ctx())) {
                     self.last_error = Some(error);
@@ -3533,22 +3954,27 @@ impl Document {
         }
     }
 
-    /// Paints the selected line chains over the viewport image as a screen-space outline.
+    /// Paints the picked line chains over the viewport image as a screen-space outline.
     ///
-    /// The renderer draws a chain as a one-pixel `LineList`, which wgpu cannot widen, so a selected
+    /// The renderer draws a chain as a one-pixel `LineList`, which wgpu cannot widen, so a picked
     /// chain is repeated here: a dark underlay first, then the bright stroke. The chains come from
-    /// the frame last uploaded, so a drag preview and its outline agree.
+    /// the frame last uploaded, so a drag preview and its outline agree — and so the stroke takes
+    /// the ink the frame gave the chain, which is the base ink on an armed boolean's target and the
+    /// selection ink on every operand (X99).
     fn paint_selection_outline(&self, ui: &mut egui::Ui, rect: egui::Rect) {
         if self.selected_chains.is_empty() {
             return;
         }
         let painter = ui.painter().with_clip_rect(rect);
-        for points in selection_outline(self.scene.camera, rect, &self.selected_chains) {
-            painter.add(egui::Shape::line(
-                points.clone(),
-                egui::Stroke::new(SELECTION_UNDERLAY_WIDTH, SELECTION_UNDERLAY),
-            ));
-            painter.add(egui::Shape::line(points, egui::Stroke::new(SELECTION_OUTLINE_WIDTH, SELECTION_OUTLINE)));
+        for chain in &self.selected_chains {
+            let ink = theme::scene_ink(chain.color.unwrap_or(scene::SELECTION_LINE_COLOR));
+            for points in selection_outline(self.scene.camera, rect, std::slice::from_ref(chain)) {
+                painter.add(egui::Shape::line(
+                    points.clone(),
+                    egui::Stroke::new(SELECTION_UNDERLAY_WIDTH, SELECTION_UNDERLAY),
+                ));
+                painter.add(egui::Shape::line(points, egui::Stroke::new(SELECTION_OUTLINE_WIDTH, ink)));
+            }
         }
     }
 
@@ -3585,7 +4011,8 @@ impl Document {
                 Projection::Perspective { .. }
             ),
             owns_view: viewport_owns_view(self.session.project()),
-            grid: self.draw_gizmo.grid(),
+            snaps: self.snaps(),
+            snap_mode: self.snap_mode(),
             // The shadow switch is the active view's; its intensity is the workspace's and has no
             // control in the ribbon (U107, U110).
             shadows: self.layout.active_shadows(),
@@ -3595,6 +4022,7 @@ impl Document {
         // or dropped one also resets the shell's own gizmos (ADR 0118).
         let was_measuring = self.editor.measure().is_some();
         let was_void = self.editor.void_armed();
+        let was_boolean = self.editor.boolean_arm().is_some();
         // The ribbon is its own chrome surface — one step above the window's surface and distinct
         // from the panel fill the side panels use behind their content. The Appearance slider scales
         // that fill's alpha, letting the scene it covers show through without changing any other
@@ -3647,6 +4075,19 @@ impl Document {
                 // Another cell replaced it; the cell it named goes with the tool.
                 self.cancel_void();
             }
+            if self.editor.boolean_arm().is_some() && !was_boolean {
+                // A boolean cell armed the mode: leave the shell state of the tool it replaced and
+                // the navigation mode that would take the next press for an orbit (G3).
+                self.draw_gizmo.reset();
+                self.cancel_extrude();
+                self.reset_fill(ui.ctx());
+                self.measure_gizmo.reset();
+                self.void_gizmo.reset();
+                shell.cluster.navigation = None;
+            } else if was_boolean && self.editor.boolean_arm().is_none() {
+                // Another cell replaced it; the preview it drew goes with the mode.
+                self.cancel_boolean();
+            }
             if let Some((object, height)) = outcome.extruded {
                 // The body exists at the height the field named; the arrow lets the user pull it
                 // from there, and the ribbon keeps that height for the next extrusion.
@@ -3666,7 +4107,9 @@ impl Document {
                 Some(ui::RibbonViewAction::ToggleProjection) => {
                     self.toggle_view_projection();
                 }
-                Some(ui::RibbonViewAction::ToggleGrid) => self.draw_gizmo.toggle_grid(),
+                Some(ui::RibbonViewAction::ToggleSnap(kind)) => self.set_snap_kind(kind, !self.snaps.enabled(kind)),
+                Some(ui::RibbonViewAction::ToggleSnapAll) => self.set_all_snaps(!self.snaps.all_on()),
+                Some(ui::RibbonViewAction::ToggleSnapMode) => self.toggle_snap_mode(),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
                 None => {}
             }
@@ -3766,6 +4209,17 @@ impl Document {
             {
                 self.last_error = Some(error);
             }
+        } else if self.editor.boolean_arm().is_some() {
+            // Escape leaves the boolean and drops its preview; Enter stores the result it shows.
+            // Nothing reached the document before the ✓, so leaving costs no undo entry (G3).
+            if escape {
+                self.cancel_boolean();
+            } else if enter
+                && !ui.ctx().text_edit_focused()
+                && let Err(error) = self.commit_boolean(ui::language(ui.ctx()))
+            {
+                self.last_error = Some(error);
+            }
         } else if escape
             && !self.translate_gizmo.is_dragging()
             && !self.rotate_gizmo.is_dragging()
@@ -3796,6 +4250,11 @@ impl Document {
                 // Escape leaves the niche tool the same way, and writes nothing because the tool
                 // wrote nothing: the point and the cell it named are view state (ADR 0118).
                 self.cancel_void();
+            } else if self.editor.area_pull().is_some() {
+                // Escape leaves the area pull before a container level, and writes nothing: the arm
+                // and the highlight it holds are view state, and a pull that already created its
+                // body is handled above, where its scope is rolled back (G4).
+                self.editor.cancel_area_pull();
             } else if self.editor.creation_parent().is_some() {
                 // The arm outranks leaving a container level: it is the mode the next creation uses,
                 // and the chip names it until Escape or ✕ clears it (ADR 0056).
@@ -4114,9 +4573,12 @@ fn extrude_writes(committed: Option<Length>, height: Length) -> bool {
 fn previewed_body(project: &Project, object: Id, height: Length, top: Option<Length>) -> Result<Geometry, String> {
     let node = project.object(object).ok_or_else(|| format!("{object:?} is not in the scene"))?;
     match node.geometry() {
-        Geometry::Primitive(model::Primitive::Cone(cone)) => {
-            cone_at(project, object, height, top.unwrap_or(cone.top_radius())).map(Geometry::Primitive)
-        }
+        Geometry::Primitive(body) => match body.base() {
+            model::PrimitiveShape::Cone(cone) => cone_at(project, object, height, top.unwrap_or(cone.top_radius()))
+                .map(model::Primitive::from_shape)
+                .map(Geometry::Primitive),
+            model::PrimitiveShape::Sphere(_) => Err(format!("{} is not a cone", node.name())),
+        },
         Geometry::Path(path) => {
             // A profile has no height yet, so the preview is the body the ✓ would build from it
             // (ADR 0138).
@@ -4140,12 +4602,14 @@ fn previewed_body(project: &Project, object: Id, height: Length, top: Option<Len
 ///
 /// The base radius and the side count are the drawn ones, so the pull changes exactly the two
 /// numbers it shows and a preview is the solid the ✓ would store (ADR 0141).
-fn cone_at(project: &Project, object: Id, height: Length, top: Length) -> Result<model::Primitive, String> {
+fn cone_at(project: &Project, object: Id, height: Length, top: Length) -> Result<model::PrimitiveShape, String> {
     let primitive = project.object_primitive(object).map_err(|error| error.to_string())?;
-    let model::Primitive::Cone(cone) = primitive else {
+    let model::PrimitiveShape::Cone(cone) = primitive.base() else {
         return Err(format!("{object:?} is not a cone"));
     };
-    model::Primitive::cone(cone.base_radius(), top, height, cone.segments()).map_err(|error| error.to_string())
+    model::Primitive::cone(cone.base_radius(), top, height, cone.segments())
+        .map(|body| body.base())
+        .map_err(|error| error.to_string())
 }
 
 /// World placements a drag previews for cameras and lights.
@@ -4697,7 +5161,7 @@ mod tests {
     }
 
     fn selection_chain(points: Vec<DVec3>) -> Polyline {
-        Polyline::new(Id::new(7).expect("id"), Arc::from(points), DMat4::IDENTITY, SELECTION_LINE_COLOR)
+        Polyline::new(Id::new(7).expect("id"), Arc::from(points), DMat4::IDENTITY, scene::SELECTION_LINE_COLOR)
     }
 
     #[test]

@@ -155,6 +155,17 @@ impl ContourDraft {
         }
     }
 
+    /// The range a typed along-contour length takes on `segment`, measured from its far end.
+    ///
+    /// A ring and a chain hold the same number, so a plate, a typed value and the command all refuse
+    /// the same ends.
+    pub fn along_length_range(&self, segment: ContourSegmentId) -> Option<(Length, Length)> {
+        match self {
+            Self::Ring(contour) => contour.along_length_range(segment),
+            Self::Chain(path) => path.along_length_range(segment),
+        }
+    }
+
     /// The position of a segment id in travel order.
     pub fn index_of(&self, id: ContourSegmentId) -> Option<usize> {
         match self {

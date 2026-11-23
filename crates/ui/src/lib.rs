@@ -15,6 +15,7 @@
     clippy::unreachable
 )]
 
+mod area;
 mod box_tool;
 mod camera_card;
 mod class_picker;
@@ -47,10 +48,12 @@ mod placement_card;
 mod point_fields;
 pub mod product_card;
 mod properties_card;
+pub mod render_page;
 mod scene_tree;
 mod scrub;
 mod section;
 pub mod settings;
+pub mod snap;
 mod target;
 pub mod theme;
 pub mod tool_card;
@@ -60,6 +63,7 @@ pub mod ui_scale;
 mod view_flags;
 mod void;
 
+pub use area::{Area, AreaRefusal};
 pub use box_tool::{BoxBase, BoxDraft, BoxDraftError, MIN_BOX_HEIGHT_MM};
 pub use contour_edit::{ContourDraft, ContourEdit, ContourTarget};
 pub use contour_grips::{ContourGrip, GripNumber, GripValue};
@@ -68,7 +72,7 @@ pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, 
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use draw_fields::{PointRow, PointState, Reference, SketchAngle, XEnd, field_row, sketch_angle};
 pub use draw_menu::{DraftMenu, DraftMenuChoice};
-pub use editor::{BandRule, BandView, Editor, FillArm, SelectionBand};
+pub use editor::{BandRule, BandView, BooleanArm, Editor, FillArm, SelectionBand};
 pub use inventory::{ActsOn, Applies, NodeKind, Place, Row};
 pub use measure::{Measure, MeasureClick, MeasureStage};
 pub use mesh_edit::{MeshEdit, MeshElement};
@@ -77,7 +81,7 @@ pub use palette::{Palette, PaletteContext, PaletteKey};
 pub use point_fields::{CURSOR_CLEARANCE, FieldAction, FieldEdit, FieldLabel, FieldParam, FieldRow, FieldSet};
 pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
-pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolView};
+pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolToggle, ToolView};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use transform::TransformMode;
 pub use view_flags::ViewFlags;

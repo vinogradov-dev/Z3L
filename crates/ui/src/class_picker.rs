@@ -374,8 +374,7 @@ mod tests {
 
     #[test]
     fn a_label_a_slug_and_an_alias_all_find_the_same_row() {
-        for query in ["полка", "полочка", "shelf", "horizontal-panel", "горизонтальная панель"]
-        {
+        for query in ["полка", "полочка", "shelf", "horizontal-panel", "горизонт"] {
             let rows = listed(model::registry(), query, Lang::Ru);
             assert!(
                 rows.iter().any(|row| row.code() == shelf().value()),
@@ -449,7 +448,7 @@ mod tests {
             output.drop_without_applying_deltas();
         }
 
-        assert!(texts.iter().any(|text| text.contains("Горизонтальная панель")), "the row is drawn: {texts:?}");
+        assert!(texts.iter().any(|text| text.contains("Горизонт")), "the row is drawn: {texts:?}");
         assert!(texts.iter().any(|text| text.contains("10.11")), "the code is visible: {texts:?}");
         assert!(texts.iter().any(|text| text == "без классификации"), "the unclassified row is explicit: {texts:?}");
         assert!(!texts.iter().any(|text| text.contains("Стул")), "the search hides the rest: {texts:?}");

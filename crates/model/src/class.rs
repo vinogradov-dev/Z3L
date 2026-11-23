@@ -15,6 +15,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use schemars::JsonSchema;
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use text::Message;
@@ -51,7 +52,7 @@ pub enum ClassCodeError {
 /// A code is valid whether or not the registry knows it: the shape is a property of the digits, the
 /// meaning arrives with the row (ADR 0094). An unknown code is kept on load and refused on
 /// assignment ([`ClassCode::is_assignable`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
 pub struct ClassCode(u32);
 
 impl ClassCode {
@@ -64,19 +65,31 @@ impl ClassCode {
     /// one (ADR 0097); a test proves it is the `70.01` registry row with `level = Product`.
     pub const GENERAL_PRODUCT: Self = Self(700_100);
 
-    /// The `vertical panel` row, «вертикальная панель» / vertical panel, the class a post fills a
-    /// niche with (ADR 0099).
+    /// The `vertical panel` row, «стойка» / upright, the class a post fills a niche with (ADR 0099).
     ///
     /// The fill tool is bound to the row, and the row's `fill` trait decides that a post takes the
     /// niche's height and depth. A test proves the constant still names that row.
     pub const VERTICAL_PANEL: Self = Self(101_000);
 
-    /// The `horizontal panel` row, «горизонтальная панель» / horizontal panel, the class a shelf
-    /// fills a niche with (ADR 0099).
+    /// The `horizontal panel` row, «горизонт» / horizontal, the class a shelf fills a niche with
+    /// (ADR 0099).
     ///
     /// A shelf takes the niche's width and depth; the row's `fill` trait is the one statement of
     /// that rule.
     pub const HORIZONTAL_PANEL: Self = Self(101_100);
+
+    /// The `back panel` row, «стенка» / back, the class a wall fills a niche with (ADR 0200).
+    ///
+    /// A wall takes the niche's width and height and stands in the frontal plane, so the row's
+    /// `fill` trait is what makes the wall cell a way to fill a void rather than a typed board.
+    pub const BACK_PANEL: Self = Self(101_200);
+
+    /// The `hanging rail` row, «штанга» / hanging rail, the linear part a wardrobe hangs clothes
+    /// from.
+    ///
+    /// The class exists so the inspector can find a rail and measure where it hangs; no command
+    /// creates a fitting yet, so a rail is a body or a panel a caller classes by hand.
+    pub const HANGING_RAIL: Self = Self(200_600);
 
     /// The largest assignable code.
     pub const MAX: Self = Self(CLASS_MAX_CODE);
@@ -277,7 +290,7 @@ impl<'de> Deserialize<'de> for ClassCode {
 }
 
 /// Where an object comes from: a nesting plan, a length cut, a purchase order, or the workshop's own
-/// assembly (ADR 0104).
+/// assembly (ADR 0217).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Supply {
     /// Cut from a sheet and nested.
@@ -511,6 +524,8 @@ pub enum Fill {
     HeightAndDepth,
     /// Width and depth, the shelf-like fill.
     WidthAndDepth,
+    /// Width and height, the wall-like fill: the board stands in the frontal plane (ADR 0200).
+    WidthAndHeight,
 }
 
 impl Fill {
@@ -518,6 +533,7 @@ impl Fill {
         match self {
             Self::HeightAndDepth => 1,
             Self::WidthAndDepth => 2,
+            Self::WidthAndHeight => 3,
         }
     }
 
@@ -525,7 +541,8 @@ impl Fill {
         match bits {
             0 => None,
             1 => Some(Self::HeightAndDepth),
-            _ => Some(Self::WidthAndDepth),
+            2 => Some(Self::WidthAndDepth),
+            _ => Some(Self::WidthAndHeight),
         }
     }
 }
@@ -1014,10 +1031,11 @@ const REGISTRY: &[ClassRow] = &[
             &[Operation::Contour],
             None,
             None,
-            None,
+            Some(Fill::WidthAndHeight),
         ),
         &[ClassPrefix::of(1001, 4)],
-    ),
+    )
+    .with_aliases(&["wall", "back", "стенка", "задняя стенка"]),
     ClassRow::class(
         101_300,
         "drawer-box-part",
@@ -1358,7 +1376,8 @@ const REGISTRY: &[ClassRow] = &[
             None,
         ),
         &[ClassPrefix::of(1002, 4)],
-    ),
+    )
+    .with_aliases(&["rod", "rail", "штанга"]),
     ClassRow::class(
         200_700,
         "filler",
@@ -1802,6 +1821,14 @@ mod tests {
         assert_eq!(row.label(), Message::ClassHorizontalPanel);
         assert_eq!(row.traits().expect("traits").fill(), Some(Fill::WidthAndDepth));
         assert!(shelf.is_assignable());
+
+        let wall = ClassCode::BACK_PANEL;
+        let row = wall.row().expect("the back panel class is a registry row");
+        assert_eq!(row.slug(), "back-panel");
+        assert_eq!(row.label(), Message::ClassBackPanel);
+        assert_eq!(row.traits().expect("traits").fill(), Some(Fill::WidthAndHeight));
+        assert!(wall.is_assignable());
+        assert!(row.aliases().contains(&"стенка"), "the workshop's own word finds the wall: {:?}", row.aliases());
     }
 
     #[test]
@@ -2355,6 +2382,7 @@ mod tests {
         match text {
             "w+d" => Some(Fill::WidthAndDepth),
             "h+d" => Some(Fill::HeightAndDepth),
+            "w+h" => Some(Fill::WidthAndHeight),
             "—" => None,
             other => panic!("unknown fill {other}"),
         }

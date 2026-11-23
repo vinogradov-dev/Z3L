@@ -212,18 +212,18 @@ impl ContourDraft {
 
     /// The length a numeric field shows when a corner moves along the contour.
     ///
-    /// `start_position` is where the corner was when the drag began: that tells which end of
-    /// `motion_segment` is the "opposite" end. The value is the distance from the current corner
-    /// to that opposite end along the segment, so it falls to zero as the corner reaches it.
-    /// A line measures a straight distance, an arc measures its arc length.
+    /// `far_end` is the end of `motion_segment` opposite the corner, taken from the draft the edit
+    /// started on and fixed for the whole drag: `motion_far_end` answers it. The value is the distance
+    /// from the current corner to that end along the segment, so it falls to zero as the corner reaches
+    /// it and grows past the segment's own length as the corner leaves it at its own end. A line
+    /// measures a straight distance, an arc measures its arc length.
     pub fn along_contour_length(
         &self,
         motion_segment: ContourSegmentId,
         corner: PathCorner,
-        start_position: [Length; 2],
+        far_end: [Length; 2],
     ) -> Option<Length> {
         let curve = self.segment(motion_segment)?;
-        let far_end = self.motion_far_end(motion_segment, start_position)?;
         let pos = self.corner_point(corner)?;
         match curve {
             ContourSegment::Line { .. } => {
@@ -238,17 +238,34 @@ impl ContourDraft {
                 let radius_mm = radius.millimetres_f64();
                 let start_r = start_angle.radians_f64();
                 let sweep_r = sweep.radians_f64();
-                let travel = |point: [Length; 2]| {
+                let sign = sweep_r.signum();
+                // Travel from the start in the direction of the sweep, as a positive angle. A corner
+                // that left the sweep at its own end reads as travel near a full turn.
+                let ahead = |point: [Length; 2]| {
                     let dx = point[0].millimetres_f64() - center_x;
                     let dy = point[1].millimetres_f64() - center_y;
                     let angle = dy.atan2(dx);
-                    if sweep_r >= 0.0 {
-                        (angle - start_r).rem_euclid(std::f64::consts::TAU).min(sweep_r)
+                    if sign >= 0.0 {
+                        (angle - start_r).rem_euclid(std::f64::consts::TAU)
                     } else {
-                        -((-angle + start_r).rem_euclid(std::f64::consts::TAU)).max(sweep_r)
+                        (-angle + start_r).rem_euclid(std::f64::consts::TAU)
                     }
                 };
-                let arc_len = (travel(pos) - travel(far_end)).abs() * radius_mm;
+                let sweep_abs = sweep_r.abs();
+                let far = ahead(far_end);
+                let here = ahead(pos);
+                let travel = if far <= 1.0e-9 {
+                    // The far end is the start: the corner's own travel is the distance, and a larger
+                    // one is the arc growing past its end.
+                    here
+                } else if here <= sweep_abs {
+                    // Inside the sweep: what is left to the far end.
+                    sweep_abs - here
+                } else {
+                    // Past the near end by the way round: the arc grew by that much.
+                    sweep_abs + (std::f64::consts::TAU - here)
+                };
+                let arc_len = travel * radius_mm;
                 arc_len.is_finite().then(|| Length::from_micrometres((arc_len * 1_000.0).round() as i64))
             }
         }
@@ -258,6 +275,12 @@ impl ContourDraft {
     ///
     /// The corner starts at one end of the segment; the far end is the other one. It is fixed for
     /// the whole drag, so the length field and a typed length agree even after the corner moved.
+    /// The far end of `motion_segment`, given where the corner was when the drag began.
+    ///
+    /// Called on the draft the edit started on, where the corner still sits exactly on one end of the
+    /// segment: that end is the corner's and the other is the far one. It is fixed for the whole drag,
+    /// so the length field and a typed length agree even after the corner moved — the working copy no
+    /// longer says which end it left from.
     pub fn motion_far_end(&self, motion_segment: ContourSegmentId, start_position: [Length; 2]) -> Option<[Length; 2]> {
         let curve = self.segment(motion_segment)?;
         let start = curve.start().ok()?;
@@ -815,5 +838,69 @@ mod tests {
         assert_eq!(draft.grips().len(), 3);
         assert!(draft.grips().iter().all(|grip| matches!(grip, ContourGrip::Corner(_))));
         assert_eq!(draft.grip_value(ContourGrip::CircleCenter), None);
+    }
+
+    #[test]
+    fn the_along_length_grows_past_the_segments_own_end() {
+        // X96: the number is the distance from the fixed far end, so it must keep counting when the
+        // corner leaves the segment at its own end instead of freezing at the full length.
+        let path = Path::new(vec![model::ContourSegment::line(point(0, 0), point(100, 0)).expect("the side")], false)
+            .expect("an open chain");
+        let side = path.id_at(0).expect("the side");
+        let draft = ContourDraft::Chain(path);
+        // The corner sits on the start, so the far end the drag keeps is the end at 100 mm.
+        let far_end = draft.motion_far_end(side, point(0, 0)).expect("the far end");
+        assert_eq!(far_end, point(100, 0));
+        assert_eq!(draft.along_contour_length(side, PathCorner::Start(side), far_end), Some(millimetres(100)));
+        assert_eq!(
+            draft.along_length_range(side),
+            Some((Length::ZERO, millimetres(2_000_000))),
+            "a line may grow across the whole coordinate box"
+        );
+        // The corner has travelled 40 mm past the start: the side is 140 mm long now, and the number
+        // follows it instead of stopping at the old length.
+        let grown =
+            Path::new(vec![model::ContourSegment::line(point(-40, 0), point(100, 0)).expect("the grown side")], false)
+                .expect("a grown chain");
+        let grown = ContourDraft::Chain(grown);
+        assert_eq!(grown.along_contour_length(side, PathCorner::Start(side), far_end), Some(millimetres(140)));
+    }
+
+    #[test]
+    fn the_along_length_of_an_arc_keeps_counting_past_its_sweep() {
+        // A quarter arc of 40 mm from angle -90° to 0°: its corner is at (100, 0) and the far end is
+        // (140, 40). Behind the corner is the arc growing, so the number must rise above 62.8 mm.
+        let arc = model::ContourSegment::arc(
+            point(100, 40),
+            millimetres(40),
+            units::Degrees::from_millidegrees(-90_000),
+            units::Degrees::from_millidegrees(90_000),
+        )
+        .expect("a quarter arc");
+        let path = Path::new(vec![arc], false).expect("an arc chain");
+        let id = path.id_at(0).expect("the arc");
+        let draft = ContourDraft::Chain(path);
+        let far_end = draft.motion_far_end(id, point(100, 0)).expect("the far end");
+        assert!((along_length(&draft, id, far_end) - 62_832).abs() < 50, "a quarter of a 40 mm circle");
+        // The same corner dragged 30° behind its own end: the sweep grows by 21 mm, and the number with it.
+        let grown = model::ContourSegment::arc(
+            point(100, 40),
+            millimetres(40),
+            units::Degrees::from_millidegrees(-120_000),
+            units::Degrees::from_millidegrees(120_000),
+        )
+        .expect("a grown arc");
+        let grown = ContourDraft::Chain(Path::new(vec![grown], false).expect("an arc chain"));
+        let grown_length = along_length(&grown, id, far_end);
+        assert!((grown_length - 83_776).abs() < 60, "the number kept counting: {grown_length}");
+        // Its own two ends: the collapse at zero, and the 90 degree extension the arc may add.
+        let (min, max) = grown.along_length_range(id).expect("an arc range");
+        assert_eq!(min, Length::ZERO);
+        assert!((max.micrometres() - 146_608).abs() < 200, "a 120 degree sweep plus 90 degrees of extension: {max:?}");
+    }
+
+    /// The along-contour length of a one-segment draft, in micrometres.
+    fn along_length(draft: &ContourDraft, id: model::ContourSegmentId, far_end: [Length; 2]) -> i64 {
+        draft.along_contour_length(id, PathCorner::Start(id), far_end).expect("a length").micrometres()
     }
 }

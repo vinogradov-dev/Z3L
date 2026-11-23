@@ -162,6 +162,8 @@ pub enum SnapSurface {
     Frame(Id),
     /// A panel's or a body's own face.
     Face(Id),
+    /// The middle of another part's box: the coordinate its faces do not offer.
+    Centre(Id),
 }
 
 /// The surface a dragged face landed on, and where that surface is.
@@ -223,8 +225,14 @@ impl Stop {
 /// (ADR 0146).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SnapSettings {
-    /// Whether the coordinate planes X=0, Y=0 and Z=0 capture a drag, the floor included.
-    pub planes: bool,
+    /// Which kinds capture: the world axes (the coordinate planes X=0, Y=0 and Z=0, the floor
+    /// included), the face of another part, its centre, and the pointer kinds a drag does not read
+    /// (U116).
+    ///
+    /// A drag answers a distance along one axis, so of the pointer kinds only `centre` adds a
+    /// capture: every corner and edge midpoint of a box stands at one of its own spans, and the
+    /// centre is the one coordinate the faces do not offer.
+    pub kinds: SnapKinds,
     /// Whether another product's envelope captures a drag with its virtual faces.
     pub frames: bool,
     /// How near a surface must be, in millimetres, to capture a drag and make the piece jump.
@@ -244,7 +252,11 @@ impl SnapSettings {
 
 impl Default for SnapSettings {
     fn default() -> Self {
-        Self { planes: true, frames: true, tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000) }
+        Self {
+            kinds: SnapKinds::ALL,
+            frames: true,
+            tolerance: Length::from_micrometres(Self::DEFAULT_TOLERANCE_MM * 1000),
+        }
     }
 }
 
@@ -343,7 +355,12 @@ impl Project {
         if !pivot.is_finite() {
             return None;
         }
-        Some(RotateRule { pivot, movers, obstacles: self.obstacles(&targets), contact: contact.map(Contact::handle) })
+        Some(RotateRule {
+            pivot,
+            movers,
+            obstacles: self.obstacles_outside_a_tool(&targets),
+            contact: contact.map(Contact::handle),
+        })
     }
 
     /// The rule that measures a drag of `targets` under the workspace's settings.
@@ -368,7 +385,7 @@ impl Project {
         let floor = settings.floor.then(|| floor_bound(&movers)).flatten();
         // A drag the document does not measure carries no obstacles at all: the free move goes where
         // the hand puts it and only the pointer's own distance reaches the placement (ADR 0180).
-        let obstacles = if settings.measured { self.obstacles(targets) } else { Vec::new() };
+        let obstacles = if settings.measured { self.obstacles_outside_a_tool(targets) } else { Vec::new() };
         Some(MoveRule { axes, obstacles, floor, movers, snaps: settings.snaps, contact: contact.map(Contact::handle) })
     }
 
@@ -393,7 +410,7 @@ impl Project {
         if targets.is_empty() {
             return None;
         }
-        let obstacles = self.obstacles(&targets);
+        let obstacles = self.obstacles_outside_a_tool(&targets);
         for moved in &targets {
             let Some(lands) =
                 self.world_placement_with(*moved, placements).and_then(|world| self.box_at(*moved, world))
@@ -415,6 +432,47 @@ impl Project {
             }
         }
         None
+    }
+
+    /// Whether two nodes share volume, by the same reading the write refuses (ADR 0162, ADR 0178).
+    ///
+    /// A body inside a shell is a piece inside a case and stays legal; two boxes that only touch
+    /// share no volume, so a face is contact and never an overlap; a body the contact port can
+    /// describe is measured by its own faces and a furniture piece by the world box it has always
+    /// been measured by ([`Self::resting_conflict`]). The inspector asks this of every pair of parts
+    /// in a product, which is why it is public: a second reading of "two bodies intersect" would be
+    /// a rule the write and the report could disagree about.
+    pub fn parts_overlap(&self, first: Id, second: Id, contact: Option<&dyn Contact>) -> bool {
+        if first == second {
+            return false;
+        }
+        let (Some(first_box), Some(second_box)) = (self.mover_box(first), self.mover_box(second)) else {
+            return false;
+        };
+        if nested(first_box, second_box, self.product_of(first))
+            || nested(second_box, first_box, self.product_of(second))
+        {
+            return false;
+        }
+        let measure = |id: Id, box_: SurfaceBox| {
+            let faces = !self.is_furniture(id);
+            Measured::new(box_, faces.then(|| self.solid_of(box_, contact)).flatten())
+        };
+        measure(first, first_box).meets(&measure(second, second_box))
+    }
+
+    /// The obstacles a move or a turn of `targets` must respect.
+    ///
+    /// A body the maker marked as a **tool** passes through parts: it has to, because a cutter that
+    /// cannot be carried into the body cannot cut it, and the mark is what says "this body is a
+    /// tool, not a part" (W2, ADR 0197). Everything else keeps the rule that a part may not come to
+    /// rest inside another, and the filter is applied once per rule instead of once per pair (X90).
+    fn obstacles_outside_a_tool(&self, targets: &[Id]) -> Vec<Obstacle> {
+        let marked = |id: Id| self.object(id).is_some_and(Object::is_tool);
+        if targets.iter().any(|target| marked(*target)) {
+            return Vec::new();
+        }
+        self.obstacles(targets).into_iter().filter(|obstacle| !marked(obstacle.box_.id)).collect()
     }
 
     /// The world axes a move of this selection offers, in [`MoveAxis`] order.
@@ -1389,11 +1447,19 @@ fn snap_distance(
                 if !overlap(mover_first, obstacle.span(first)) || !overlap(mover_second, obstacle.span(second)) {
                     continue;
                 }
-                capture(obstacle.span(axis).min, target);
-                capture(obstacle.span(axis).max, target);
+                let span = obstacle.span(axis);
+                capture(span.min, target);
+                capture(span.max, target);
+                // The middle of another product's reserved space is the one coordinate its faces do
+                // not offer: a shelf lands at the mid-height of the cabinet, not on a wall. A body's
+                // own middle is inside the body, where contact keeps a part out, so only a shell
+                // offers it (U116).
+                if obstacle.is_shell() && snaps.kinds.centre {
+                    capture((span.min + span.max) * 0.5, SnapSurface::Centre(obstacle.id));
+                }
             }
         }
-        if snaps.planes {
+        if snaps.kinds.axis {
             // A coordinate plane runs through the whole world, so it captures without a
             // perpendicular test — and the floor is the Z=0 plane like any other.
             capture(0.0, SnapSurface::Plane);
@@ -1689,7 +1755,9 @@ mod tests {
 
     /// A workspace that snaps with the settings this test states, and keeps its floor.
     fn snapping(planes: bool, frames: bool) -> SnapSettings {
-        SnapSettings { planes, frames, ..SnapSettings::default() }
+        let mut kinds = SnapKinds::ALL;
+        kinds.axis = planes;
+        SnapSettings { kinds, frames, ..SnapSettings::default() }
     }
 
     /// The workspace's settings for the tests here: the object move's snaps, and the floor it keeps.
@@ -2307,6 +2375,57 @@ mod tests {
         );
     }
 
+    /// The body a boolean cuts and the cutter a maker owns, both constructive: a 100 mm slab and a
+    /// 50 mm cutter, 200 mm apart on the X axis.
+    fn block_pair(project: &mut Project, root: Id) -> (Id, Id) {
+        let block = |project: &mut Project, name: &str, at: (i64, i64, i64), side: i64| {
+            let body = Constructive::extrude(
+                Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(side), millimetres(side)]).expect("a ring"),
+                millimetres(18),
+            )
+            .expect("a body");
+            project.add_object(root, name, place3(at), Geometry::Constructive(body)).expect("a body")
+        };
+        (block(project, "Slab", (0, 0, 0), 100), block(project, "Cutter", (200, 0, 0), 50))
+    }
+
+    #[test]
+    fn a_marked_tool_sinks_into_a_body_and_an_unmarked_body_may_not() {
+        // A cutter has to enter the body it cuts, and it cannot say so any other way than by being
+        // marked a tool: the guard and both drag rules read the mark (W2, ADR 0197). Everything
+        // else keeps the rule that a part may not come to rest inside another.
+        let mut project = empty_project();
+        let root = project.root().id();
+        let (slab, cutter) = block_pair(&mut project, root);
+
+        assert_eq!(
+            project.resting_conflict(&[(cutter, place3((50, 50, 0)))], None),
+            Some(Resting { moved: cutter, standing: slab }),
+            "an unmarked body is a part, and a part may not sink into another"
+        );
+        assert_eq!(stops(limit(&project, &[cutter], MoveAxis::X, -150.0)).1, Some(slab), "and the drag stops at it");
+
+        project.set_object_tool(cutter, true).expect("mark the cutter as a tool");
+        assert_eq!(project.resting_conflict(&[(cutter, place3((50, 50, 0)))], None), None, "a tool may sink in");
+        assert_eq!(
+            stops(limit(&project, &[cutter], MoveAxis::X, -150.0)),
+            (-150.0, None),
+            "and the drag carries it in"
+        );
+
+        // The mark is a property of the body, not of a gesture: a tool beside the body still keeps
+        // its own moves, and the body it stands in the way of is not a wall any more.
+        project.set_object_tool(cutter, false).expect("unmark it");
+        assert_eq!(stops(limit(&project, &[cutter], MoveAxis::X, -150.0)).1, Some(slab), "the part stops again");
+    }
+
+    /// A placement at whole millimetres.
+    fn place3(at: (i64, i64, i64)) -> Placement {
+        Placement::IDENTITY
+            .with_translation(millimetres(at.0), millimetres(at.1), millimetres(at.2))
+            .expect("a placement")
+    }
+
     #[test]
     fn a_board_the_document_holds_in_another_slides_along_it_and_comes_out() {
         // A file written before the rule, or a typed coordinate, can hold two boards that already
@@ -2632,6 +2751,32 @@ mod tests {
             landed(982.0, 1000.0, SnapSurface::Face(beside)),
             "a neighbouring part face is a snap target too"
         );
+    }
+
+    #[test]
+    fn a_drag_lands_on_the_middle_of_the_space_it_stands_in() {
+        // The middle of a box is the one coordinate its faces do not offer, so the centre kind lands
+        // a shelf at the mid-height of the cabinet's reserved space (U116). A body's own middle is
+        // inside the body, where contact keeps a part out, so only a shell offers it.
+        let mut project = empty_project();
+        let piece = product(&mut project, "10.01.01", (600, 560, 720), (0, 0, 0));
+        let shelf = panel(&mut project, piece, "Shelf", (0, 0, 0));
+        // The envelope spans z = 0..720, so its middle stands at 360: the shelf's upper face lands
+        // there, which is a travel of 342 mm.
+        assert_eq!(
+            limit(&project, &[shelf], MoveAxis::Z, 340.6),
+            MoveLimit {
+                distance_mm: 342.0,
+                contact: None,
+                capture: Some(Capture { end: SnapEnd::High, at_mm: 360.0, surface: SnapSurface::Centre(piece) })
+            }
+        );
+
+        // The same drag with the centre kind off lands on the millimetre grid again.
+        let mut kinds = SnapKinds::ALL;
+        kinds.centre = false;
+        let without = rule_with(&project, &[shelf], SnapSettings { kinds, ..SnapSettings::default() });
+        assert_eq!(without.limit(MoveAxis::Z, 340.6), moved(341.0), "the grid rounds the travel");
     }
 
     #[test]

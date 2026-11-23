@@ -112,6 +112,19 @@ impl LayoutKind {
         }
     }
 
+    /// The glyph that names the split: one pane, two side by side, two stacked, or four.
+    ///
+    /// Each choice owns its drawing rather than sharing one `layout` frame, so the cluster's
+    /// layout cell reads the current split without opening the popover (U118).
+    pub(crate) const fn icon(self) -> ui::icons::Icon {
+        match self {
+            Self::Single => ui::icons::view::LAYOUT_SINGLE,
+            Self::TwoColumns => ui::icons::view::LAYOUT_COLUMNS,
+            Self::TwoRows => ui::icons::view::LAYOUT_ROWS,
+            Self::Quad => ui::icons::view::LAYOUT_QUAD,
+        }
+    }
+
     /// The number of views the layout holds.
     pub(crate) const fn leaves(self) -> usize {
         match self {

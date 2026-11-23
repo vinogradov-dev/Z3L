@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use std::f64::consts::TAU;
 
 use geom::{Arc, DVec2, Line, Segment};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::{Degrees, Length};
@@ -159,8 +160,10 @@ impl ContourSegment {
     /// The point on this segment at `distance` from `far_end`, measured along the curve.
     ///
     /// `far_end` must be one of the segment's own endpoints. A line measures a straight distance,
-    /// an arc measures its arc length. The distance is clamped to the segment's own extent, so a
-    /// caller can pass a typed length without checking it first.
+    /// an arc measures its arc length. A distance longer than the segment is what grows it: the point
+    /// lands past the near end along the same support, which is the direction a growing drag needs. A
+    /// caller bounds the number before it gets here — `along_length_range` in the edit module owns
+    /// what the segment can hold.
     pub fn point_at_distance_from(
         self,
         far_end: [Length; 2],
@@ -177,7 +180,7 @@ impl ContourSegment {
                     return Err(ContourSegmentError::ZeroLength);
                 }
                 let unit = direction / length;
-                let distance = distance.millimetres_f64().clamp(0.0, length);
+                let distance = distance.millimetres_f64();
                 // Travel from the far end toward the other endpoint.
                 let toward = if (far - start).length() <= (far - end).length() { unit } else { -unit };
                 point_to_document(far + toward * distance)
@@ -192,7 +195,7 @@ impl ContourSegment {
                 if !arc_len.is_finite() || arc_len <= 0.0 || radius_mm <= 0.0 {
                     return Err(ContourSegmentError::InvalidSweep);
                 }
-                let distance = distance.millimetres_f64().clamp(0.0, arc_len);
+                let distance = distance.millimetres_f64();
                 let far_angle = (far - center).y.atan2((far - center).x);
                 let start_point = DVec2::new(start_r.cos(), start_r.sin()) * radius_mm;
                 let at_start = (far - (center + start_point)).length() < 1.0e-3;
@@ -417,6 +420,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_arc_joint_covers_both_of_its_rounded_angles() {
+        // A boolean cuts a circle with a straight edge and leaves a joint between the arc and the
+        // line. The arc's endpoint comes from the start angle *and* the sweep, each stored as whole
+        // millidegrees, so the point can move by a whole millidegree of the radius: 11 µm on a
+        // 650 mm arc. The half-step bound this rule began with refused exactly that ring (G3).
+        let radius = i128::from(650_308_i64);
+        let slack = arc_slack_micrometres(radius);
+        assert_eq!(slack, 13, "a whole millidegree of 650 mm is 11 µm plus the rounded centre and radius");
+        let half_step = radius * 873 / 100_000_000;
+        assert!(slack > i64::try_from(half_step).expect("fits"), "the half-step bound was the defect");
+
+        // A small arc stays tight: a 10 mm radius moves its endpoint by a fiftieth of a micrometre,
+        // so only the rounding of its centre and radius is left.
+        assert_eq!(arc_slack_micrometres(10_000), 2, "the units carry the rounding of the centre and radius");
+
+        // Two stored points rounded independently miss each other by at most 1.42 µm, which the
+        // base bound covers; the joint of two lines needs no more.
+        let line =
+            ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)]).expect("a line");
+        let next = ContourSegment::line([millimetres(100), millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("a line");
+        assert_eq!(joint_tolerance_micrometres(line, next), 2);
+    }
+
+    #[test]
     fn a_line_round_trips_through_serde() {
         let segment = ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(40)])
             .expect("a valid line");
@@ -518,7 +546,7 @@ mod tests {
     fn a_contour_rejects_every_shape_error_at_construction_and_load() {
         assert_eq!(
             Contour::from_polygon(vec![[millimetres(0), millimetres(0)], [millimetres(1), millimetres(0)]]),
-            Err(ContourError::TooFewSegments { count: 2 })
+            Err(ContourError::TooFewCorners { count: 2 })
         );
         assert_eq!(
             Contour::from_polygon(vec![
@@ -596,8 +624,8 @@ mod tests {
                 ContourSegment::line(point(0, 50_000), last).expect("the closing line"),
             ]
         };
-        assert!(Contour::new(square(point(1, 0))).is_ok(), "one micrometre is still a joint");
-        assert_eq!(Contour::new(square(point(2, 0))), Err(ContourError::NotClosed { index: 3 }));
+        assert!(Contour::new(square(point(2, 0))).is_ok(), "two micrometres are the rounding of two points");
+        assert_eq!(Contour::new(square(point(3, 0))), Err(ContourError::NotClosed { index: 3 }));
     }
 
     /// An arc stores its centre, radius and angles, so its start point is derived: after rounding it
@@ -618,8 +646,8 @@ mod tests {
         ring.to_geometry().expect("the geometry layer uses the same tolerance");
     }
 
-    /// A 600 mm arc can miss the drawn joint by about `radius × 8.73e-6` ≈ 5 µm after its centre,
-    /// radius and angle are rounded; a fixed one-micrometre bound refused the ring (ADR 0072).
+    /// A 600 mm arc can miss the drawn joint by `radius × 1.746e-5` ≈ 10 µm after its centre, radius
+    /// and two angles are rounded; a fixed one-micrometre bound refused the ring (ADR 0072).
     #[test]
     fn a_ring_takes_the_rounding_slack_of_a_large_arc() {
         let arc = ContourSegment::arc(
@@ -638,9 +666,9 @@ mod tests {
                 ContourSegment::line([Length::ZERO, Length::ZERO], [millimetres(600), Length::ZERO]).expect("the base"),
             ])
         };
-        let rounded = ring(5).expect("five micrometres are inside the slack of a 600 mm arc");
+        let rounded = ring(10).expect("ten micrometres are inside the slack of a 600 mm arc");
         rounded.to_geometry().expect("the geometry boundary accepts the same joint");
-        assert_eq!(ring(7), Err(ContourError::NotClosed { index: 0 }), "past the slack it is a gap");
+        assert_eq!(ring(15), Err(ContourError::NotClosed { index: 0 }), "past the slack it is a gap");
     }
 
     /// A small arc gets a small slack: 100 mm rounds to less than one micrometre, so the one-unit
@@ -662,6 +690,91 @@ mod tests {
             ContourSegment::line([Length::ZERO, Length::ZERO], [millimetres(100), Length::ZERO]).expect("the base"),
         ]);
         assert_eq!(ring, Err(ContourError::NotClosed { index: 0 }));
+    }
+
+    /// A joint the document allowed is a joint the geometry layer sees closed: the exact readers
+    /// — the boolean, the area partition, a half-plane cut — assume one boundary and weld at a
+    /// nanometre of their own (ADR 0043), while the document allows a few micrometres at an arc's
+    /// derived end (ADR 0072). A ring handed on with its gaps intact is a dead operand (X103).
+    #[test]
+    fn the_geometry_ring_of_a_stored_ring_is_closed_at_every_joint() {
+        // A 600 mm arc's derived end misses the drawn point by `2 µm + radius × 1.746e-5`, which is
+        // 12 µm, so ten micrometres is a joint the document accepts.
+        let arc = ContourSegment::arc(
+            [Length::ZERO, Length::ZERO],
+            millimetres(600),
+            Degrees::ZERO,
+            Degrees::from_millidegrees(60_000),
+        )
+        .expect("a 60 degree arc of 600 mm");
+        let end = arc.end().expect("a derived end");
+        let gap = [Length::from_micrometres(end[0].micrometres() + 10), end[1]];
+        let ring = Contour::new(vec![
+            arc,
+            ContourSegment::line(gap, [Length::ZERO, Length::ZERO]).expect("the chord"),
+            ContourSegment::line([Length::ZERO, Length::ZERO], [millimetres(600), Length::ZERO]).expect("the base"),
+        ])
+        .expect("ten micrometres are inside the slack of a 600 mm arc");
+
+        let geometry = ring.to_geometry().expect("the stored ring converts");
+        let segments = geometry.segments();
+        for (index, pair) in segments.iter().zip(segments.iter().cycle().skip(1)).take(segments.len()).enumerate() {
+            let miss = (pair.0.end() - pair.1.start()).length();
+            assert!(miss < 1.0e-9, "joint {index} of the converted ring misses by {miss} mm");
+        }
+        assert_eq!(segments.len(), 3, "closing a joint moves it, it does not add a segment");
+    }
+
+    /// The two rings of the owner's `cross.z3l` intersection are a drawing the document accepted
+    /// and the boolean dropped: their arcs end 4.6, 6.7, 10.1 and 12.4 µm off the lines they meet,
+    /// which the document's joint rule covers and a nanometre weld does not (X103).
+    #[test]
+    fn the_two_rings_of_the_cross_drawing_both_survive_a_union() {
+        let [lower, upper] = crate::testing::cross_rings();
+        // The stored arc end is derived from a rounded centre, radius and angles, so it is not the
+        // point the stored line starts at: the document's rule, not equality, is what closes it.
+        let segments: Vec<ContourSegment> = lower.segments().collect();
+        let arc_end = segments.get(2).expect("the arc").end().expect("an end");
+        let line_start = segments.get(3).expect("the line").start().expect("a start");
+        assert_ne!(arc_end, line_start, "the fixture stores the rounding of a converted arc");
+
+        let regions = [lower, upper].map(|ring| {
+            let geometry = ring.to_geometry().expect("the stored ring converts");
+            geom::Region::new(geometry, Vec::new()).expect("a region")
+        });
+        let merged = geom::union_regions(&regions).expect("the two rings union");
+
+        assert_eq!(merged.len(), 2, "the cross is two separate pieces and both survive the union");
+    }
+
+    /// A ring of one full arc is a circle, and the file holds it: a union that meets a whole circle
+    /// simplifies its four quarter arcs into one 360° arc, so a document that refuses it cannot
+    /// store the drawing the boolean produced (X104).
+    #[test]
+    fn a_ring_of_one_full_arc_round_trips_through_the_file() {
+        let center = [millimetres(50), millimetres(20)];
+        let circle = ContourSegment::arc(
+            center,
+            millimetres(40),
+            Degrees::from_millidegrees(15_000),
+            Degrees::from_millidegrees(360_000),
+        )
+        .expect("a full turn is a sweep an arc may carry");
+        let ring = Contour::new(vec![circle]).expect("one full arc is a ring");
+        assert_eq!(ring.entries().len(), 1, "the whole circle is one segment");
+        let stored = ring.segments().next().expect("the arc");
+        assert!(stored.end_meets(stored).expect("the arc's own ends"), "a full arc closes on itself");
+
+        let wire = serde_json::to_string(&ring).expect("a ring serializes");
+        assert_eq!(serde_json::from_str::<Contour>(&wire).expect("the ring loads"), ring, "the file keeps it");
+
+        let geometry = ring.to_geometry().expect("the geometry layer takes a one-arc ring");
+        assert!(geometry.is_closed());
+        let area = geometry.signed_area().expect("a circle encloses an area");
+        let expected = std::f64::consts::PI * 40.0 * 40.0;
+        assert!((area - expected).abs() < 0.01, "the ring encloses the circle: {area} against {expected}");
+
+        assert!(Contour::new(Vec::new()).is_err(), "a ring of no segments is still refused");
     }
 
     #[test]
@@ -1522,17 +1635,19 @@ mod tests {
     }
 
     #[test]
-    fn a_joint_may_miss_by_one_micrometre_and_no_more() {
+    fn a_joint_may_miss_by_the_drawing_tolerance_and_no_more() {
+        // Two stored points rounded to whole micrometres independently miss each other by up to
+        // 1.42 µm, so the base bound is two units and a third one is a gap (ADR 0072).
         let first =
             ContourSegment::line([millimetres(0), millimetres(0)], [millimetres(100), millimetres(0)]).expect("line");
-        let one_micrometre = Length::from_micrometres(100_001);
-        let touching =
-            ContourSegment::line([one_micrometre, millimetres(0)], [millimetres(100), millimetres(50)]).expect("line");
-        assert!(Path::new(vec![first, touching], false).is_ok(), "a one-micrometre gap is accepted");
-
         let two_micrometres = Length::from_micrometres(100_002);
-        let broken =
+        let touching =
             ContourSegment::line([two_micrometres, millimetres(0)], [millimetres(100), millimetres(50)]).expect("line");
+        assert!(Path::new(vec![first, touching], false).is_ok(), "a two-micrometre gap is accepted");
+
+        let three_micrometres = Length::from_micrometres(100_003);
+        let broken = ContourSegment::line([three_micrometres, millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("line");
         assert_eq!(Path::new(vec![first, broken], false), Err(PathError::NotJoined { index: 0 }));
     }
 
@@ -1555,9 +1670,9 @@ mod tests {
         assert_eq!(path.entries().len(), 4);
 
         let mut open = square();
-        open[3] = ContourSegment::line([millimetres(0), millimetres(50)], [Length::from_micrometres(2), Length::ZERO])
+        open[3] = ContourSegment::line([millimetres(0), millimetres(50)], [Length::from_micrometres(3), Length::ZERO])
             .expect("line");
-        assert_eq!(Path::new(open, true), Err(PathError::NotClosed), "two micrometres do not close");
+        assert_eq!(Path::new(open, true), Err(PathError::NotClosed), "three micrometres do not close");
     }
 
     #[test]
@@ -1740,7 +1855,7 @@ pub const MAX_CONTOUR_SEGMENTS: usize = 256;
 pub const MAX_CONTOUR_COORDINATE: Length = Length::from_micrometres(1_000_000_000);
 
 /// Serialized form of [`Contour`]; validation happens in its `TryFrom` implementation.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ContourWire {
     segments: Vec<ContourSegmentEntryWire>,
@@ -1748,7 +1863,7 @@ struct ContourWire {
 }
 
 /// Serialized form of one ring element: the curve and its stable id.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ContourSegmentEntryWire {
     Line { id: ContourSegmentId, start: [Length; 2], end: [Length; 2] },
@@ -1802,7 +1917,7 @@ impl From<ContourSegmentEntry> for ContourSegmentEntryWire {
 /// stores its centre, radius and angles, so its endpoints are derived and can miss the point the
 /// user drew by more than a micrometre on a large radius; requiring exact equality would refuse a
 /// ring the user legitimately drew (ADR 0072).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "ContourWire", into = "ContourWire")]
 pub struct Contour {
     entries: Vec<ContourSegmentEntry>,
@@ -1826,10 +1941,14 @@ impl Contour {
     /// `n + 1`. A clockwise ring is turned around after numbering, so its ids are not in stored
     /// travel order; they are labels, and [`Contour::index_of`] is what maps one to a position. A
     /// ring rebuilt from existing entries keeps its ids through [`Contour::rebuild`] instead.
+    ///
+    /// A ring needs one segment, not three: a full circle is one arc and a half circle closed by its
+    /// diameter is two (ADR 0221). What a ring must be is closed, non-empty of area and
+    /// non-self-intersecting, and those rules are checked here whatever the count.
     pub fn new(segments: Vec<ContourSegment>) -> Result<Self, ContourError> {
         let count = segments.len();
-        if count < 3 {
-            return Err(ContourError::TooFewSegments { count });
+        if count == 0 {
+            return Err(ContourError::Empty);
         }
         if count > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count, max: MAX_CONTOUR_SEGMENTS });
@@ -1870,7 +1989,7 @@ impl Contour {
     /// Builds a line-only ring from polygon corner points, in travel order.
     pub fn from_polygon(points: Vec<[Length; 2]>) -> Result<Self, ContourError> {
         if points.len() < 3 {
-            return Err(ContourError::TooFewSegments { count: points.len() });
+            return Err(ContourError::TooFewCorners { count: points.len() });
         }
         if points.len() > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count: points.len(), max: MAX_CONTOUR_SEGMENTS });
@@ -1891,8 +2010,8 @@ impl Contour {
     /// and the counter are checked before the ring is sampled or its area is summed.
     fn assemble(entries: Vec<ContourSegmentEntry>, next_segment_id: ContourSegmentId) -> Result<Self, ContourError> {
         let count = entries.len();
-        if count < 3 {
-            return Err(ContourError::TooFewSegments { count });
+        if count == 0 {
+            return Err(ContourError::Empty);
         }
         if count > MAX_CONTOUR_SEGMENTS {
             return Err(ContourError::TooManySegments { count, max: MAX_CONTOUR_SEGMENTS });
@@ -1944,17 +2063,26 @@ impl Contour {
         self.entries.iter().map(|entry| entry.segment())
     }
 
-    /// Converts the whole ring to the geometry layer, in millimetres.
+    /// Converts the whole ring to the geometry layer, in millimetres, with every joint closed.
     ///
     /// Every segment keeps its curve, so an arc stays an arc until the geometry boundary samples
     /// it. The ids stay with the document ring; the geometry layer only needs the shape.
+    ///
+    /// The ring leaves the document closed: a joint the document judged by its own rule (ADR 0072)
+    /// is welded onto the end of the arc beside it, the line side moving and the arc's derived
+    /// endpoint standing. The exact readers — the boolean, the area partition, a half-plane cut —
+    /// assume one boundary and weld at a nanometre of their own (ADR 0043), so a ring that is legal
+    /// in the document and open in the geometry layer would be a dead operand (X103). A ring the
+    /// rule cannot close is handed on as it came, so nothing that loaded before stops loading.
     pub fn to_geometry(&self) -> Result<geom::Contour, ContourError> {
         let segments = self
             .entries
             .iter()
             .map(|entry| entry.segment().to_geom())
             .collect::<Result<Vec<_>, ContourSegmentError>>()?;
-        Ok(geom::Contour::new_with_joint_tolerance(segments, true, |first, next| joint_tolerance_mm(*first, *next))?)
+        let tolerance = |first: &geom::Segment, next: &geom::Segment| joint_tolerance_mm(*first, *next);
+        let ring = geom::Contour::new_with_joint_tolerance(segments, true, tolerance)?;
+        Ok(ring.welded(tolerance).unwrap_or(ring))
     }
 
     /// The segment with this id.
@@ -2037,7 +2165,7 @@ impl Contour {
             }
         }
         if points.len() < 3 {
-            return Err(ContourError::TooFewSegments { count: points.len() });
+            return Err(ContourError::TooFewSamples { count: points.len() });
         }
         Ok(points)
     }
@@ -2237,11 +2365,12 @@ pub const MAX_POLYGON_SIDES: u32 = 128;
 
 /// Base joint tolerance between two consecutive path segments, in micrometres.
 ///
-/// A drawn arc endpoint is exact only in floating point, so after rounding to whole micrometres it
-/// can differ from the next stored endpoint by one unit; an arc adds the radius-dependent rounding
-/// slack of [`arc_slack_micrometres`] on top. This is the same rule the document ring uses when it
-/// assembles and when it converts to geometry (ADR 0072).
-const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 1;
+/// Two stored endpoints rounded to whole micrometres independently can miss each other by
+/// `sqrt(2)/2 + sqrt(2)/2` micrometres — each coordinate moves by at most half a unit, so the
+/// diagonal bound is 1.42 — and this bound is that rounding rounded up; an arc adds the
+/// radius-dependent slack of [`arc_slack_micrometres`] on top. This is the same rule the document
+/// ring uses when it assembles and when it converts to geometry (ADR 0072).
+const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 2;
 
 /// An ordered chain of directed lines and arcs in a local XY plane.
 ///
@@ -2260,7 +2389,7 @@ const PATH_JOINT_TOLERANCE_MICROMETRES: i64 = 1;
 /// A closed path may also remember the figure it was drawn as ([`PathShape`]). The tag stores no
 /// dimensions: the centre, the radius and the side count are read from the segments, and the tag
 /// only decides which constraint set the edit grips apply (ADR 0073). A structural edit clears it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "PathWire", into = "PathWire")]
 pub struct Path {
     entries: Vec<ContourSegmentEntry>,
@@ -2274,7 +2403,7 @@ pub struct Path {
 /// The tag is edit intent, not geometry: every dimension is derived from the segments, so a path
 /// cannot contradict itself by storing a radius that its arcs do not have. A tag that does not fit
 /// the stored segments is a load error (`PathError::ShapeMismatch`) rather than a silent downgrade.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PathShape {
     /// Four axis-aligned lines, the figure [`Path::rectangle`] builds.
@@ -3010,6 +3139,21 @@ impl Path {
         }
         Contour::assemble(self.entries.clone(), self.next_segment_id).map_err(PathError::Contour)
     }
+
+    /// The closed path a geometry ring becomes, with fresh segment ids.
+    ///
+    /// The boundary conversion the other way, for a command that derives a shape in the geometry
+    /// layer and stores it: a boolean result ring, or one area of a drawing (G4). Every segment is
+    /// rounded to the document's units once, here and nowhere else, and the ring is then validated
+    /// as a path, so a ring the document cannot hold is refused with the reason instead of being
+    /// stored half-converted.
+    pub fn from_geometry(ring: &geom::Contour) -> Result<Self, PathError> {
+        let mut segments = Vec::with_capacity(ring.segments().len());
+        for segment in ring.segments() {
+            segments.push(ContourSegment::from_geom(*segment)?);
+        }
+        Self::new(segments, true)
+    }
 }
 
 impl From<Contour> for Path {
@@ -3030,9 +3174,9 @@ fn joints_meet(current: ContourSegment, next: ContourSegment) -> Result<bool, Co
 
 /// The joint tolerance between two consecutive stored segments, in micrometres.
 ///
-/// The one document unit of [`PATH_JOINT_TOLERANCE_MICROMETRES`] covers the rounding of the two
-/// stored points; an arc adds [`arc_slack_micrometres`] because its endpoint is derived from a
-/// rounded centre, radius and angle (ADR 0072).
+/// [`PATH_JOINT_TOLERANCE_MICROMETRES`] covers the rounding of the two stored points; an arc adds
+/// [`arc_slack_micrometres`] because its endpoint is derived from a rounded centre, radius and a
+/// rounded pair of angles (ADR 0072).
 fn joint_tolerance_micrometres(first: ContourSegment, next: ContourSegment) -> i64 {
     let base = PATH_JOINT_TOLERANCE_MICROMETRES;
     let slack = |segment: ContourSegment| match segment {
@@ -3044,15 +3188,18 @@ fn joint_tolerance_micrometres(first: ContourSegment, next: ContourSegment) -> i
 
 /// The rounding slack of an arc endpoint of this radius, in micrometres.
 ///
-/// An arc stores whole millidegrees, so its derived endpoint can move by
-/// `radius × 8.73e-6` — half a millidegree in radians — plus the radius and centre rounding the
-/// base bound already covers. `873 / 100_000_000` is that factor as an exact decimal. The result
-/// is rounded down, and the one-unit base then covers the remainder, so the document never accepts
-/// a joint the geometry boundary would refuse.
+/// An arc stores whole millidegrees, and its endpoint is derived from the *sum* of two of them — the
+/// start angle and the sweep — so each rounding moves the point by up to half a millidegree and the
+/// two together by a whole one: `radius × 1.746e-5` radians. The centre and the radius are rounded
+/// too, which adds at most `sqrt(2)/2 + 1/2` micrometres, carried here as one more unit.
+/// `1_746 / 100_000_000` is a whole millidegree as an exact-ish decimal; the product is rounded down
+/// and two units cover the remainder, so the document never accepts a joint the geometry boundary
+/// would refuse. The half-millidegree bound this rule started with refused the arc a boolean leaves
+/// at a circle's crossing with a straight edge (G3, ADR 0072).
 fn arc_slack_micrometres(radius_micrometres: i128) -> i64 {
-    let product = radius_micrometres.saturating_mul(873);
+    let product = radius_micrometres.saturating_mul(1_746);
     let slack = product / 100_000_000;
-    i64::try_from(slack).unwrap_or(i64::MAX)
+    i64::try_from(slack).unwrap_or(i64::MAX).saturating_add(2)
 }
 
 /// The joint tolerance between two geometry segments converted from stored ones, in millimetres.
@@ -3073,7 +3220,7 @@ pub fn joint_tolerance_mm(first: Segment, second: Segment) -> f64 {
             }
         }
     };
-    let micrometres = 1_i64.saturating_add(slack(first)).saturating_add(slack(second));
+    let micrometres = PATH_JOINT_TOLERANCE_MICROMETRES.saturating_add(slack(first)).saturating_add(slack(second));
     micrometres as f64 * 1.0e-3
 }
 
@@ -3178,7 +3325,7 @@ pub enum PathError {
 }
 
 /// Serialized form of [`Path`]; validation happens in its `TryFrom` implementation.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PathWire {
     segments: Vec<ContourSegmentEntryWire>,
@@ -3428,10 +3575,19 @@ pub enum ContourError {
     /// The geometry layer rejected the whole ring despite valid segments.
     #[error(transparent)]
     Geometry(#[from] geom::ContourError),
-    /// The contour has fewer than three segments.
-    #[error("a contour needs at least three segments, got {count}")]
-    TooFewSegments {
-        /// The supplied segment count.
+    /// The ring has no segments at all.
+    #[error("a ring needs at least one segment")]
+    Empty,
+    /// A polygon has fewer than three corners, so it cannot bound an area.
+    #[error("a polygon needs at least three corners, got {count}")]
+    TooFewCorners {
+        /// The supplied corner count.
+        count: usize,
+    },
+    /// Sampling the ring left too few points to be a profile.
+    #[error("the ring samples to {count} points, and a profile needs at least three")]
+    TooFewSamples {
+        /// The sampled point count.
         count: usize,
     },
     /// The contour has more segments than the limit allows.

@@ -1,0 +1,800 @@
+//! The domain a caller is building in, said once and served to every door.
+//!
+//! A model that is handed fifty ids and their schemas still does not know what the program is for.
+//! It does not know that a build from scratch starts with a product frame, that the frame's base
+//! rectangle may have a corner cut or a drawn ring, that a panel is born in one of three stances and
+//! that its class names its role, or that a nut is not furniture at all. That knowledge lived in
+//! `docs/` and in the heads of the people who wrote it, so every caller inferred it from labels and
+//! got the units and the stances wrong (X115, X117, X118).
+//!
+//! This module is that knowledge as one value. Nothing here is a construction: it names no carcass,
+//! no wardrobe and no nut, because a construction is a decision a caller makes out of parts the
+//! program already has (ADR 0192, ADR 0215). It is built from the two tables that own the answers —
+//! [`crate::Family`] over the command registry and `model::class::registry()` over the semantic
+//! classes — so a word cannot drift from the thing it names, and the sentences a table cannot state
+//! are counted and few.
+//!
+//! Changes when: the world model, the order of a build, the stance table or a unit changes.
+
+use std::fmt::Write as _;
+
+use model::{ClassCode, Envelope, Footprint, Level, Node, Placement, Supply, registry};
+use serde_json::{Value, json};
+use text::Lang;
+use units::Length;
+
+use crate::family::Family;
+use crate::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
+use crate::product_cmds::PRODUCT_CREATE_ID;
+
+/// The radius the worked frame example rounds one front corner with: 100 mm.
+pub const EXAMPLE_CORNER_RADIUS: Length = Length::from_micrometres(100_000);
+
+/// The frame the guide's worked example builds: 800 × 560 × 2200 mm with one rounded front corner.
+///
+/// The numbers are a wardrobe because that is the piece this track exists for, and the corner is
+/// the front-left one because an angular cabinet rounds the corner a person walks past. The value
+/// is a real [`Envelope`], so a test can dispatch it and a reader cannot mistake the prose for a
+/// shape the program does not accept.
+pub fn example_frame() -> Option<Envelope> {
+    let size = |millimetres: i64| Length::from_millimetres(millimetres);
+    let corner = model::CornerFeatureKind::Radius { radius: EXAMPLE_CORNER_RADIUS };
+    let mut corners = [None; 4];
+    corners[2] = Some(corner);
+    Envelope::with_footprint(size(800)?, size(560)?, size(2200)?, Footprint::cut(corners)).ok()
+}
+
+/// The one value every guide door prints.
+pub fn guide() -> Value {
+    json!({
+        "domain": domain(),
+        "worlds": worlds(),
+        "steps": steps(),
+        "frames": frames(),
+        "stances": stances(),
+        "niches": niches(),
+        "classes": classes(),
+        "units": units(),
+        "sides": sides(),
+        "placements": placements(),
+        "checks": checks(),
+    })
+}
+
+/// How many nodes a scene brief lists before it counts the rest.
+pub const SCENE_BRIEF_NODES: usize = 80;
+
+/// How deep a scene brief walks before it counts the rest.
+const SCENE_BRIEF_DEPTH: usize = 12;
+
+/// The live scene as a model reads it: the root id, the open product and the nodes it holds.
+///
+/// The static guide says what the program is; this says *which* nodes this session holds. A model
+/// that is not given the root id asks the person for one instead of creating a free body, and one
+/// that is not told what is in the scene guesses or asks. The read walks at most
+/// [`SCENE_BRIEF_NODES`] nodes and [`SCENE_BRIEF_DEPTH`] levels, folds a name to one line and writes
+/// nothing.
+pub fn scene_brief(session: &crate::Session) -> String {
+    let project = session.project();
+    let root = project.root();
+    let mut text = String::new();
+    let _ = writeln!(text, "The scene right now (a command takes these ids as `parent` or `node`):");
+    let _ = writeln!(text, "- root container id = {}", root.id().get());
+    match session.active_product() {
+        Some(id) => {
+            let _ = writeln!(text, "- open product id = {}", id.get());
+        }
+        None => text.push_str("- open product = none\n"),
+    }
+    text.push_str("- nodes (id, kind, name):\n");
+    let mut listed = 0usize;
+    let mut rest = 0usize;
+    for child in root.children() {
+        walk_brief(child, 0, &mut listed, &mut rest, &mut text);
+    }
+    if rest > 0 {
+        let _ = writeln!(text, "  … {rest} more");
+    }
+    text.push_str("- a free body belongs under the root; a product is not required for one.\n");
+    text
+}
+
+/// One node and its children in [`scene_brief`]'s shape, bounded by the two caps.
+fn walk_brief(node: &Node, depth: usize, listed: &mut usize, rest: &mut usize, text: &mut String) {
+    if *listed >= SCENE_BRIEF_NODES || depth >= SCENE_BRIEF_DEPTH {
+        *rest = rest.saturating_add(1);
+        return;
+    }
+    *listed = listed.saturating_add(1);
+    let kind = match node {
+        Node::Container(container) if container.is_product() => "product",
+        Node::Container(_) => "container",
+        Node::Panel(_) => "panel",
+        Node::Object(_) => "body",
+        Node::Camera(_) => "camera",
+        Node::Light(_) => "light",
+    };
+    let name: String = node.name().chars().map(|ch| if ch == '\n' || ch == '\r' { ' ' } else { ch }).take(80).collect();
+    let _ = writeln!(text, "  {} {kind} \"{}\"", node.id().get(), name.trim());
+    if let Some(children) = node.children() {
+        for child in children {
+            walk_brief(child, depth + 1, listed, rest, text);
+        }
+    }
+}
+
+/// What the program is, and which reading wins when a word could mean two things.
+fn domain() -> Value {
+    json!({
+        "name": "Z3L",
+        "kind": "furniture",
+        "rule": "This program builds furniture, and its words win. «Корпус» is a product frame with \
+                 parts, not a sheet-metal box; «штанга» is a hanging rail, not a steel bar. A solid \
+                 that is no furniture part at all — a nut, a bracket, a template — belongs to the \
+                 geometry world and is built there.",
+        "words": {
+            "product": "one piece of furniture: a container whose class is a product class and which \
+                        stores an authored envelope; its box is what the parts are measured against",
+            "part": "a panel or a bought piece inside one product: an upright, a horizontal, a back, \
+                     a door, a front, a worktop",
+            "fitting": "a piece mounted on a part: a hinge, a runner, a handle, a hanging rail",
+            "body": "a free solid built from primitives, extrusions, paths and booleans; it is not a \
+                     part, no product contains it and it is cut from no sheet",
+        },
+    })
+}
+
+/// The four command families, each with the tools that serve it.
+fn worlds() -> Value {
+    Value::Array(
+        Family::ALL
+            .iter()
+            .map(|family| {
+                json!({
+                    "family": family.word(),
+                    "serves": family.serves(),
+                    "begin_with": first_command(*family),
+                    "commands": family.commands().collect::<Vec<&str>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The command a family's work begins with, when it has one.
+fn first_command(family: Family) -> Option<&'static str> {
+    match family {
+        Family::Furniture => Some(PRODUCT_CREATE_ID),
+        Family::Geometry => Some("object.primitive.create"),
+        Family::Scene => Some("camera.create"),
+        Family::Tree => None,
+    }
+}
+
+/// The order of a build from scratch: the frame, the parts, their edges, then what is mounted on them.
+fn steps() -> Value {
+    json!([
+        {
+            "order": 1,
+            "step": "frame",
+            "command": PRODUCT_CREATE_ID,
+            "says": "A piece begins as a product frame: three authored sides and a footprint on its \
+                     base plane. The frame never resizes with its parts (ADR 0098), and creating it \
+                     opens it, so the first part lands inside it without a second step: every answer \
+                     names `open_product` (ADR 0100).",
+        },
+        {
+            "order": 2,
+            "step": "parts",
+            "command": PANEL_CREATE_ID,
+            "says": "Every part is a panel created in one of the three stances below, with a class \
+                     that names its role. Width, depth and height are solved from the frame: a part \
+                     is placed by a length the caller computed, and the program keeps the number it \
+                     was given rather than deriving it. A panel's `nominal_size` names only the two \
+                     sides its stance measures — length along the stance's length axis and width \
+                     along its width — and its third side is the board's thickness, which comes from \
+                     the material's record and never from the command. The command names the piece it \
+                     writes in; the interface offers creation only inside the piece the person has \
+                     open (ADR 0098, ADR 0226).",
+        },
+        {
+            "order": 3,
+            "step": "edges",
+            "command": "panel.edge_banding.set",
+            "says": "An exposed edge takes a band, and the edge id names an edge in the panel's own \
+                     frame, so the front edge of a shelf and of an upright are both edge 3.",
+        },
+        {
+            "order": 4,
+            "step": "fittings",
+            "command": null,
+            "says": "No command creates a fitting yet. The class registry names them (50.*) and the \
+                     hanging rail is 20.06, so a caller knows what the piece is called, but the only \
+                     way to put one in the scene today is to build it as a body in the geometry \
+                     world — or to leave it out until the hardware family lands.",
+        },
+    ])
+}
+
+/// The two doors that check a build, and the question each one answers.
+///
+/// They are not two answers to one question: the rules' findings are the seven mistakes a build can
+/// carry — a part outside its product's envelope included — and the panel diagnostics are the
+/// problems a panel's own derivation resolves. A caller that reads the wrong one concludes the
+/// scene is clean, which is exactly what an acceptance run did before this section existed (X116).
+fn checks() -> Value {
+    json!([
+        {
+            "question": "inspect",
+            "says": "The seven mistakes the rules can prove, in severity order: a part outside the \
+                     product's envelope (`envelope_out`), two bodies sharing volume \
+                     (`body_overlap`), a shelf that does not fit its opening (`shelf_fit`), a rail \
+                     where the workshop does not hang it (`rail_place`), an exposed edge with no band \
+                     (`edge_band`), a door gap that is not the gap the class asks for (`door_gap`), \
+                     and a part that leaves its sheet (`sheet_fit`). Each finding names the ids it \
+                     blames and the commands that would fix it. `inspect` writes nothing and runs on \
+                     the open document.",
+        },
+        {
+            "question": "diagnostics",
+            "says": "One row per panel with the problems its own derivation resolves: a material the \
+                     catalogue no longer carries, a core that vanished, a machining outside the \
+                     core, a blind depth no shorter than the thickness. It answers about a panel, \
+                     not about the piece: a part that stands outside its product is `envelope_out`, \
+                     which `inspect` answers.",
+        },
+    ])
+}
+
+/// The shapes a product frame may take, with one real envelope a caller can read and copy.
+fn frames() -> Value {
+    let mut value = json!({
+        "command": PRODUCT_CREATE_ID,
+        "parameter": "envelope.footprint",
+        "says": "The frame is a box cut to a footprint: the three sides are the bounds of the \
+                 reserved space and the footprint says what the base rectangle is cut to. It is \
+                 authored once, at creation, and no child edit changes it.",
+        "shapes": [
+            {
+                "shape": "rectangle",
+                "says": "The whole rectangle, which is also what an envelope without a footprint \
+                         means. A plain cabinet.",
+            },
+            {
+                "shape": "cut",
+                "says": "The rectangle with one or more corners cut by a chamfer or a fillet. This \
+                         is a radius front corner: an angular cabinet or a wardrobe with a rounded \
+                         edge. `corners` holds four entries, counter-clockwise from the zero corner \
+                         (bottom-left, bottom-right, top-right, top-left); `null` leaves that corner \
+                         square.",
+            },
+            {
+                "shape": "ring",
+                "says": "A closed ring drawn on the base plane — a polygon, an arc or a mix, in the \
+                         product's own frame. Its bounds are the three sides.",
+            },
+        ],
+    });
+    if let (Some(envelope), Some(object)) = (example_frame(), value.as_object_mut())
+        && let Ok(example) = serde_json::to_value(envelope)
+    {
+        object.insert("example".to_owned(), example);
+    }
+    value
+}
+
+/// One stance of ADR 0105, as a rotation a caller can write into a placement.
+///
+/// The stance is the flat panel turned about a world axis, never mirrored: the shelf is the base,
+/// the post is the shelf a quarter-turn to the right about `+Y`, and the wall is the post a
+/// quarter-turn about `+Z`. The numbers are a quaternion `[x, y, z, w]` in the placement's own
+/// order, so a caller who reads this table writes the stance and does not reinvent it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stance {
+    /// The word for the stance.
+    name: &'static str,
+    /// How it is made from the flat panel.
+    turns: &'static str,
+    /// The rotation `[x, y, z, w]`, as a placement stores it.
+    rotation: [f64; 4],
+    /// Where the panel's local length runs.
+    length: &'static str,
+    /// Where the panel's local width runs.
+    width: &'static str,
+    /// Where the panel's thickness runs, which is the direction face `A` points.
+    thickness: &'static str,
+    /// Where vertex 1 — the node's origin — stands.
+    vertex_1: &'static str,
+}
+
+impl Stance {
+    /// Every stance of ADR 0105, the flat one first.
+    pub const ALL: [Self; 3] = [
+        Self {
+            name: "shelf",
+            turns: "unturned: the flat panel is the shelf",
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            length: "+X",
+            width: "+Y",
+            thickness: "+Z",
+            vertex_1: "the minimum x and y corner, on the bottom face",
+        },
+        Self {
+            name: "post",
+            turns: "-90 degrees about +Y",
+            rotation: [0.0, -std::f64::consts::FRAC_1_SQRT_2, 0.0, std::f64::consts::FRAC_1_SQRT_2],
+            length: "+Z",
+            width: "+Y",
+            thickness: "-X",
+            vertex_1: "the bottom-rear corner; the board grows from there towards -X",
+        },
+        Self {
+            name: "wall",
+            turns: "the post turned -90 degrees about +Z",
+            rotation: [-0.5, -0.5, -0.5, 0.5],
+            length: "+Z",
+            width: "+X",
+            thickness: "+Y",
+            vertex_1: "the corner at minimum x and minimum z",
+        },
+    ];
+
+    /// The word for the stance.
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+
+    /// The rotation as a quaternion `[x, y, z, w]`.
+    pub const fn rotation(self) -> [f64; 4] {
+        self.rotation
+    }
+
+    /// The rotation as a placement rotation.
+    pub fn placement_rotation(self) -> geom::DQuat {
+        let [x, y, z, w] = self.rotation;
+        geom::DQuat::from_xyzw(x, y, z, w)
+    }
+
+    /// The placement that turns the flat panel into this stance, at the parent frame's origin.
+    pub fn placement(self) -> Option<Placement> {
+        Placement::new(geom::DVec3::ZERO, self.placement_rotation()).ok()
+    }
+}
+
+/// The empty space a point inside a piece names, and the one command that fills it.
+///
+/// A caller that knows every size and place builds its panels itself; a void of irregular shape is
+/// where measuring beats computing, and the two doors below answer it from the same model. The rule
+/// about *which* piece is the caller's own care: a caller that is not sure which product the task
+/// means asks the person to open it instead of guessing (ADR 0098, ADR 0226).
+fn niches() -> Value {
+    json!({
+        "says": "The empty space inside a piece is measured, not assumed: a point in world \
+                 millimetres names one convex cell with its walls, and the part that fills it is \
+                 derived from that cell. Use it when the void is not the rectangle you can compute \
+                 — a splayed carcass, a cut corner, a ring — and build the panels by their numbers \
+                 when you already know them.",
+        "ask": {
+            "query": "niche",
+            "arguments": {"at": "[x, y, z] in world millimetres"},
+            "answers": "the product the cell belongs to, the box it reserves, its planes and corners, \
+                        and whether its section is a box, a section or a sloped cell",
+        },
+        "fill": {
+            "command": "panel.fill",
+            "arguments": {
+                "parent": "the container the part lands in: the product or a group inside it",
+                "at": "the point inside the void, world millimetres",
+                "class": "the class the part plays; its fill trait chooses the axis pair",
+                "mode": "`fit` for the largest rectangle, `shape` for the section the walls leave",
+                "free": "the place along the free axis, millimetres; absent, the point answers",
+                "name": "the part's name; absent, its class's word, made unique",
+            },
+            "answers": "the id of the created panel, its class, its nominal size and the stance the \
+                        guide states; one revision and one undo entry",
+            "refuses": "a point in no product, a void that is not one cell, a void of another product \
+                        than `parent`, and a class whose traits carry no fill pair",
+        },
+        "which_product": "Name the product you are sure of. When a task does not say which piece it \
+                          means and more than one product is in the scene, ask the person to open it \
+                          — every answer names `open_product` — instead of writing into a guess.",
+    })
+}
+
+/// The shape a `placement` parameter takes, which a model must not guess.
+///
+/// The JSON a command parses is `{"translation":[x,y,z],"rotation":[x,y,z,w]}`; a model handed only
+/// the word "placement" tried a bare map, an array of three and an array of four in one turn, and
+/// each refusal cost a call (X127). The shape is stated once, next to the units.
+fn placements() -> Value {
+    json!({
+        "shape": {"translation": "[x, y, z]", "rotation": "[x, y, z, w]"},
+        "example": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
+        "translation": "millimetres from the parent's origin",
+        "rotation": "a unit quaternion; the identity is [0, 0, 0, 1]",
+        "rule": "a placement is this object, never a bare array or a map of named parts",
+    })
+}
+
+/// The three stances, as the guide prints them.
+fn stances() -> Value {
+    Value::Array(
+        Stance::ALL
+            .iter()
+            .map(|stance| {
+                json!({
+                    "stance": stance.name,
+                    "turns": stance.turns,
+                    "rotation": stance.rotation,
+                    "length": stance.length,
+                    "width": stance.width,
+                    "thickness": stance.thickness,
+                    "vertex_1": stance.vertex_1,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The semantic classes, grouped by the family heading that owns them.
+///
+/// The rows are the registry's, with the words a person may type for them: a caller that hears
+/// «горизонт» finds `10.11` without us writing a second dictionary.
+fn classes() -> Value {
+    let mut groups: Vec<(u32, Value)> = Vec::new();
+    for row in registry() {
+        if row.is_family() {
+            groups.push((
+                row.code() / 10_000,
+                json!({
+                    "group": format!("{:02}", row.code() / 10_000),
+                    "family": row.slug(),
+                    "label": row.label().text(Lang::En),
+                    "classes": [],
+                }),
+            ));
+            continue;
+        }
+        if !row.is_assignable() {
+            continue;
+        }
+        let Some(level) = row.traits().map(|traits| traits.level()) else {
+            continue;
+        };
+        let Some((_, group)) = groups.last_mut() else {
+            continue;
+        };
+        let class = json!({
+            "code": ClassCode::from_code(row.code()).map(|code| code.to_string()),
+            "slug": row.slug(),
+            "label": row.label().text(Lang::En),
+            "level": level_word(level),
+            "supply": row.traits().map(|traits| supply_word(traits.supply())),
+            "aliases": row.aliases(),
+        });
+        let mut class = class;
+        if let (Some(fill), Some(object)) = (row.traits().and_then(|traits| traits.fill()), class.as_object_mut()) {
+            object.insert("fill".to_owned(), Value::from(fill_word(fill)));
+        }
+        if let Some(rows) = group.get_mut("classes").and_then(Value::as_array_mut) {
+            rows.push(class);
+        }
+    }
+    Value::Array(groups.into_iter().map(|(_, group)| group).collect())
+}
+
+/// The wire word of a class level.
+const fn level_word(level: Level) -> &'static str {
+    match level {
+        Level::Product => "product",
+        Level::Component => "component",
+        Level::Part => "part",
+        Level::Fitting => "fitting",
+    }
+}
+
+/// The wire word of a supply kind.
+const fn supply_word(supply: Supply) -> &'static str {
+    match supply {
+        Supply::MadeFromSheet => "sheet",
+        Supply::MadeFromLinear => "linear",
+        Supply::BuyPiece => "bought",
+        Supply::MadeInShop => "made-in-shop",
+    }
+}
+
+/// The axis pair a class takes from a void, in the words `docs/domain/classes.md` uses.
+///
+/// `w`, `h` and `d` are the void's width, height and depth — the axes the box answer reports as
+/// `x`, `y` (depth) and `z` — so a caller that hears «полка» reads `10.11` and `w+d` and knows the
+/// board spans the void's width and depth, while «стойка» is `10.10` and `h+d`. A class that fills
+/// nothing carries no word.
+const fn fill_word(fill: model::Fill) -> &'static str {
+    match fill {
+        model::Fill::HeightAndDepth => "h+d",
+        model::Fill::WidthAndDepth => "w+d",
+        model::Fill::WidthAndHeight => "w+h",
+    }
+}
+
+/// The units every number travels in, which is the mistake that cost a whole build (X115).
+fn units() -> Value {
+    json!({
+        "length": "micrometres, integer: every size the document owns — a panel's nominal size, a \
+                   body's sides, an extrusion height, a point in a contour, a machining offset",
+        "placement": "millimetres, floating point: the translation of a placement, and a world \
+                      point in an answer that names it `_mm`",
+        "angle": "millidegrees, integer: an angle parameter, and every angle the inspector shows \
+                  in degrees is that number printed",
+        "rotation": "a unit quaternion [x, y, z, w] in a placement; Euler angles are a presentation \
+                     and are never stored",
+        "rule": "the published parameter schema says which shape a field has, and every field that \
+                 carries a length, an angle or a placement is annotated with the `unit` its type is \
+                 in; an answer that carries a measurement names the unit in the key (`size_um`, \
+                 `origin_mm`). A number that looks like a length is never assumed to be one",
+    })
+}
+
+/// The four sides of a piece are the reader's, not the program's.
+///
+/// A furniture description is spoken from in front of the piece — «слева полки, справа штанга» — so a
+/// caller has to turn the speaker's words into the frame, and the program cannot do it for them: a
+/// second person may read the same sentence the other way round. What the program can state is the
+/// frame and the one reading the sentence usually takes (the owner, 2026-11-22, ADR 0216): the front
+/// is `+Y`, up is `+Z`, and the side the speaker sees on their left is `+X`. A caller writes its
+/// reading back in the answer, so a person corrects the caller and not the document.
+fn sides() -> Value {
+    json!({
+        "rule": "A piece has a front, a back, a left and a right, and a person describing it speaks \
+                 from in front: the front view looks from +Y towards -Y with +Z up, so the side a \
+                 viewer standing in front of the piece sees on their left is +X, and the one they see \
+                 on their right is -X.",
+        "reading": "A description is read from the front view, in the piece's own frame: up is +Z, \
+                    towards the person is -Y. Another person may read the same words the other way \
+                    round, so say back which axis you put each group of parts on — «полки на +X, \
+                    штанга на -X» — instead of leaving the reader to infer it from your numbers.",
+        "in_the_document": "A part is placed by its world placement, and the axes are the ones the \
+                            box answer reports: `size_um` is the piece's own box and `origin_mm` is \
+                            where its zero corner stands, so the +X face of the piece is \
+                            `origin_mm[0] + size_um.x` and the -X face is `origin_mm[0]`.",
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use geom::DVec3;
+    use model::Footprint;
+    use serde_json::from_value;
+
+    use crate::CommandRegistry;
+
+    use super::*;
+
+    /// Every command id the guide states under `command` and `begin_with`.
+    fn named_commands(value: &Value, found: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                for (key, inner) in map {
+                    if key == "command" || key == "begin_with" {
+                        continue;
+                    }
+                    named_commands(inner, found);
+                }
+                for key in ["command", "begin_with"] {
+                    if let Some(id) = map.get(key).and_then(Value::as_str) {
+                        found.push(id.to_owned());
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    named_commands(item, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_scene_brief_names_the_root_and_the_open_product() {
+        // X125: the model asked the person for the root id because nothing told it one. The brief is
+        // the answer: the root is always named, the open product is named, and a free body needs no
+        // product.
+        let (project, product) = testkit::sample_product_project();
+        let mut session = crate::Session::with_directory(project, testkit::sample_catalog());
+        assert!(session.open_product(product));
+
+        let brief = scene_brief(&session);
+
+        let root = session.project().root().id().get();
+        assert!(brief.contains(&format!("root container id = {root}")), "{brief}");
+        assert!(brief.contains(&format!("open product id = {}", product.get())), "{brief}");
+        assert!(brief.contains("Cabinet"), "the nodes are named: {brief}");
+        assert!(brief.contains("a free body belongs under the root"), "{brief}");
+    }
+
+    #[test]
+    fn the_guide_states_the_placement_shape_a_model_must_not_guess() {
+        // X127: the model tried a map, an array of three and an array of four in one turn because
+        // nothing told it the shape. The guide now names both fields and the identity.
+        let placements = &guide()["placements"];
+        assert_eq!(placements["shape"]["translation"], "[x, y, z]");
+        assert_eq!(placements["shape"]["rotation"], "[x, y, z, w]");
+        assert_eq!(placements["example"]["rotation"], json!([0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(placements["rule"], "a placement is this object, never a bare array or a map of named parts");
+    }
+
+    #[test]
+    fn the_guide_names_only_commands_the_registry_holds() {
+        let guide = guide();
+        let mut found = Vec::new();
+        named_commands(&guide, &mut found);
+        assert!(!found.is_empty(), "the guide names the tools it expects a caller to use");
+        for id in found {
+            assert!(CommandRegistry::new().get(&id).is_some(), "the guide names `{id}`, which is not registered");
+        }
+    }
+
+    #[test]
+    fn every_world_lists_the_commands_of_its_family() {
+        let guide = guide();
+        let worlds = guide["worlds"].as_array().expect("worlds is an array");
+        assert_eq!(worlds.len(), Family::ALL.len());
+        for (world, family) in worlds.iter().zip(Family::ALL) {
+            assert_eq!(world["family"], family.word());
+            let listed: Vec<&str> =
+                world["commands"].as_array().expect("a list").iter().filter_map(Value::as_str).collect();
+            let expected: Vec<&str> = family.commands().collect();
+            assert_eq!(listed, expected, "{} lists its family", family.word());
+        }
+    }
+
+    #[test]
+    fn every_assignable_class_appears_once_with_the_words_a_person_types() {
+        let guide = guide();
+        let groups = guide["classes"].as_array().expect("classes is an array");
+        assert!(!groups.is_empty());
+        let mut codes: Vec<&str> = Vec::new();
+        for group in groups {
+            for class in group["classes"].as_array().expect("rows") {
+                let code = class["code"].as_str().expect("a code");
+                codes.push(code);
+                assert!(class["label"].as_str().is_some_and(|label| !label.is_empty()), "{code} has a label");
+                assert!(class["level"].as_str().is_some(), "{code} says its level");
+            }
+        }
+        let assignable = registry().iter().filter(|row| !row.is_family() && row.is_assignable()).count();
+        assert_eq!(codes.len(), assignable, "one row per assignable class, no duplicates and none dropped");
+        let shelf = groups
+            .iter()
+            .flat_map(|group| group["classes"].as_array().into_iter().flatten())
+            .find(|class| class["code"] == "10.11")
+            .expect("the horizontal row is published");
+        let aliases: Vec<&str> =
+            shelf["aliases"].as_array().expect("aliases").iter().filter_map(Value::as_str).collect();
+        assert!(aliases.contains(&"полка"), "the row carries the word a person types: {aliases:?}");
+    }
+
+    #[test]
+    fn a_class_that_fills_a_void_says_which_axis_pair_it_takes() {
+        // «Слева полки, справа штанга» reaches the registry as codes: the shelf is 10.11 and takes
+        // the void's width and depth, the post is 10.10 and takes its height and depth, the back is
+        // 10.12 and takes width and height, and a door fills nothing (J19, ADR 0097).
+        let guide = guide();
+        let class = |code: &str| {
+            guide["classes"]
+                .as_array()
+                .expect("classes")
+                .iter()
+                .flat_map(|group| group["classes"].as_array().into_iter().flatten())
+                .find(|class| class["code"] == code)
+                .cloned()
+                .expect("the row is published")
+        };
+        assert_eq!(class("10.11")["fill"], "w+d", "a shelf spans the void's width and depth");
+        assert_eq!(class("10.10")["fill"], "h+d", "a post spans its height and depth");
+        assert_eq!(class("10.12")["fill"], "w+h", "a back stands in the frontal plane");
+        assert!(class("10.20").get("fill").is_none(), "a door fills no void, so it carries no pair");
+    }
+
+    #[test]
+    fn the_sides_are_read_from_the_front_and_the_reading_is_said_back() {
+        // A person describes a piece from in front of it, and a second person may read the same words
+        // the other way round, so the surface states the reading and asks the caller to repeat it
+        // (owner, 2026-11-22, ADR 0216). No command, class or answer carries a side.
+        let guide = guide();
+        let sides = &guide["sides"];
+        assert!(
+            sides["rule"].as_str().is_some_and(|rule| rule.contains("+X") && rule.contains("+Y")),
+            "the frame states which axis a person's left is: {sides:?}"
+        );
+        assert!(
+            sides["reading"].as_str().is_some_and(|reading| reading.contains("say back")),
+            "a caller is told to write its reading back, so the person can correct it: {sides:?}"
+        );
+        assert!(sides.get("axes").is_none(), "the program states no side vocabulary, a caller brings its own");
+    }
+
+    #[test]
+    fn the_stance_table_is_the_one_adr_0105_states() {
+        let cases = [
+            (Stance::ALL[0], DVec3::X, DVec3::Y, DVec3::Z),
+            (Stance::ALL[1], DVec3::Z, DVec3::Y, DVec3::NEG_X),
+            (Stance::ALL[2], DVec3::Z, DVec3::X, DVec3::Y),
+        ];
+        for (stance, length, width, thickness) in cases {
+            let placement = stance.placement().expect("a unit rotation");
+            let along = |axis: DVec3| placement.transform_vector(axis);
+            assert!((along(DVec3::X) - length).length() < 1e-9, "{}: the length runs along {length}", stance.name());
+            assert!((along(DVec3::Y) - width).length() < 1e-9, "{}: the width runs along {width}", stance.name());
+            assert!(
+                (along(DVec3::Z) - thickness).length() < 1e-9,
+                "{}: the thickness runs along {thickness}",
+                stance.name()
+            );
+        }
+    }
+
+    #[test]
+    fn a_stance_puts_its_origin_on_the_bottom_face() {
+        for stance in Stance::ALL {
+            let placement = stance.placement().expect("a unit rotation");
+            let origin = placement.transform_point(DVec3::ZERO);
+            assert!(origin.z.abs() < 1e-9, "{}: vertex 1 is on the base, never on the ceiling", stance.name());
+        }
+    }
+
+    #[test]
+    fn the_worked_frame_is_a_radius_corner_the_program_accepts() {
+        let envelope = example_frame().expect("the example envelope");
+        let value = serde_json::to_value(&envelope).expect("the envelope serializes");
+        let read: Envelope = from_value(value).expect("the example reads back as an envelope");
+        assert_eq!(read, envelope);
+        let corners = match read.footprint() {
+            Footprint::Cut { corners } => corners,
+            other => panic!("the example is a cut corner, not {other:?}"),
+        };
+        assert!(
+            matches!(corners[2], Some(model::CornerFeatureKind::Radius { radius }) if radius == EXAMPLE_CORNER_RADIUS),
+            "the front corner is a fillet with the documented radius"
+        );
+        assert!(corners[0].is_none() && corners[1].is_none() && corners[3].is_none(), "the other corners stay square");
+    }
+
+    #[test]
+    fn the_guide_names_the_niche_and_the_piece_a_caller_works_in() {
+        // A released build ships no prose: the one command that fills a void and the rule about which
+        // piece to write in have to travel with the tool, or a caller guesses both (N37).
+        let guide = guide();
+        assert_eq!(guide["niches"]["ask"]["query"], "niche", "the measurement is a query a caller can ask");
+        assert_eq!(guide["niches"]["fill"]["command"], "panel.fill", "the fill is one command");
+        assert!(
+            guide["niches"]["which_product"].as_str().is_some_and(|rule| rule.contains("open_product")),
+            "the rule says where the open product is read"
+        );
+        assert!(
+            guide["steps"][1]["says"].as_str().is_some_and(|says| says.contains("ADR 0226")),
+            "the build's order says who decides the piece"
+        );
+        assert!(
+            guide["steps"][0]["says"].as_str().is_some_and(|says| says.contains("open_product")),
+            "the frame a caller makes is open, so the part after it needs no second step (X112)"
+        );
+    }
+
+    #[test]
+    fn the_guide_says_which_world_owns_a_nut_and_which_owns_a_carcass() {
+        let guide = guide();
+        let worlds = guide["worlds"].as_array().expect("worlds");
+        let furniture = worlds.iter().find(|world| world["family"] == "furniture").expect("the furniture world");
+        let geometry = worlds.iter().find(|world| world["family"] == "geometry").expect("the geometry world");
+        assert_eq!(furniture["begin_with"], PRODUCT_CREATE_ID, "a piece begins with its frame");
+        assert_eq!(geometry["begin_with"], "object.primitive.create", "a body begins with a primitive");
+        assert!(
+            guide["domain"]["rule"].as_str().is_some_and(|rule| rule.contains("geometry world")),
+            "the rule says where a body goes"
+        );
+    }
+}

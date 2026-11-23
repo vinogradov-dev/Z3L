@@ -69,6 +69,8 @@ messages! {
         "Всё выделение удаляется за один шаг. Отмена (Ctrl+Z) вернёт его."
     ],
     OpenSceneTitle = ["Open scene", "Открыть сцену"],
+    SaveImageAsTitle = ["Save the image as", "Сохранить изображение как"],
+    ImageFiles = ["PNG images", "Изображения PNG"],
     SaveSceneAsTitle = ["Save scene as", "Сохранить сцену как"],
     SceneFiles = ["Scene files", "Сцены"],
     PickFailed = [
@@ -110,6 +112,11 @@ messages! {
     ],
     AddingTo = ["Adding to: {}", "Добавление в: {}"],
     CreateAtRoot = ["Create at the scene root again", "Снова создавать в корне сцены"],
+    CreateAtRootHint = [
+        "The next created node lands at the scene root",
+        "Следующий созданный узел попадёт в корень сцены"
+    ],
+    ContourEdit = ["Contour edit", "Редактирование контура"],
     ContourEditStatusOne = ["Contour edit · {} segment", "Редактирование контура · {} сегмент"],
     ContourEditStatusFew = ["Contour edit · {} segments", "Редактирование контура · {} сегмента"],
     ContourEditStatusMany = ["Contour edit · {} segments", "Редактирование контура · {} сегментов"],
@@ -164,6 +171,10 @@ messages! {
         "The empty space here is not one straight shape; point at a plainer gap",
         "Пустое место здесь не одна прямая форма; укажите на более простой зазор"
     ],
+    VoidFootprint = [
+        "The open piece's frame is not convex; point at a plainer gap",
+        "Контур открытого изделия невыпуклый; укажите на более простой зазор"
+    ],
     NavigationStatus = ["Navigation · {}", "Навигация · {}"],
     GestureOrbit = ["Drag in the viewport to orbit  ·  Esc done", "Перетаскивайте в области просмотра для облёта  ·  Esc готово"],
     GesturePan = ["Drag in the viewport to pan  ·  Esc done", "Перетаскивайте в области просмотра для панорамы  ·  Esc готово"],
@@ -171,7 +182,6 @@ messages! {
     NavOrbitLabel = ["Orbit  ·  drag in the viewport", "Облёт  ·  перетаскивание в области просмотра"],
     NavPanLabel = ["Pan  ·  drag in the viewport", "Панорама  ·  перетаскивание в области просмотра"],
     NavZoomLabel = ["Zoom  ·  drag vertically", "Масштаб  ·  перетаскивание по вертикали"],
-    DoneEsc = ["Done  (Esc)", "Готово  (Esc)"],
     Gizmo = ["Gizmo", "Гизмо"],
     RollToDegree = ["Roll to {}°", "Крен до {}°"],
     HomeHint = ["Home  ·  back to the axonometric view", "Домой  ·  вернуться к аксонометрии"],
@@ -231,6 +241,11 @@ messages! {
     Expand = ["Expand", "Развернуть"],
     DisplaySettings = ["Display settings", "Настройки отображения"],
     ViewPreset = ["View preset", "Предустановка вида"],
+    ShadingGroup = ["Shading", "Заливка"],
+    ShadingGroupHint = [
+        "How this view draws the model: one of the five shading styles, and the filled cell is the one it uses",
+        "Как этот вид рисует модель: один из пяти стилей заливки, заполненная ячейка — используемый"
+    ],
     DisplayHeading = ["Display", "Отображение"],
     ShowOnScreenDisplay = ["Show the on-screen display", "Показывать экранную информацию"],
     OnScreenDisplayOn = [
@@ -397,6 +412,7 @@ messages! {
     PrimitiveBadgePrimitive = ["Primitive", "Примитив"],
     PrimitiveBadgeConstructive = ["Constructive", "Конструктив"],
     PrimitiveBadgePath = ["Path", "Путь"],
+    PrimitiveBadgeContours = ["Contours", "Контуры"],
 
     // ── Panel card ──────────────────────────────────────────────────────────
     PanelEditingInViewport = [
@@ -534,6 +550,60 @@ messages! {
     ],
     SegmentWithArc = ["Segment {} (arc)", "Сегмент {} (дуга)"],
     SegmentWith = ["Segment {}", "Сегмент {}"],
+
+    // ── The inspector's findings ────────────────────────────────────────────
+    FindingEnvelopeOut = [
+        "{} leaves the product envelope by {} mm on {}.",
+        "{} выходит за габарит изделия на {} мм по {}."
+    ],
+    FindingBodyOverlap = [
+        "{} and {} share volume.",
+        "{} и {} занимают один объём."
+    ],
+    FindingShelfWide = [
+        "{} is {} mm wider than its {} mm opening.",
+        "{} шире своего проёма на {} мм (проём {} мм)."
+    ],
+    FindingShelfLoose = [
+        "{} is {} mm narrower than its {} mm opening allows and sits loose.",
+        "{} уже своего проёма на {} мм и сидит свободно (проём {} мм)."
+    ],
+    FindingRailOutside = [
+        "{} stands outside its compartment or the product envelope.",
+        "{} стоит вне своей секции или габарита изделия."
+    ],
+    FindingRailDrop = [
+        "{} hangs {} mm below the top, not the {} mm the workshop uses.",
+        "{} висит на {} мм ниже верха, а мастерская вешает на {} мм."
+    ],
+    FindingRailClearance = [
+        "{} is {} mm from a shelf; the workshop keeps {} mm.",
+        "От {} до полки {} мм; мастерская держит {} мм."
+    ],
+    FindingEdgeMissing = [
+        "{} has no banding on the visible edge {}.",
+        "У {} не окромлён видимый торец {}."
+    ],
+    FindingEdgeHidden = [
+        "{} carries banding on the hidden edge {}.",
+        "У {} окромлён скрытый торец {}."
+    ],
+    FindingDoorGap = [
+        "The gap between {} and {} is {} mm, not {} mm.",
+        "Зазор между {} и {} — {} мм, а не {} мм."
+    ],
+    FindingDoorSize = [
+        "{} is {} mm wide; its opening wants {} mm.",
+        "Ширина {} — {} мм, а проём требует {} мм."
+    ],
+    FindingDoorOverlap = [
+        "{} and {} overlap by volume.",
+        "{} и {} пересекаются по объёму."
+    ],
+    FindingSheet = [
+        "{} is {} x {} mm and does not fit the {} x {} mm sheet.",
+        "{} — {} x {} мм и не помещается на лист {} x {} мм."
+    ],
     CornerGeneric = ["Corner", "Угол"],
     CornerRadiusSuffix = [" (radius)", " (радиус)"],
     CornerChamferSuffix = [" (chamfer)", " (фаска)"],
@@ -591,9 +661,9 @@ messages! {
     ClassBaseCabinet = ["Base cabinet", "Шкаф нижний"],
     ClassWallCabinet = ["Wall cabinet", "Шкаф навесной"],
     ClassTallCabinet = ["Tall cabinet", "Шкаф высокий"],
-    ClassVerticalPanel = ["Vertical panel", "Вертикальная панель"],
-    ClassHorizontalPanel = ["Horizontal panel", "Горизонтальная панель"],
-    ClassBackPanel = ["Back panel", "Задняя стенка"],
+    ClassVerticalPanel = ["Upright", "Стойка"],
+    ClassHorizontalPanel = ["Horizontal", "Горизонт"],
+    ClassBackPanel = ["Back", "Стенка"],
     ClassDrawerBoxPart = ["Drawer box part", "Деталь ящика"],
     ClassGlassShelf = ["Glass shelf", "Стеклянная полка"],
     ClassTamburatPanel = ["Tamburat panel", "Плита тамбурат"],
@@ -672,7 +742,7 @@ messages! {
         "Icons are rasterised at the new pixel size instead of stretched",
         "Значки растрируются в новом размере пикселя, а не растягиваются"
     ],
-    ExtrudeRefused = ["The selected path cannot be extruded: {}", "Выбранный путь нельзя выдавить: {}"],
+    ExtrudeRefused = ["The selected drawing cannot be extruded: {}", "Выбранный контур нельзя выдавить: {}"],
     LockedNode = [
         "{} is locked. Unlock it in the scene tree to change it.",
         "{} заблокирован. Снимите блокировку в дереве сцены, чтобы изменить его."
@@ -690,6 +760,7 @@ messages! {
     TreeBadgeMesh = ["mesh", "сетка"],
     TreeBadgeContour = ["contour", "контур"],
     TreeBadgePath = ["path", "путь"],
+    TreeBadgeContours = ["contours", "контуры"],
     TreeBadgeSphere = ["sphere", "сфера"],
     TreeBadgeCone = ["cone", "конус"],
     TreeAddChild = ["Add child", "Добавить дочерний"],
@@ -789,6 +860,31 @@ messages! {
     ToolGapLow = ["Low gap", "Нижний зазор"],
     ToolGapHigh = ["High gap", "Верхний зазор"],
 
+    // ── The render place ────────────────────────────────────────────────────
+    Render = ["Render", "Рендер"],
+    RenderTitle = ["Final render", "Финальный рендер"],
+    RenderHint = ["The final render of this scene", "Финальный рендер этой сцены"],
+    RenderOf = ["A still image of “{}”, drawn by the final render.", "Неподвижное изображение «{}», нарисованное финальным рендером."],
+    RenderPreset = ["{} — {}", "{} — {}"],
+    RenderPresetDraft = ["Draft", "Черновик"],
+    RenderPresetPrint = ["Print A4", "Печать A4"],
+    RenderWidth = ["Width", "Ширина"],
+    RenderHeight = ["Height", "Высота"],
+    RenderSamples = ["Samples", "Сэмплы"],
+    RenderExposure = ["Exposure", "Экспозиция"],
+    RenderStudio = ["Studio", "Студия"],
+    RenderDestination = ["File", "Файл"],
+    RenderNoPath = ["no file chosen yet", "файл ещё не выбран"],
+    RenderChoose = ["Choose…", "Выбрать…"],
+    RenderStart = ["Render", "Рендерить"],
+    RenderCancel = ["Cancel", "Отменить"],
+    RenderNeedsPath = ["Choose a file to write the image to.", "Выберите файл, куда записать изображение."],
+    RenderNeedsSize = ["Name a size for the image.", "Укажите размер изображения."],
+    RenderSamplesDone = ["{} of {} samples", "{} из {} сэмплов"],
+    RenderDone = ["Written to {} — {}, {} samples", "Записано в {} — {}, {} сэмплов"],
+    RenderCancelled = ["Cancelled; no image was written.", "Отменено; изображение не записано."],
+    RenderFailed = ["The render stopped: {}", "Рендер остановлен: {}"],
+
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],
     HomeStartScene = ["Start a scene", "Начните сцену"],
@@ -863,6 +959,11 @@ messages! {
     GroupDimensions = ["Dimensions", "Размеры"],
     GroupMeasure = ["Measure", "Измерение"],
     GroupBooleans = ["Booleans", "Булевы"],
+    GroupContourBooleans = ["Contours", "Контуры"],
+    ContourBooleanBodiesOnModel = [
+        "A body is cut by the Model tab's booleans",
+        "Тело режется булевыми операциями вкладки «Модель»"
+    ],
     GroupDraft = ["Draft", "Черновик"],
     GroupPrimitives = ["Primitives", "Примитивы"],
     GroupFaces = ["Faces", "Грани"],
@@ -899,6 +1000,7 @@ messages! {
     ToolPost = ["Post", "Стойка"],
     ToolVoid = ["Niche", "Ниша"],
     ToolShelf = ["Shelf", "Полка"],
+    ToolWall = ["Wall", "Стенка"],
     ToolContourPanel = ["Panel from contour", "Панель по контуру"],
     ToolAssembly = ["Assembly", "Сборка"],
     ToolGroupNode = ["Group", "Группа"],
@@ -910,7 +1012,6 @@ messages! {
     ToolAssignMaterial = ["Assign material", "Назначить материал"],
     ToolFrameAll = ["Frame all", "Показать всё"],
     ToolProjection = ["Projection", "Проекция"],
-    ToolGridSnap = ["Grid snap", "Привязка"],
     ToolStyle = ["Display style", "Стиль отображения"],
     ToolContours = ["Contours", "Контуры"],
     ToolShadows = ["Shadows", "Тени"],
@@ -940,6 +1041,17 @@ messages! {
     ToolUnion = ["Union", "Объединить"],
     ToolSubtract = ["Subtract", "Вычесть"],
     ToolIntersect = ["Intersect", "Пересечение"],
+    BooleanNeedsBody = [
+        "A body boolean needs two constructive bodies: pick the target, then its tool.",
+        "Булева операция над телами требует два конструктивных тела: укажите целевое, затем инструмент."
+    ],
+    BooleanNeedsRing = [
+        "Select a closed contour first: the boolean is born in its frame",
+        "Сначала выделите замкнутый контур: в его системе координат родится результат"
+    ],
+    BooleanPick = ["Contours picked: {}", "Выбрано контуров: {}"],
+    BooleanPickBody = ["Bodies picked: {}", "Выбрано тел: {}"],
+    BooleanBase = ["Base: {}", "База: {}"],
     ToolFillet = ["Fillet", "Скругление"],
     ToolChamfer = ["Chamfer", "Фаска"],
     ToolShell = ["Shell", "Оболочка"],
@@ -1012,10 +1124,21 @@ messages! {
     DraftCloseNeedsTwo = ["A draft needs two segments to close", "Чтобы замкнуть черновик, нужно два сегмента"],
     DraftCancelHint = ["Cancel the draft", "Отменить черновик"],
     DraftNotRunning = ["No draft is running", "Черновик не запущен"],
-    ExtrudeSelectPath = ["Select a closed path first", "Сначала выберите замкнутый путь"],
+    ExtrudeSelectPath = ["Select a closed path or a drawing first", "Сначала выберите замкнутый путь или контур"],
     ExtrudeSelectedPath = ["Extrude the selected path", "Выдавить выбранный путь"],
     ExtrudePathOpen = ["The selected path is open; close it first", "Выбранный путь разомкнут; сначала замкните его"],
-    ExtrudeNotPath = ["The selected object is not a path", "Выбранный объект не является путём"],
+    ExtrudeNotPath = ["The selected object is not a drawing", "Выбранный объект не является контуром"],
+    ExtrudeSelectedDrawing = ["Extrude the selected drawing", "Выдавить выбранный контур"],
+    ExtrudeSelectedArea = ["Pull an area of the selected drawing", "Вытянуть область выбранного контура"],
+    AreaNeedsDrawing = ["Select a drawing of several rings first", "Сначала выберите контур из нескольких колец"],
+    ExtrudeMethodWhole = ["The whole drawing", "Весь контур"],
+    ExtrudeMethodArea = ["An area under the pointer", "Область под указателем"],
+    AreaOutside = ["Point at an area of the drawing", "Укажите область на контуре"],
+    AreaHole = [
+        "The area under the pointer has a hole, and a body carries one ring yet",
+        "Область под курсором имеет отверстие, а тело пока несёт один контур"
+    ],
+    AreaBodyName = ["{} area", "{} — область"],
     PrimitiveDrawBase = ["{}: draw its base on the work plane", "{}: начертите основание на рабочей плоскости"],
     PrimitiveDrawRound = ["{}: draw the round it is built around", "{}: начертите окружность, вокруг которой он строится"],
     BodyProfileOpen = ["A body is swept from a closed profile", "Тело выдавливается из замкнутого профиля"],
@@ -1078,6 +1201,21 @@ messages! {
     SectionViewport = ["Viewport", "Область просмотра"],
     SectionPanels = ["Panels", "Панели"],
     SectionShortcuts = ["Shortcuts", "Горячие клавиши"],
+    SectionAssistant = ["Assistant", "Ассистент"],
+    AttachChannel = ["Let a local agent reach this window", "Разрешить локальному агенту доступ к окну"],
+    AgentCommand = ["Agent process", "Процесс агента"],
+    AgentCommandHint = [
+        "A command that speaks the Agent Client Protocol on its standard streams, for example `claude-code-acp`. The panel starts it for a message and it reaches this window through the channel above; leave it empty for no agent process.",
+        "Команда, которая говорит на Agent Client Protocol через свои стандартные потоки, например `claude-code-acp`. Панель запускает её на сообщение, и до окна она достаёт через канал выше; пустое поле — без процесса агента."
+    ],
+    AssistantNoChannel = [
+        "The local channel is switched off, so an agent process has no tools. Switch it on above.",
+        "Локальный канал выключен, поэтому у процесса агента нет инструментов. Включите его выше."
+    ],
+    AttachChannelHint = [
+        "An agent on this computer reaches the window through a token file in the settings folder, and the switch closes that door. Nothing is reachable from a network, and the token dies with the window.",
+        "Агент на этом компьютере получает доступ к окну через файл с токеном в папке настроек, и выключатель закрывает эту дверь. Из сети окно недоступно, а токен живёт только пока открыто окно."
+    ],
     Theme = ["Theme", "Тема"],
     ThemeDark = ["Dark", "Тёмная"],
     ThemeLight = ["Light", "Светлая"],
@@ -1146,6 +1284,71 @@ messages! {
         "The virtual faces of the frames around the piece capture it, so two cabinets meet flush.",
         "Виртуальные грани окружающих корпусов захватывают деталь, поэтому два шкафа встают вплотную."
     ],
+    SnapAll = ["All snaps", "Все привязки"],
+    SnapAllHint = [
+        "Turns every snap on, or every snap off: a pointer that fights the geometry gets the hand back in one click.",
+        "Включает все привязки или выключает их разом: курсор, который спорит с геометрией, отдаёт руку одним нажатием."
+    ],
+    SnapMode = ["Snap mode", "Режим привязки"],
+    SnapModeHint = [
+        "How a snap reads a corner above the drawing plane: 2.5D takes its foot on the plane, 3D takes the point itself. The cell shows the reading in force; press to switch.",
+        "Как привязка читает угол над плоскостью чертежа: 2.5D берёт его основание на плоскости, 3D — саму точку. Клетка показывает действующий режим; нажатие переключает."
+    ],
+    SnapModeSpace = ["3D — the point itself", "3D — сама точка"],
+    SnapModeSpaceHint = [
+        "A tool that draws on a plane captures only a point that lies in it, so a figure is never built from a place it cannot contain.",
+        "Инструмент, который чертит на плоскости, захватывает только точку, лежащую в ней, поэтому фигура никогда не строится из места, которого не может содержать."
+    ],
+    SnapModeFoot = ["2.5D — the foot on the plane", "2.5D — основание на плоскости"],
+    SnapModeFootHint = [
+        "A corner anywhere captures, and the point is its foot on the drawing plane: a top view lines a board up with the shadow it casts.",
+        "Захватывает угол из любого места, а точка — его основание на плоскости чертежа: вид сверху совмещает доску с её тенью."
+    ],
+    SnapVertex = ["Corner", "Угол"],
+    SnapVertexHint = [
+        "A corner of a panel, a body or a frame, and a point the drawing already has.",
+        "Угол панели, тела или корпуса и уже поставленная точка чертежа."
+    ],
+    SnapIntersection = ["Crossing", "Пересечение"],
+    SnapIntersectionHint = [
+        "Where two edges cross as the drawing plane sees them.",
+        "Место, где два ребра пересекаются в плоскости чертежа."
+    ],
+    SnapMidpoint = ["Middle", "Середина"],
+    SnapMidpointHint = ["The middle of an edge.", "Середина ребра."],
+    SnapCentre = ["Centre", "Центр"],
+    SnapCentreHint = [
+        "The centre of a face, a box, a primitive or a circle.",
+        "Центр грани, коробки, тела или окружности."
+    ],
+    SnapPerpendicular = ["Perpendicular", "Перпендикуляр"],
+    SnapPerpendicularHint = [
+        "The foot of the perpendicular from the previous point onto an edge.",
+        "Основание перпендикуляра из предыдущей точки на ребро."
+    ],
+    SnapTangent = ["Tangent", "Касание"],
+    SnapTangentHint = [
+        "Where a line from the previous point touches a circle in the drawing plane.",
+        "Точка, где линия из предыдущей точки касается окружности в плоскости чертежа."
+    ],
+    SnapEdge = ["On an edge", "На ребре"],
+    SnapEdgeHint = ["A point anywhere along an edge.", "Точка в любом месте ребра."],
+    SnapFace = ["On a face", "На грани"],
+    SnapFaceHint = [
+        "The surface the pointer points at, as the ruler measures it.",
+        "Поверхность, на которую указывает курсор, как её измеряет линейка."
+    ],
+    SnapAxis = ["World axes", "Мировые оси"],
+    SnapAxisHint = [
+        "A point on the world X, Y or Z axis, where the drawing plane holds it.",
+        "Точка на мировой оси X, Y или Z там, где её держит плоскость чертежа."
+    ],
+    SnapGrid = ["Grid", "Сетка"],
+    SnapGridHint = [
+        "The drawing plane's 10 mm grid.",
+        "Сетка плоскости чертежа с шагом 10 мм."
+    ],
+    SnapCaptured = ["Snap: {}", "Привязка: {}"],
     SnapTolerance = ["Tolerance", "Допуск"],
     SnapToleranceHint = [
         "How near a surface has to be to capture the drag, in millimetres; the piece lands flush on it, because the tolerance is where the snap fires.",
@@ -1193,7 +1396,7 @@ messages! {
         "Возвращает палитру, акцент, прозрачность и цвет значков по умолчанию."
     ],
     ShortcutsHint = [
-        "The same keys the ribbon, the header and the status bar name.",
+        "The same keys the ribbon, the header and the settings page name.",
         "Те же клавиши, что названы на ленте, в заголовке и в строке состояния."
     ],
     ShortcutNewScene = ["Open an empty scene in a new tab", "Открыть пустую сцену в новой вкладке"],
@@ -1202,6 +1405,127 @@ messages! {
     ShortcutUndo = ["Undo", "Отменить"],
     ShortcutRedo = ["Redo", "Повторить"],
     ShortcutPalette = ["Command palette", "Палитра команд"],
+    ShortcutAssistant = ["Assistant", "Ассистент"],
+
+    // ── The assistant's panel, its two modes and what a turn reports ───
+    AssistantYou = ["You", "Вы"],
+    AssistantAgent = ["Agent", "Агент"],
+    AssistantTool = ["Tool", "Инструмент"],
+    AssistantNote = ["Note", "Заметка"],
+    AssistantCopy = ["Copy", "Копировать"],
+    AssistantWorking = ["The agent is working… request {}", "Агент работает… запрос {}"],
+    AssistantPlaceholder = ["Ask for a change, or ask what is in the scene", "Попросите изменить изделие или спросите, что в сцене"],
+    AssistantSend = ["Send", "Отправить"],
+    AssistantStop = ["Stop", "Остановить"],
+    AssistantPlanMode = ["Plan", "План"],
+    AssistantBuildMode = ["Build", "Сборка"],
+    AssistantPlanHint = [
+        "Plan: the agent answers with the commands it would run, and nothing is written.",
+        "План: агент отвечает командами, которые выполнил бы, и ничего не записывает."
+    ],
+    AssistantBuildHint = [
+        "Build: the next answer may change the document. Every answer is one undo entry.",
+        "Сборка: следующий ответ может изменить документ. Каждый ответ — одна запись в истории."
+    ],
+    AssistantWays = [
+        "Two ways to give the assistant a model: an address it answers at, or an agent process already installed on this machine. One is enough.",
+        "Два способа дать ассистенту модель: адрес, по которому она отвечает, или процесс агента, уже установленный на этой машине. Достаточно одного."
+    ],
+    AssistantByAddress = ["Connect by address", "Подключить по адресу"],
+    AssistantByProcess = ["Run an agent process (advanced)", "Запустить процесс агента (для опытных)"],
+    AssistantEndpoint = ["Endpoint", "Адрес"],
+    AssistantEndpointHint = [
+        "The OpenAI-compatible base URL a model is asked at, for example https://api.example.com/v1. A server on this machine is the same field with its own address.",
+        "Базовый адрес модели в формате OpenAI, например https://api.example.com/v1. Сервер на этой машине — то же поле со своим адресом."
+    ],
+    AssistantEndpointProblem = ["The address cannot be used: {}", "Адрес нельзя использовать: {}"],
+    AssistantProblemFix = [
+        "{} Fix it in Settings › Assistant.",
+        "{} Исправьте это в «Настройки → Ассистент»."
+    ],
+    AssistantEndpointNeedsScheme = [
+        "it must start with http:// or https://",
+        "он должен начинаться с http:// или https://"
+    ],
+    AssistantEndpointDoubled = [
+        "it contains a second http:// or https:// — a URL was pasted into a URL",
+        "в нём второй раз встречается http:// или https:// — адрес вставлен в уже введённый адрес"
+    ],
+    AssistantEndpointNoHost = ["it has no host after the scheme", "в нём нет хоста после схемы"],
+    AssistantEndpointSpace = [
+        "it contains a space or a line break",
+        "в нём есть пробел или перевод строки"
+    ],
+    AssistantEndpointHasCompletion = [
+        "it ends with /chat/completions, which the program adds itself",
+        "он оканчивается на /chat/completions — программа добавляет его сама"
+    ],
+    AssistantWhatNext = [
+        "Send a message in the assistant panel. The first message to a new address asks once before anything leaves this machine.",
+        "Отправьте сообщение в панели ассистента. Перед первым сообщением на новый адрес программа один раз спросит и покажет, что уходит с этой машины."
+    ],
+    AssistantModel = ["Model", "Модель"],
+    AssistantModelHint = [
+        "The model name the endpoint answers with, spelled the way the endpoint spells it.",
+        "Имя модели, которым отвечает адрес, ровно так, как его пишет сам адрес."
+    ],
+    AssistantProcessWins = [
+        "An agent process named here runs the loop itself; the model address above is used while that command is empty.",
+        "Процесс агента, названный здесь, ведёт работу сам; адрес модели выше используется, пока эта команда пуста."
+    ],
+    AssistantKeyHint = [
+        "The key comes from Z3L_AGENT_KEY, else from agent-key with mode 0600 beside this settings file, and is never written here.",
+        "Ключ берётся из Z3L_AGENT_KEY, иначе из файла agent-key с правами 0600 рядом с этим файлом настроек, и никогда не пишется здесь."
+    ],
+    AssistantConsentList = ["Endpoints this workspace sends to", "Адреса, куда мастерская отправляет"],
+    AssistantConsentNone = [
+        "No endpoint has been agreed to yet: the first message to one asks first.",
+        "Пока ни один адрес не подтверждён: перед первым сообщением программа спросит."
+    ],
+    AssistantConsentForget = ["Forget", "Забыть"],
+    AssistantConsentUse = ["Use again", "Использовать снова"],
+    AssistantConsentTitle = ["Send to this endpoint?", "Отправлять на этот адрес?"],
+    AssistantConsentBody = [
+        "Your messages and the program's own description of what it can do leave this machine for {}. Nothing else is sent.",
+        "Ваши сообщения и описание того, что умеет программа, уходят с этой машины на {}. Больше ничего не отправляется."
+    ],
+    AssistantConsentDeny = ["Not now", "Не сейчас"],
+    AssistantNotConfigured = [
+        "No model is connected yet, so there is nobody to answer. The editor works without one.",
+        "Модель ещё не подключена, отвечать некому. Редактор работает и без неё."
+    ],
+    AssistantChecklist = ["Checklist", "План работы"],
+    AssistantFindings = ["Findings", "Замечания"],
+    AssistantFindingsNone = ["No rule has a finding.", "Правила замечаний не нашли."],
+    AssistantFindingsMore = ["and {} more", "и ещё {}"],
+    FindingSeverityError = ["Error", "Ошибка"],
+    FindingSeverityWarning = ["Warning", "Предупреждение"],
+    FindingSeverityInfo = ["Info", "Сведения"],
+    AssistantPlanLine = [
+        "Plan: {} would be created, {} changed, {} removed. Nothing is written.",
+        "План: создать {}, изменить {}, удалить {}. Ничего не записано."
+    ],
+    AssistantLandedLine = [
+        "{} created, {} changed, {} removed, as one undo entry.",
+        "Создано {}, изменено {}, удалено {}, одной записью истории."
+    ],
+    AssistantRolledBackLine = [
+        "Refused: a step failed and the answer took back its {} created, {} changed, {} removed.",
+        "Отказ: шаг не выполнился, и ответ отменил созданные {}, изменённые {}, удалённые {}."
+    ],
+    AssistantRefusedPart = ["The step's own words: {}", "Слова самого шага: {}"],
+    AssistantStoppedLine = [
+        "The turn was stopped. The document is what the last answer left.",
+        "Ход остановлен. Документ в том виде, каким его оставил последний ответ."
+    ],
+    AssistantBudgetLine = [
+        "The turn reached its call limit and stopped; the conversation is what it left.",
+        "Ход достиг предела вызовов и остановился; в разговоре то, что он успел."
+    ],
+    AssistantRepeatedLine = [
+        "The same steps already ran in this turn; nothing was dispatched a second time.",
+        "Эти же шаги уже выполнились в этом ходе; второй раз ничего не отправлено."
+    ],
     ShortcutProjection = ["Perspective / orthographic", "Перспектива / ортогональ"],
     ShortcutGrid = ["Toggle the drawing grid", "Переключить сетку рисования"],
     ShortcutCancel = ["Cancel the current tool", "Отменить текущий инструмент"],
@@ -1244,11 +1568,16 @@ messages! {
     CmdReplacePrimitive = ["Replace primitive parameters", "Заменить параметры примитива"],
     CmdCreateExtrusion = ["Create extrusion", "Создать выдавливание"],
     CmdReplaceContour = ["Replace contour", "Заменить контур"],
-    CmdExtrudePath = ["Extrude path", "Выдавить путь"],
+    CmdExtrudeDrawing = ["Extrude drawing", "Выдавить контур"],
+    CmdExtrudeArea = ["Extrude area", "Выдавить область"],
     CmdSetExtrusionHeight = ["Set extrusion height", "Задать высоту выдавливания"],
     CmdCreatePath = ["Create path", "Создать путь"],
     CmdReplacePath = ["Replace path", "Заменить путь"],
     CmdCollapseToMesh = ["Collapse to mesh", "Свернуть в сетку"],
+    CmdSetBoolean = ["Set boolean", "Задать булеву операцию"],
+    CmdSetToolMark = ["Set tool mark", "Пометить как инструмент"],
+    FieldTool = ["Tool", "Инструмент"],
+    CmdRemoveBoolean = ["Remove boolean", "Удалить булеву операцию"],
     CmdSetEdgeBanding = ["Set edge banding", "Задать кромку"],
     CmdClearEdgeBanding = ["Clear edge banding", "Убрать кромку"],
     CmdSetCornerBanding = ["Set corner banding", "Задать кромку угла"],
@@ -1266,6 +1595,7 @@ messages! {
     CmdRemoveMachining = ["Remove machining", "Удалить обработку"],
     CmdMoveMachining = ["Move machining", "Переместить обработку"],
     CmdCreatePanel = ["Create panel", "Создать панель"],
+    CmdFillNiche = ["Fill a niche", "Заполнить нишу"],
     CmdCreateContourPanel = ["Create contour panel", "Создать панель по контуру"],
     CmdSetPanelOutline = ["Set panel outline", "Задать контур панели"],
     CmdBakePanelOutline = ["Bake panel outline into a contour", "Преобразовать контур панели в кривую"],

@@ -12,8 +12,8 @@ use std::f64::consts::FRAC_PI_2;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke, Ui, Vec2};
 use engine::{Dimension, NodeRules};
-use geom::{DMat4, DQuat, DVec2, DVec3};
-use model::{Id, MoveAxis, MoveSettings, Placement, Project};
+use geom::{Contact, DMat4, DQuat, DVec2, DVec3};
+use model::{Id, MoveAxis, MoveSettings, Placement, Project, Sight};
 use scene::{Camera, MAX_PITCH, MIN_PITCH, Projection, Ray};
 use ui::TransformMode;
 use units::Length;
@@ -45,9 +45,6 @@ const VIEW_ALIGNMENT_LIMIT: f64 = 0.985;
 
 /// Every local axis a handle may name, for a gizmo that is not gated by a class.
 pub(crate) const ALL_AXES: [bool; 3] = [true, true, true];
-
-/// The work-plane grid step, in millimetres.
-pub(crate) const SNAP_GRID_MM: f64 = 10.0;
 
 /// How close the orbit angles must be to a standard view, in radians.
 ///
@@ -663,6 +660,28 @@ pub(crate) fn distance_to_segment(point: Pos2, start: Pos2, end: Pos2) -> Option
     Some((point - (start + segment * along)).length())
 }
 
+/// Where the hand is: the camera, the viewport it draws in and the pointer on it.
+///
+/// The three travel together because one resolver reads them as one place — the pixel and the two
+/// values that turn it into a ray (AGENTS §1.5) — so the plane a tool draws on, the surface under the
+/// pointer and the snap question all take one value instead of three.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Aim {
+    /// The camera the tool reads the scene through.
+    pub(crate) camera: Camera,
+    /// The rectangle the viewport draws in.
+    pub(crate) rect: egui::Rect,
+    /// The pointer inside that rectangle, in points.
+    pub(crate) pointer: Pos2,
+}
+
+impl Aim {
+    /// The pointer's ray, pointing into the scene.
+    pub(crate) fn ray(self) -> Ray {
+        ray_to(self.pointer, self.rect, self.camera)
+    }
+}
+
 /// The point where a ray meets a plane, or `None` when they are parallel or the plane is behind.
 pub(crate) fn ray_plane(ray: Ray, plane_point: DVec3, normal: DVec3) -> Option<DVec3> {
     let denominator = ray.direction().dot(normal);
@@ -678,11 +697,14 @@ pub(crate) fn ray_plane(ray: Ray, plane_point: DVec3, normal: DVec3) -> Option<D
 
 /// A right-handed world plane the drawing tools place points on.
 ///
-/// The plane passes through the world origin, so a drawing is stored in world-aligned plane
-/// coordinates. `u` and `v` follow the screen of the view that selected the plane: a shape drawn to
-/// the right and up lands on positive `u` and `v` in both the viewport and the document.
+/// A plane the view picks passes through the world origin, so a drawing is stored in world-aligned
+/// plane coordinates; a plane the document places — a contour ring's own, or the face a 3D sketch
+/// started on — carries that node's or that face's origin instead (U119, U121). `u` and `v` follow the
+/// screen of the view that selected the plane: a shape drawn to the right and up lands on positive
+/// `u` and `v` in both the viewport and the document.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct WorkPlane {
+    origin: DVec3,
     normal: DVec3,
     u: DVec3,
     v: DVec3,
@@ -690,7 +712,43 @@ pub(crate) struct WorkPlane {
 
 impl WorkPlane {
     /// World XY: the plane a perspective or axonometric view draws on.
-    pub(crate) const WORLD_XY: Self = Self { normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+    pub(crate) const WORLD_XY: Self = Self { origin: DVec3::ZERO, normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+
+    /// The plane a placement puts its local XY on: a contour ring's own plane, whose zero is the
+    /// node's origin (U119).
+    ///
+    /// The plane of a contour is where its corners are stored, so a ring drawn on a panel's face
+    /// offers its box in the plane of that face and not in the world XY.
+    pub(crate) fn from_placement(placement: Placement) -> Option<Self> {
+        let u = placement.rotation() * DVec3::X;
+        let v = placement.rotation() * DVec3::Y;
+        let normal = u.cross(v);
+        if !u.is_finite() || !v.is_finite() || normal.length() <= 1.0e-9 {
+            return None;
+        }
+        Some(Self { origin: placement.translation(), normal, u, v })
+    }
+
+    /// The plane of the face under the first click of a 3D sketch, whose zero is the point the ray
+    /// met (U121).
+    ///
+    /// A sketch in the 3D mode stores its points in the plane it started on, so a figure drawn on a
+    /// board's top face is that face's plane and not the floor's: the corners of the board then lie
+    /// in the sketch's plane and capture it. `u` takes the world axis least aligned with the face, so
+    /// a face square to an axis lands on round world coordinates, and `v` completes the right-handed
+    /// frame. A degenerate normal names no plane.
+    pub(crate) fn from_face(point: DVec3, normal: DVec3) -> Option<Self> {
+        let length = normal.length();
+        if !point.is_finite() || !normal.is_finite() || length <= 1.0e-9 {
+            return None;
+        }
+        let normal = normal / length;
+        let axis = [DVec3::X, DVec3::Y, DVec3::Z]
+            .into_iter()
+            .min_by(|a, b| a.dot(normal).abs().total_cmp(&b.dot(normal).abs()))?;
+        let u = (axis - normal * axis.dot(normal)).try_normalize()?;
+        Some(Self { origin: point, normal, u, v: normal.cross(u) })
+    }
 
     /// The plane an axis-aligned orthographic view draws on, or world XY for every other view.
     ///
@@ -702,10 +760,10 @@ impl WorkPlane {
         }
         let pitch = camera.pitch();
         if (pitch - MAX_PITCH).abs() <= STANDARD_VIEW_TOLERANCE {
-            return Self { normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
+            return Self { origin: DVec3::ZERO, normal: DVec3::Z, u: DVec3::X, v: DVec3::Y };
         }
         if (pitch - MIN_PITCH).abs() <= STANDARD_VIEW_TOLERANCE {
-            return Self { normal: -DVec3::Z, u: DVec3::X, v: -DVec3::Y };
+            return Self { origin: DVec3::ZERO, normal: -DVec3::Z, u: DVec3::X, v: -DVec3::Y };
         }
         if pitch.abs() > STANDARD_VIEW_TOLERANCE {
             return Self::WORLD_XY;
@@ -716,10 +774,10 @@ impl WorkPlane {
             return Self::WORLD_XY;
         }
         match (nearest as i64).rem_euclid(4) {
-            0 => Self { normal: DVec3::X, u: DVec3::Y, v: DVec3::Z },
-            1 => Self { normal: DVec3::Y, u: -DVec3::X, v: DVec3::Z },
-            2 => Self { normal: -DVec3::X, u: -DVec3::Y, v: DVec3::Z },
-            _ => Self { normal: -DVec3::Y, u: DVec3::X, v: DVec3::Z },
+            0 => Self { origin: DVec3::ZERO, normal: DVec3::X, u: DVec3::Y, v: DVec3::Z },
+            1 => Self { origin: DVec3::ZERO, normal: DVec3::Y, u: -DVec3::X, v: DVec3::Z },
+            2 => Self { origin: DVec3::ZERO, normal: -DVec3::X, u: -DVec3::Y, v: DVec3::Z },
+            _ => Self { origin: DVec3::ZERO, normal: -DVec3::Y, u: DVec3::X, v: DVec3::Z },
         }
     }
 
@@ -728,22 +786,31 @@ impl WorkPlane {
         self.normal
     }
 
+    /// The same plane moved to pass through `origin`.
+    ///
+    /// A tool with no drawing plane of its own — a vertex drag — still needs a plane to measure the
+    /// pointer against: the one it works at is the plane through the point it carries (U119).
+    pub(crate) const fn through(self, origin: DVec3) -> Self {
+        Self { origin, ..self }
+    }
+
     /// The world point at plane coordinates `local`.
     #[allow(dead_code, reason = "the commit and snap steps place local points in U13-U17")]
     pub(crate) fn world(self, local: DVec2) -> DVec3 {
-        self.u * local.x + self.v * local.y
+        self.origin + self.u * local.x + self.v * local.y
     }
 
     /// The plane coordinates of a world point on the plane.
     pub(crate) fn local(self, world: DVec3) -> DVec2 {
-        DVec2::new(world.dot(self.u), world.dot(self.v))
+        let offset = world - self.origin;
+        DVec2::new(offset.dot(self.u), offset.dot(self.v))
     }
 
-    /// A placement whose local XY is this plane at the world origin.
+    /// A placement whose local XY is this plane.
     ///
     /// Local X maps to `u`, local Y to `v` and local Z to the normal, so a path stored in plane
-    /// coordinates keeps its orientation in the document. The translation is zero because the plane
-    /// passes through the world origin; a later origin-carrying plane adds it here only.
+    /// coordinates keeps its orientation in the document. The translation is the plane's own zero,
+    /// which is the world origin for a plane the view picked.
     pub(crate) fn placement(self) -> Option<Placement> {
         let basis = DMat4::from_cols(
             self.u.extend(0.0),
@@ -752,7 +819,7 @@ impl WorkPlane {
             DVec3::ZERO.extend(1.0),
         );
         let rotation = DQuat::from_mat4(&basis).normalize();
-        Placement::new(DVec3::ZERO, rotation).ok()
+        Placement::new(self.origin, rotation).ok()
     }
 
     /// A placement whose local origin sits at plane coordinates `local`.
@@ -768,13 +835,17 @@ impl WorkPlane {
     /// The world point where a ray meets the plane, or `None` when it is parallel or behind.
     #[allow(dead_code, reason = "the drawing tools start from these points in U13-U14")]
     pub(crate) fn ray_point(self, ray: Ray) -> Option<DVec3> {
-        ray_plane(ray, DVec3::ZERO, self.normal())
+        ray_plane(ray, self.origin, self.normal())
     }
 
     /// The plane coordinates under a viewport position.
-    #[allow(dead_code, reason = "the drawing tools consume the mapping in U13-U14")]
     pub(crate) fn pointer_point(self, camera: Camera, viewport: egui::Rect, pointer: Pos2) -> Option<DVec2> {
         self.ray_point(ray_to(pointer, viewport, camera)).map(|world| self.local(world))
+    }
+
+    /// The plane as the model's snap resolver reads it: the same origin, `u` and `v`.
+    pub(crate) fn snap_plane(self) -> model::SnapPlane {
+        model::SnapPlane::new(self.origin, self.u, self.v).unwrap_or_else(model::SnapPlane::world_xy)
     }
 
     /// The plane name shown in the strip: `XY`, `XZ` or `YZ`.
@@ -790,156 +861,187 @@ impl WorkPlane {
     }
 }
 
-/// How a drawing tool constrains the coordinates the pointer produces.
+/// Half the width of a snap marker's glyph, in points.
+pub(crate) const MARKER_SIZE: f32 = 5.0;
+
+/// Pointer distance inside which a snap captures the pointer, in points.
 ///
-/// This is the grid switch, not a switch for every snap: the ends of the draft and the axis lock
-/// stay available in both modes, because they answer a different question.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "the drawing tool sets the mode in U14; both variants are already matched here")]
-pub(crate) enum SnapMode {
-    /// The point is not rounded to the grid.
-    Free,
-    /// The point lands on the [`SNAP_GRID_MM`] work-plane grid.
-    Grid,
-}
+/// The tolerance travels to the resolver as millimetres, measured at the depth the hand works at:
+/// only the camera knows how much one viewport point covers there (ADR 0051, U116).
+pub(crate) const SNAP_RADIUS_POINTS: f32 = 10.0;
 
-/// What captured the pointer, so the viewport can mark it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapTarget {
-    /// Nothing: the raw pointer point.
-    Free,
-    /// A point already in the draft.
-    End,
-    /// The 10 mm work-plane grid.
-    Grid,
-    /// The u or v axis through the previous point.
-    Axis,
-    /// A point on a furniture surface, resolved by the one probe (0103).
-    ///
-    /// The probe answers the first surface under the ray, so the ruler can measure between the
-    /// faces the person points at; the marker says the point is exact rather than a grid guess.
-    Surface,
-}
-
-/// A plane point and what it snapped to, in work-plane millimetres.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SnappedPoint {
-    /// The point a drawing tool stores.
-    pub(crate) point: DVec2,
-    /// Why the point moved, or [`SnapTarget::Free`] when it did not.
-    pub(crate) target: SnapTarget,
-}
-
-/// The raw pointer point and the scene facts that may capture it.
+/// The pointer's snap question on the work plane: the ray, the plane it meets and the reach.
 ///
-/// Every coordinate is in work-plane millimetres. The capture radius arrives from the caller
-/// because only the camera knows how many millimetres one viewport point covers.
+/// The three travel together because they are one place — the pixel and the two values that turn it
+/// into a ray — so a tool hands the resolver one value instead of four (AGENTS §1.5).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SnapRequest<'a> {
-    /// The pointer's work-plane point.
-    pub(crate) point: DVec2,
-    /// The previous draft point; without one the axis lock has nothing to lock to.
-    pub(crate) anchor: Option<DVec2>,
-    /// Points already in the draft that the pointer may join.
-    pub(crate) ends: &'a [DVec2],
-    /// Grid snapping.
-    pub(crate) mode: SnapMode,
-    /// Whether the point locks to the u or v axis through the anchor.
-    pub(crate) axis_lock: bool,
-    /// Capture radius around a draft end, in plane millimetres.
-    pub(crate) end_radius: f64,
-    /// Alt was held: skip the end and grid snaps and take the pointer as it is.
+pub(crate) struct PlaneSnap {
+    /// The pointer's ray, in the world.
+    pub(crate) ray: Ray,
+    /// The plane the tool draws on.
+    pub(crate) plane: WorkPlane,
+    /// The capture radius, in millimetres, at the depth of that point.
+    pub(crate) tolerance: Length,
+    /// The depth that radius was measured at: the pointer's reach scales with depth (U116).
+    pub(crate) depth: f64,
+    /// The camera that made the ray, so the answer can be put back on screen.
+    pub(crate) camera: Camera,
+    /// The viewport the pointer is in.
+    pub(crate) rect: egui::Rect,
+}
+
+impl PlaneSnap {
+    /// The pointer's question on `plane`, or `None` when the ray misses it or its depth is unusable.
+    pub(crate) fn at(camera: Camera, rect: egui::Rect, pointer: Pos2, plane: WorkPlane) -> Option<Self> {
+        let ray = ray_to(pointer, rect, camera);
+        let world = plane.ray_point(ray)?;
+        let depth = (world - camera.eye()).dot(camera.forward());
+        let millimetres = camera.world_per_point(depth, f64::from(rect.height())) * f64::from(SNAP_RADIUS_POINTS);
+        let tolerance = length_from_millimetres(millimetres)?;
+        Some(Self { ray, plane, tolerance, depth, camera, rect })
+    }
+
+    /// The request one tool's pointer makes of the resolver.
     ///
-    /// The axis lock still applies, because Shift is an explicit request for a straight segment
-    /// rather than an implicit snap that Alt should suppress.
-    pub(crate) ignore_snaps: bool,
-}
-
-/// Which plane axis an axis-locked point follows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapAxis {
-    /// The u axis through the anchor: the anchor's v is kept.
-    U,
-    /// The v axis through the anchor: the anchor's u is kept.
-    V,
-}
-
-/// Rounds both plane coordinates to the nearest grid multiple.
-///
-/// A non-finite coordinate is returned unchanged rather than turned into a grid value.
-pub(crate) fn snap_grid(point: DVec2) -> DVec2 {
-    DVec2::new(round_to_grid(point.x), round_to_grid(point.y))
-}
-
-fn round_to_grid(value: f64) -> f64 {
-    let rounded = (value / SNAP_GRID_MM).round() * SNAP_GRID_MM;
-    if rounded.is_finite() { rounded } else { value }
-}
-
-/// The nearest draft end inside `radius`, with the earlier one winning a tie.
-///
-/// A radius that is not finite and positive captures nothing, so a broken scale or a collapsed
-/// viewport disables the snap instead of making every point jump.
-pub(crate) fn nearest_end(point: DVec2, ends: &[DVec2], radius: f64) -> Option<DVec2> {
-    if !radius.is_finite() || radius <= 0.0 {
-        return None;
-    }
-    let mut nearest: Option<(f64, DVec2)> = None;
-    for end in ends.iter().copied().filter(|end| end.is_finite()) {
-        let distance = (end - point).length();
-        if distance <= radius && nearest.is_none_or(|(best, _)| distance < best) {
-            nearest = Some((distance, end));
+    /// `target` is the tool's own word on what it does with the answer: a tool that stores a point in
+    /// space takes the candidate, and one that draws on a plane declares which reading of a candidate
+    /// above it the workspace is in ([`model::SnapTarget`], U119).
+    pub(crate) fn request<'a>(
+        self,
+        kinds: model::SnapKinds,
+        target: model::SnapTarget,
+        anchor: Option<DVec3>,
+        ends: &'a [DVec3],
+        axis_lock: bool,
+        face: Option<DVec3>,
+    ) -> model::SnapRequest<'a> {
+        model::SnapRequest {
+            ray_origin: self.ray.origin(),
+            ray_direction: self.ray.direction(),
+            tolerance: self.tolerance,
+            tolerance_depth: self.depth,
+            kinds,
+            plane: self.plane.snap_plane(),
+            target,
+            anchor,
+            ends,
+            axis_lock,
+            face,
         }
     }
-    nearest.map(|(_, end)| end)
 }
 
-/// Projects a point onto the u or v axis through `anchor`, whichever offset is larger.
+/// How far inside a product's shell the ray restarts, in millimetres.
 ///
-/// The offsets are compared by magnitude; a tie locks to u, so the result never depends on the
-/// order of the components.
-pub(crate) fn snap_axis(point: DVec2, anchor: DVec2) -> (DVec2, SnapAxis) {
-    let offset = point - anchor;
-    if offset.x.abs() >= offset.y.abs() {
-        (DVec2::new(point.x, anchor.y), SnapAxis::U)
-    } else {
-        (DVec2::new(anchor.x, point.y), SnapAxis::V)
-    }
-}
+/// The reserved box around a product is a surface of the probe (ADR 0103), but the maker points at
+/// the boards inside it, not at the near face of the box. A step of a micrometre is enough to leave
+/// the face and small enough to keep every real surface in front of the point.
+const SHELL_INSET_MM: f64 = 1.0e-3;
 
-/// Snaps a raw work-plane point for one drawing tool.
+/// The product envelopes one ray may step through before the surface under it is taken as empty.
 ///
-/// The constraints apply in a fixed order. A draft end inside `end_radius` wins: joining a chain
-/// must land exactly on the joint. Otherwise an axis lock projects the point onto the nearer axis
-/// through the anchor, and a grid mode rounds the free coordinate while the locked one stays on
-/// the anchor. A free pointer in grid mode rounds both coordinates.
-#[allow(dead_code, reason = "the drawing tools send every plane point through it in U14-U16")]
-pub(crate) fn snap_point(request: SnapRequest<'_>) -> SnappedPoint {
-    if !request.ignore_snaps
-        && let Some(end) = nearest_end(request.point, request.ends, request.end_radius)
-    {
-        return SnappedPoint { point: end, target: SnapTarget::End };
-    }
-    let lock = match (request.axis_lock, request.anchor) {
-        (true, Some(anchor)) => Some(snap_axis(request.point, anchor)),
-        _ => None,
-    };
-    let mode = if request.ignore_snaps { SnapMode::Free } else { request.mode };
-    match (mode, lock) {
-        (SnapMode::Grid, Some((point, axis))) => {
-            SnappedPoint { point: round_free_coordinate(point, axis), target: SnapTarget::Axis }
+/// Nested products are the awkward case; the bound keeps a pathological document from spinning.
+const MAX_SHELLS: usize = 4;
+
+/// The first surface the ray really meets, stepping past the near face of a product's reserved box.
+///
+/// A product envelope is a probe surface (ADR 0103), but from outside the piece it is the first
+/// thing the ray meets, so a tool that took it would report the front of the reserved box while the
+/// person points at a shelf behind it. The ray restarts a micrometre inside the envelope and looks
+/// again, at most [`MAX_SHELLS`] times, so the boards inside win. Every other surface — a panel, a
+/// body, the far envelope face of the product the point is now in — is the answer, with the face's
+/// own normal pointing back along the ray.
+///
+/// Two tools read it: the ruler measures the point of the face, and a 3D sketch takes the plane of
+/// it (U121). It is one reading, so the two can never disagree about which surface the hand is on.
+pub(crate) fn surface_under(
+    project: &Project,
+    contact: &dyn Contact,
+    origin: DVec3,
+    direction: DVec3,
+    sight: Sight<'_>,
+) -> Option<model::Probe> {
+    let mut from = origin;
+    for _ in 0..=MAX_SHELLS {
+        let probe = project.probe(from, direction, sight, Some(contact))?;
+        if probe.hit.kind != model::SurfaceKind::Shell {
+            return Some(probe);
         }
-        (SnapMode::Grid, None) => SnappedPoint { point: snap_grid(request.point), target: SnapTarget::Grid },
-        (SnapMode::Free, Some((point, _))) => SnappedPoint { point, target: SnapTarget::Axis },
-        (SnapMode::Free, None) => SnappedPoint { point: request.point, target: SnapTarget::Free },
+        from = probe.face.point + direction * SHELL_INSET_MM;
     }
+    None
 }
 
-/// Rounds the coordinate that is still free, keeping the locked one exact.
-fn round_free_coordinate(point: DVec2, axis: SnapAxis) -> DVec2 {
-    match axis {
-        SnapAxis::U => DVec2::new(round_to_grid(point.x), point.y),
-        SnapAxis::V => DVec2::new(point.x, round_to_grid(point.y)),
+/// The marker that says what captured the pointer: one glyph per kind, in one ink.
+///
+/// The glyph is the kind and the ink is the theme's, so a maker learns the ten shapes once and reads
+/// them on every tool. A locked point — Shift's axis lock — draws the diamond the draft always drew,
+/// because a constraint the hand stated is not a snap (ADR 0051, U116).
+pub(crate) fn paint_snap_marker(
+    painter: &egui::Painter,
+    at: Pos2,
+    kind: Option<model::SnapKind>,
+    locked: bool,
+    ink: Color32,
+) {
+    let stroke = Stroke::new(1.6, ink);
+    let size = MARKER_SIZE;
+    match (kind, locked) {
+        (Some(model::SnapKind::Vertex), _) => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(at, Vec2::splat(size * 1.6)),
+                egui::CornerRadius::ZERO,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+        }
+        (Some(model::SnapKind::Intersection), _) => {
+            painter.line_segment([at + Vec2::new(-size, -size), at + Vec2::new(size, size)], stroke);
+            painter.line_segment([at + Vec2::new(-size, size), at + Vec2::new(size, -size)], stroke);
+        }
+        (Some(model::SnapKind::Midpoint), _) => {
+            let corners = vec![at + Vec2::new(0.0, -size), at + Vec2::new(size, size), at + Vec2::new(-size, size)];
+            painter.add(Shape::closed_line(corners, stroke));
+        }
+        (Some(model::SnapKind::Centre), _) => {
+            painter.circle_stroke(at, size, stroke);
+            painter.circle_filled(at, 1.5, ink);
+        }
+        (Some(model::SnapKind::Perpendicular), _) => {
+            painter.line_segment([at + Vec2::new(-size, size), at + Vec2::new(size, size)], stroke);
+            painter.line_segment([at + Vec2::new(0.0, size), at + Vec2::new(0.0, -size)], stroke);
+        }
+        (Some(model::SnapKind::Tangent), _) => {
+            painter.circle_stroke(at + Vec2::new(0.0, size * 0.4), size * 0.7, stroke);
+            painter.line_segment([at + Vec2::new(-size, -size), at + Vec2::new(size, -size)], stroke);
+        }
+        (Some(model::SnapKind::Edge), _) => {
+            painter.line_segment([at + Vec2::new(-size, 0.0), at + Vec2::new(size, 0.0)], stroke);
+        }
+        (Some(model::SnapKind::Face), _) => {
+            let corners =
+                vec![at + Vec2::new(0.0, -size), at + Vec2::new(size, size * 0.6), at + Vec2::new(-size, size * 0.6)];
+            painter.add(Shape::convex_polygon(corners, ink.gamma_multiply(0.35), stroke));
+        }
+        (Some(model::SnapKind::Axis), _) => {
+            painter.line_segment([at + Vec2::new(-size * 1.3, 0.0), at + Vec2::new(size * 1.3, 0.0)], stroke);
+            painter.line_segment([at + Vec2::new(0.0, -size * 0.5), at + Vec2::new(0.0, size * 0.5)], stroke);
+        }
+        (Some(model::SnapKind::Grid), _) => {
+            painter.rect_filled(egui::Rect::from_center_size(at, Vec2::splat(size)), 0.0, ink);
+        }
+        (None, true) => {
+            let corners = vec![
+                at + Vec2::new(0.0, -size),
+                at + Vec2::new(size, 0.0),
+                at + Vec2::new(0.0, size),
+                at + Vec2::new(-size, 0.0),
+            ];
+            painter.add(Shape::closed_line(corners, Stroke::new(1.4, ink)));
+        }
+        (None, false) => {
+            painter.circle_stroke(at, 2.5, Stroke::new(1.2, ink));
+        }
     }
 }
 
@@ -1706,6 +1808,34 @@ mod tests {
     }
 
     #[test]
+    fn the_plane_of_a_face_carries_that_face_and_its_own_axes() {
+        // A sketch in the 3D mode is stored on the face its first click named, so the plane's zero is
+        // the point the ray met and its normal is the face's, pointing back at the eye (U121).
+        let point = DVec3::new(350.0, 250.0, 18.0);
+        let plane = WorkPlane::from_face(point, DVec3::Z).expect("a top face names a plane");
+        assert_vector(plane.world(DVec2::ZERO), point, "the plane runs through the face's point");
+        assert_vector(plane.normal(), DVec3::Z, "the normal is the face's");
+        assert_vector(plane.u, DVec3::X, "a face square to Z keeps the world X");
+        assert_vector(plane.v, DVec3::Y, "and the world Y");
+
+        // A turned face takes the world axis it agrees with least, so a face square to an axis keeps
+        // round world numbers, and the frame stays right-handed whatever the normal is.
+        for normal in [DVec3::X, -DVec3::X, DVec3::Y, -DVec3::Y, DVec3::Z, -DVec3::Z, DVec3::new(1.0, 2.0, 3.0)] {
+            let normal = normal.normalize();
+            let plane = WorkPlane::from_face(point, normal).expect("a face names a plane");
+            assert_vector(plane.normal(), normal, "the face's own normal");
+            assert_vector(plane.u.cross(plane.v), normal, "a right-handed basis");
+            assert!((plane.u.length() - 1.0).abs() < 1.0e-9, "u is a unit vector");
+            assert!(plane.u.dot(normal).abs() < 1.0e-9, "u lies in the plane");
+            assert!(plane.v.dot(normal).abs() < 1.0e-9, "v lies in the plane");
+            assert!(plane.local(point).length() < 1.0e-9, "the face's point is the plane's zero");
+        }
+
+        assert!(WorkPlane::from_face(point, DVec3::ZERO).is_none(), "no normal names no plane");
+        assert!(WorkPlane::from_face(DVec3::splat(f64::NAN), DVec3::Z).is_none(), "no point names no plane");
+    }
+
+    #[test]
     fn a_pointer_maps_to_the_work_plane_and_back() {
         for eye in [DVec3::X, -DVec3::X, DVec3::Y, -DVec3::Y, DVec3::Z, -DVec3::Z] {
             let camera = orthographic_view(eye);
@@ -1800,159 +1930,49 @@ mod tests {
     }
 
     #[test]
-    fn the_grid_snaps_both_plane_coordinates() {
-        let cases = [
-            (DVec2::new(0.0, 0.0), DVec2::new(0.0, 0.0)),
-            (DVec2::new(4.9, 5.0), DVec2::new(0.0, 10.0)),
-            (DVec2::new(15.0, -15.0), DVec2::new(20.0, -20.0)),
-            (DVec2::new(-4.9, -6.0), DVec2::new(0.0, -10.0)),
-            (DVec2::new(1234.4, -987.6), DVec2::new(1230.0, -990.0)),
-        ];
-        for (raw, snapped) in cases {
-            assert_eq!(snap_grid(raw), snapped, "from {raw:?}");
+    fn every_snap_kind_draws_a_glyph_of_its_own() {
+        // Ten kinds, ten glyphs: a maker learns the shapes once and reads them on every tool. A
+        // glyph is signed by the primitives it draws and where they land, so a kind that painted
+        // nothing, or the same picture as its neighbour, is the failure this test names (U116).
+        let mut drawn = std::collections::BTreeSet::new();
+        for kind in model::SnapKind::ALL {
+            let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+                paint_snap_marker(ui.painter(), Pos2::new(10.0, 10.0), Some(kind), false, Color32::WHITE);
+            });
+            output.textures_delta.clear();
+            let signature = glyph(&output.shapes.iter().map(|clipped| &clipped.shape).collect::<Vec<_>>());
+            assert!(!signature.is_empty(), "{kind:?} draws nothing");
+            assert!(drawn.insert(signature.clone()), "{kind:?} draws the glyph of another kind: {signature:?}");
         }
+        assert_eq!(drawn.len(), model::SnapKind::ALL.len(), "one glyph per kind");
+
+        // The constraint the hand states draws the diamond the draft always drew.
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            paint_snap_marker(ui.painter(), Pos2::new(10.0, 10.0), None, true, Color32::WHITE);
+        });
+        output.textures_delta.clear();
+        assert!(!glyph(&output.shapes.iter().map(|clipped| &clipped.shape).collect::<Vec<_>>()).is_empty());
     }
 
-    #[test]
-    fn a_draft_end_captures_the_pointer_inside_the_radius() {
-        let ends = [DVec2::new(0.0, 0.0), DVec2::new(100.0, 0.0)];
-        let cases = [
-            (DVec2::new(3.0, 4.0), Some(DVec2::new(0.0, 0.0))),
-            (DVec2::new(103.0, 0.0), Some(DVec2::new(100.0, 0.0))),
-            (DVec2::new(50.0, 0.0), None),
-            (DVec2::new(60.0, 0.5), None),
-        ];
-        for (point, expected) in cases {
-            assert_eq!(nearest_end(point, &ends, 5.0), expected, "at {point:?}");
+    /// The primitives a glyph draws and where they land: two glyphs differ when one number differs.
+    fn glyph(shapes: &[&egui::Shape]) -> Vec<String> {
+        let mut out = Vec::new();
+        for shape in shapes {
+            if let egui::Shape::Vec(inner) = shape {
+                out.extend(glyph(&inner.iter().collect::<Vec<_>>()));
+                continue;
+            }
+            let name = match shape {
+                egui::Shape::Rect(_) => "rect",
+                egui::Shape::Circle(_) => "circle",
+                egui::Shape::LineSegment { .. } => "line",
+                egui::Shape::Path(_) => "path",
+                _ => "other",
+            };
+            let rect = shape.visual_bounding_rect();
+            out.push(format!("{name} {:.1},{:.1},{:.1},{:.1}", rect.min.x, rect.min.y, rect.max.x, rect.max.y));
         }
-
-        assert_eq!(nearest_end(DVec2::new(2.0, 0.0), &ends, 5.0), Some(ends[0]), "the radius is inclusive");
-        assert_eq!(nearest_end(DVec2::new(2.0, 0.0), &ends, 0.0), None);
-        assert_eq!(nearest_end(DVec2::new(2.0, 0.0), &ends, f64::NAN), None);
-        assert_eq!(
-            nearest_end(DVec2::new(2.0, 0.0), &ends, f64::INFINITY),
-            None,
-            "an unbounded radius is a bug, not a snap"
-        );
-    }
-
-    #[test]
-    fn the_earlier_draft_end_wins_a_tie() {
-        let tied = [DVec2::new(-10.0, 0.0), DVec2::new(10.0, 0.0)];
-        assert_eq!(nearest_end(DVec2::ZERO, &tied, 20.0), Some(tied[0]));
-    }
-
-    #[test]
-    fn the_axis_lock_follows_the_larger_offset() {
-        let anchor = DVec2::new(100.0, 50.0);
-        let cases = [
-            (DVec2::new(140.0, 60.0), DVec2::new(140.0, 50.0), SnapAxis::U),
-            (DVec2::new(90.0, 120.0), DVec2::new(100.0, 120.0), SnapAxis::V),
-            (DVec2::new(120.0, 70.0), DVec2::new(120.0, 50.0), SnapAxis::U),
-            (DVec2::new(80.0, 30.0), DVec2::new(80.0, 50.0), SnapAxis::U),
-            (DVec2::new(100.0, 70.0), DVec2::new(100.0, 70.0), SnapAxis::V),
-            (DVec2::new(140.0, 50.0), DVec2::new(140.0, 50.0), SnapAxis::U),
-        ];
-        for (raw, expected, axis) in cases {
-            assert_eq!(snap_axis(raw, anchor), (expected, axis), "from {raw:?}");
-        }
-    }
-
-    #[test]
-    fn snapping_applies_end_then_axis_then_grid() {
-        let ends = [DVec2::new(100.0, 100.0)];
-        fn request<'a>(
-            point: DVec2,
-            anchor: Option<DVec2>,
-            ends: &'a [DVec2],
-            mode: SnapMode,
-            axis_lock: bool,
-            end_radius: f64,
-        ) -> SnapRequest<'a> {
-            SnapRequest { point, anchor, ends, mode, axis_lock, end_radius, ignore_snaps: false }
-        }
-        let cases = [
-            (
-                request(DVec2::new(102.0, 101.0), Some(DVec2::ZERO), &ends, SnapMode::Grid, true, 5.0),
-                SnappedPoint { point: DVec2::new(100.0, 100.0), target: SnapTarget::End },
-            ),
-            (
-                request(DVec2::new(123.0, 55.0), Some(DVec2::new(5.0, 5.0)), &[], SnapMode::Grid, true, 0.0),
-                SnappedPoint { point: DVec2::new(120.0, 5.0), target: SnapTarget::Axis },
-            ),
-            (
-                request(DVec2::new(123.0, 55.0), Some(DVec2::new(5.0, 5.0)), &[], SnapMode::Grid, false, 0.0),
-                SnappedPoint { point: DVec2::new(120.0, 60.0), target: SnapTarget::Grid },
-            ),
-            (
-                request(DVec2::new(123.0, 55.0), None, &[], SnapMode::Free, false, 0.0),
-                SnappedPoint { point: DVec2::new(123.0, 55.0), target: SnapTarget::Free },
-            ),
-            (
-                request(DVec2::new(123.0, 55.0), Some(DVec2::new(5.0, 5.0)), &[], SnapMode::Free, true, 0.0),
-                SnappedPoint { point: DVec2::new(123.0, 5.0), target: SnapTarget::Axis },
-            ),
-        ];
-        for (request, expected) in cases {
-            assert_eq!(snap_point(request), expected);
-        }
-    }
-
-    #[test]
-    fn snapping_passes_hostile_input_through_without_panicking() {
-        let non_finite = DVec2::new(f64::NAN, f64::INFINITY);
-        let snapped = snap_grid(non_finite);
-        assert!(snapped.x.is_nan());
-        assert!(snapped.y.is_infinite());
-
-        let request = SnapRequest {
-            point: non_finite,
-            anchor: None,
-            ends: &[],
-            mode: SnapMode::Free,
-            axis_lock: false,
-            end_radius: 5.0,
-            ignore_snaps: false,
-        };
-        let result = snap_point(request);
-        assert!(result.point.x.is_nan());
-        assert!(result.point.y.is_infinite());
-        assert_eq!(result.target, SnapTarget::Free);
-
-        let locked = SnapRequest {
-            point: non_finite,
-            anchor: Some(DVec2::ZERO),
-            ends: &[],
-            mode: SnapMode::Grid,
-            axis_lock: true,
-            end_radius: 5.0,
-            ignore_snaps: false,
-        };
-        assert!(!snap_point(locked).point.is_finite(), "a non-finite input never becomes a silent zero");
-    }
-
-    #[test]
-    fn alt_skips_the_end_and_grid_snaps_but_keeps_the_axis_lock() {
-        let ends = [DVec2::new(100.0, 100.0)];
-        let free = |point: DVec2, anchor: Option<DVec2>, axis_lock: bool| SnapRequest {
-            point,
-            anchor,
-            ends: &ends,
-            mode: SnapMode::Grid,
-            axis_lock,
-            end_radius: 5.0,
-            ignore_snaps: true,
-        };
-        // The end is close enough to capture, but Alt leaves the pointer where it is.
-        assert_eq!(
-            snap_point(free(DVec2::new(102.0, 101.0), Some(DVec2::ZERO), false)),
-            SnappedPoint { point: DVec2::new(102.0, 101.0), target: SnapTarget::Free }
-        );
-        // The grid is skipped too; only the axis Shift asks for remains.
-        assert_eq!(
-            snap_point(free(DVec2::new(123.0, 55.0), Some(DVec2::new(5.0, 5.0)), true)),
-            SnappedPoint { point: DVec2::new(123.0, 5.0), target: SnapTarget::Axis }
-        );
+        out
     }
 
     #[test]

@@ -1,24 +1,31 @@
-//! The analytic mesh backend for one extrusion.
+//! The analytic mesh backend for one extrusion, and the compiler from a feature history to a plan.
 //!
 //! A single linear extrusion is exact as polygons: two caps and one quad per profile edge. The
 //! viewport and `object.collapse` therefore need no geometry kernel, and the collapsed mesh is
 //! exactly the mesh the user saw. A plan with a boolean steps outside that exact case and is
-//! refused here; such a plan must go through the kernel backend instead.
+//! refused here; such a plan must go through the kernel backend instead ([`super::solid::evaluate`]).
 //!
 //! The document keeps micrometres, so this module converts the plan's millimetre profile back to
 //! whole micrometres at the last moment. The round trip is exact for a contour that was sampled
 //! from document units, which is why collapse does not move a vertex.
 
-use geom::{DVec3, Frame};
-use kernel::{BooleanOp, KernelError};
-use model::{Constructive, Mesh};
+use geom::{DQuat, DVec3, Frame};
+use kernel::{BooleanOp, KernelError, SolidKernel};
+use model::{Boolean, Constructive, Mesh, Placement};
 use units::Length;
 
-use crate::solid::{self, Extrude, PlanBackend, PlanBuilder, SolidPlan};
+use crate::solid::{self, Extrude, MAX_PLAN_DEPTH, PlanBackend, PlanBuilder, SolidPlan};
 use crate::{ParamError, profile};
 
 /// Micrometres in one millimetre, the boundary factor of the geometry layer.
 const MICROMETRES_PER_MILLIMETRE: f64 = 1_000.0;
+
+/// How far a cutter's sweep reaches past each of its own ends, in millimetres.
+///
+/// One micrometre, the document's own resolution: a cutter whose face lies on the body's face —
+/// a hole cut from the board's surface — would otherwise share a face with it, and a boolean
+/// between bodies that share a face answers with nothing.
+const CUTTER_OVERSHOOT_MM: f64 = 0.001;
 
 /// Builds the polygon mesh of a constructive object with one extrusion.
 ///
@@ -26,35 +33,133 @@ const MICROMETRES_PER_MILLIMETRE: f64 = 1_000.0;
 /// differs. Coordinates stay in micrometres in the object's local frame, from `z = 0` to the
 /// feature height.
 pub fn build_constructive_mesh(constructive: &Constructive) -> Result<Mesh, ParamError> {
+    if constructive.features().len() != 1 {
+        return Err(ParamError::UnsupportedConstructive);
+    }
     let plan = constructive_plan(constructive)?;
     solid::evaluate_with(&plan, &mut MeshBackend).map_err(ParamError::from)
 }
 
-/// Compiles the one supported feature into a plan.
+/// Compiles one history and builds its body through the geometry kernel.
 ///
-/// A history with anything but a single extrusion has no analytic answer yet; it is refused before
-/// a backend sees it, so the error names the feature history rather than a backend limitation.
-fn constructive_plan(constructive: &Constructive) -> Result<SolidPlan, ParamError> {
-    if constructive.features().len() != 1 {
-        return Err(ParamError::UnsupportedConstructive);
+/// The caller owns the returned handle and releases it through [`kernel::SolidKernel::clear`].
+/// This is the one way a boolean body becomes a solid: the analytic backend refuses a plan with a
+/// step, because the combination of two extrusions is not exact as polygons.
+pub fn evaluate_constructive_body(
+    kernel: &mut dyn SolidKernel,
+    constructive: &Constructive,
+) -> Result<kernel::BodyId, ParamError> {
+    let plan = constructive_plan(constructive)?;
+    Ok(solid::evaluate(&plan, kernel)?)
+}
+
+/// Compiles one feature history into the plan a backend evaluates.
+///
+/// The base extrusion sweeps the body's own path; every boolean step appends a step whose tool is
+/// the plan of the shape the step froze. Each frame is that shape's placement in the frame of the
+/// body being compiled, so a tool and its own tools all land in one coordinate space.
+///
+/// Nesting is bounded by [`MAX_PLAN_DEPTH`], and the document bounds it again when it stores a step
+/// (`model::MAX_BOOLEAN_DEPTH`), so a hostile file is an error instead of an unbounded recursion.
+pub fn constructive_plan(constructive: &Constructive) -> Result<SolidPlan, ParamError> {
+    compile(constructive, Frame::WORLD, 0)
+}
+
+fn compile(constructive: &Constructive, frame: Frame, depth: usize) -> Result<SolidPlan, ParamError> {
+    compile_cutter(constructive, frame, depth, false)
+}
+
+/// Compiles one history, optionally as a **cutter**.
+///
+/// A cutter's sweep is extended by one micrometre past each of its ends. The commonest cut of a
+/// workshop is a hole through a board, drawn with the cutter's own face on the board's face: the two
+/// bodies then share a face, and the kernel answers a boolean between bodies that share one with
+/// nothing at all. One micrometre past each end is below the document's own resolution, so the cut
+/// keeps the face it was asked for and the boolean has something to resolve (the same trade the
+/// panel cutouts and the end bevel already make). The body being cut is never extended: it is the
+/// result.
+fn compile_cutter(
+    constructive: &Constructive,
+    frame: Frame,
+    depth: usize,
+    cutter: bool,
+) -> Result<SolidPlan, ParamError> {
+    if depth >= MAX_PLAN_DEPTH {
+        return Err(ParamError::Kernel(KernelError::InvalidInput(format!(
+            "a feature history nests deeper than {MAX_PLAN_DEPTH} steps"
+        ))));
     }
     let Some(extrude) = constructive.extrude_feature() else {
         return Err(ParamError::UnsupportedConstructive);
     };
     let contour = constructive.contour()?;
     let profile = profile::profile_of_document_contour(&contour)?;
-    let plan = PlanBuilder::new().extrude(profile, Frame::WORLD, extrude.height().millimetres_f64())?.build()?;
-    Ok(plan)
+    let (frame, height) = if cutter {
+        (
+            Frame { origin: frame.origin - frame.z * CUTTER_OVERSHOOT_MM, ..frame },
+            extrude.height().millimetres_f64() + 2.0 * CUTTER_OVERSHOOT_MM,
+        )
+    } else {
+        (frame, extrude.height().millimetres_f64())
+    };
+    let mut builder = PlanBuilder::new().extrude(profile, frame, height)?;
+    for boolean in constructive.booleans() {
+        let tool_plan = compile_tool(boolean.tool(), frame, depth.saturating_add(1))?;
+        builder = builder.boolean(operation(boolean), tool_plan);
+    }
+    Ok(builder.build()?)
+}
+
+/// Compiles one frozen tool body where the step put it, standing in `parent`, as a cutter.
+///
+/// A step's placement is stored in the frame of the body it cut, so a tool that itself carries steps
+/// hands its own steps a frame composed of both: the placement of a nested tool is expressed in its
+/// parent's frame, never in the frame the whole history happens to be built in.
+pub(crate) fn compile_tool(tool: &model::BooleanTool, parent: Frame, depth: usize) -> Result<SolidPlan, ParamError> {
+    let frame = compose(parent, frame_of(tool.placement()));
+    match tool.body() {
+        model::ToolBody::Constructive(body) => compile_cutter(body, frame, depth, true),
+        model::ToolBody::Primitive(body) => crate::primitive::primitive_plan(body, frame, depth, true),
+    }
+}
+
+/// One frame expressed inside another: the child's origin and axes, read in the parent's parent.
+fn compose(parent: Frame, child: Frame) -> Frame {
+    Frame {
+        origin: parent.origin + parent.x * child.origin.x + parent.y * child.origin.y + parent.z * child.origin.z,
+        x: parent.x * child.x.x + parent.y * child.x.y + parent.z * child.x.z,
+        y: parent.x * child.y.x + parent.y * child.y.y + parent.z * child.y.z,
+        z: parent.x * child.z.x + parent.y * child.z.y + parent.z * child.z.z,
+    }
+}
+
+/// The plan operation one document step means.
+pub(crate) fn operation(boolean: &Boolean) -> BooleanOp {
+    match boolean.op() {
+        model::BooleanOp::Union => BooleanOp::Union,
+        model::BooleanOp::Difference => BooleanOp::Difference,
+        model::BooleanOp::Intersection => BooleanOp::Intersection,
+    }
+}
+
+/// The frame a placement stands in, in millimetres.
+fn frame_of(placement: Placement) -> Frame {
+    let rotation: DQuat = placement.rotation();
+    Frame { origin: placement.translation(), x: rotation * DVec3::X, y: rotation * DVec3::Y, z: rotation * DVec3::Z }
 }
 
 /// Turns one extrusion into the document mesh.
-struct MeshBackend;
+pub(crate) struct MeshBackend;
 
 impl PlanBackend for MeshBackend {
     type Body = Mesh;
 
     fn extrude(&mut self, extrude: &Extrude) -> Result<Mesh, KernelError> {
         mesh_from_extrusion(extrude)
+    }
+
+    fn mesh(&mut self, _body: &kernel::MeshBody) -> Result<Mesh, KernelError> {
+        Err(KernelError::Unsupported("the analytic backend evaluates one extrusion"))
     }
 
     fn boolean(&mut self, _op: BooleanOp, _target: Mesh, _tool: Mesh) -> Result<Mesh, KernelError> {
@@ -120,7 +225,9 @@ mod tests {
 
     use kernel::{Profile, SolidKernel};
     use kernel_truck::TruckKernel;
-    use model::{Contour, Feature, Id, Panel, PanelNominalSize, Placement};
+    use model::{
+        BooleanOp as ModelOp, BooleanTool, Contour, Feature, Id, Panel, PanelNominalSize, Placement, ToolBody,
+    };
     use testkit::millimetres;
     use units::Length;
 
@@ -153,6 +260,19 @@ mod tests {
             }
         }
         total
+    }
+
+    fn placed(x: f64, y: f64, z: f64) -> Placement {
+        Placement::new(DVec3::new(x, y, z), DQuat::IDENTITY).expect("a placement")
+    }
+
+    /// The volume of one body a plan builds, in cubic millimetres.
+    fn volume_of(body: &Constructive) -> f64 {
+        let mut kernel = TruckKernel::new();
+        let handle = evaluate_constructive_body(&mut kernel, body).expect("an evaluated body");
+        let volume = kernel.measure(handle).expect("a measurable body").volume;
+        kernel.clear();
+        volume
     }
 
     #[test]
@@ -258,5 +378,113 @@ mod tests {
         let extrude = Extrude::new(profile, frame, 5.0).expect("extrusion");
         let error = mesh_from_extrusion(&extrude).expect_err("a rotated frame has no analytic mesh");
         assert!(matches!(error, KernelError::Unsupported(_)), "{error}");
+    }
+
+    /// The shape a step cuts with: a 50 x 50 ring swept 30 mm, standing where the caller puts it.
+    ///
+    /// The tool passes through the base and sticks out of both faces, with every side strictly
+    /// inside the base's outline, so the booleans have no coincident faces to resolve.
+    fn through_tool() -> BooleanTool {
+        let body = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("tool");
+        BooleanTool::new("Cutter", ToolBody::Constructive(body), placed(25.0, 25.0, -5.0)).expect("a tool")
+    }
+
+    #[test]
+    fn a_boolean_step_appends_the_tools_plan_where_the_step_puts_it() {
+        let mut base = Constructive::extrude(rectangle(100, 50).into(), millimetres(18)).expect("base");
+        base.push_boolean(Boolean::new(ModelOp::Difference, through_tool())).expect("a step");
+
+        let plan = constructive_plan(&base).expect("a plan");
+
+        assert_eq!(plan.steps().len(), 1);
+        let step = plan.steps().first().expect("one step");
+        assert_eq!(step.op(), BooleanOp::Difference);
+        let frame = step.tool().base().extrude().expect("a cutter is an extrusion").frame();
+        assert!((frame.origin.z + 5.0 + CUTTER_OVERSHOOT_MM).abs() < 1.0e-9, "the cutter reaches past its own end");
+        assert!((frame.origin.x - 25.0).abs() < 1.0e-9, "and stands where the step froze it");
+        let height = step.tool().base().extrude().expect("a cutter is an extrusion").height();
+        assert!((height - (30.0 + 2.0 * CUTTER_OVERSHOOT_MM)).abs() < 1.0e-9, "the sweep covers both ends");
+    }
+
+    #[test]
+    fn a_cutter_whose_face_lies_on_the_bodys_face_still_cuts() {
+        // The owner's part, and the commonest cut of a workshop: a hole drawn from the board's own
+        // surface, so the cutter's bottom face and the body's bottom face are one plane. Two bodies
+        // that share a face make the kernel answer a boolean with nothing at all, and the cutter's
+        // own micrometre past each end is what keeps the cut resolvable.
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        let cutter = Constructive::extrude(rectangle(50, 50).into(), millimetres(10)).expect("cutter");
+        let tool = BooleanTool::new("Flush", ToolBody::Constructive(cutter), placed(25.0, 25.0, 0.0)).expect("a tool");
+        base.push_boolean(Boolean::new(ModelOp::Difference, tool)).expect("a step");
+
+        let volume = volume_of(&base);
+
+        let expected = 180_000.0 - 50.0 * 50.0 * 10.0;
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
+    }
+
+    #[test]
+    fn a_union_of_two_boxes_holds_the_volume_both_cover_once() {
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        base.push_boolean(Boolean::new(ModelOp::Union, through_tool())).expect("a step");
+
+        let volume = volume_of(&base);
+
+        // The base and the part of the tool above and below it, with the shared 50 x 50 x 18 counted
+        // once: 100 x 100 x 18 + 50 x 50 x 30 - 50 x 50 x 18. The cutter's micrometre at each end is
+        // the trade the compile makes so a face lying on another face is not a shared face.
+        let expected = 180_000.0 + 75_000.0 - 45_000.0;
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
+    }
+
+    #[test]
+    fn a_difference_cuts_the_tools_overlap_out() {
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        base.push_boolean(Boolean::new(ModelOp::Difference, through_tool())).expect("a step");
+
+        let volume = volume_of(&base);
+
+        assert!((volume - 135_000.0).abs() < 10.0, "volume was {volume}, expected about 135000");
+    }
+
+    #[test]
+    fn an_intersection_keeps_only_what_both_bodies_share() {
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        base.push_boolean(Boolean::new(ModelOp::Intersection, through_tool())).expect("a step");
+
+        let volume = volume_of(&base);
+
+        assert!((volume - 45_000.0).abs() < 10.0, "volume was {volume}, expected about 45000");
+    }
+
+    #[test]
+    fn a_tool_with_steps_of_its_own_is_compiled_where_it_stands() {
+        // The body cuts with a cutter, and the cutter is itself joined with a chimney: the plan
+        // nests, and every frame is expressed in the frame of the body the step froze.
+        let mut base = Constructive::extrude(rectangle(100, 100).into(), millimetres(18)).expect("base");
+        let mut middle = Constructive::extrude(rectangle(50, 50).into(), millimetres(30)).expect("middle");
+        // The chimney stands in the middle's own frame, so it lands at 65..85 x 65..85 of the base:
+        // it overlaps the middle's corner (65..75) and pokes past it to 85, still inside the base's
+        // outline. Its own frame is what this test is about, so the numbers below name where the
+        // composed frame puts it.
+        let chimney = Constructive::extrude(rectangle(20, 20).into(), millimetres(40)).expect("chimney");
+        middle
+            .push_boolean(Boolean::new(
+                ModelOp::Union,
+                BooleanTool::new("Chimney", ToolBody::Constructive(chimney), placed(40.0, 40.0, -10.0))
+                    .expect("a tool"),
+            ))
+            .expect("its own step");
+        let cutter = BooleanTool::new("Cutter", ToolBody::Constructive(middle), placed(25.0, 25.0, -5.0))
+            .expect("the cutter stands where it cuts");
+        base.push_boolean(Boolean::new(ModelOp::Difference, cutter)).expect("a step");
+
+        let volume = volume_of(&base);
+
+        // The union of the middle and its chimney covers the middle's 50 x 50 plus the 20 x 20 the
+        // chimney adds less the 10 x 10 the two have in common, so it removes 2 800 mm2 through the
+        // base's 18 mm.
+        let expected = 180_000.0 - (50.0 * 50.0 + 20.0 * 20.0 - 10.0 * 10.0) * 18.0;
+        assert!((volume - expected).abs() < 10.0, "volume was {volume}, expected about {expected}");
     }
 }

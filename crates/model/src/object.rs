@@ -6,6 +6,7 @@
 //! parameters that build its mesh. In both cases the mesh is derived and replaces the parameters
 //! only when the user collapses it. A path payload is a flat drawing that has no solid yet.
 
+use geom::{DVec2, Region, RegionError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -17,6 +18,9 @@ use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue}
 
 /// Largest number of features in a constructive object.
 pub const MAX_OBJECT_FEATURES: usize = 32;
+
+/// Largest number of rings in one contour set.
+pub const MAX_CONTOURS: usize = 64;
 
 /// Serialized form of [`Extrude`]; validation happens in its `TryFrom` implementation.
 #[derive(Serialize, Deserialize)]
@@ -55,19 +59,167 @@ impl TryFrom<ExtrudeWire> for Extrude {
     }
 }
 
+/// The operation a boolean step applies to the body built so far.
+///
+/// The document keeps its own name for the three operations the kernel port also knows: `model`
+/// describes what the user asked for and never imports a geometry kernel (ADR 0001, ADR 0041).
+///
+/// [ADR 0001]: ../docs/decisions/0001-geometry-kernel.md
+/// [ADR 0041]: ../docs/decisions/0041-every-solid-compiles-to-one-solid-plan.md
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BooleanOp {
+    /// Keeps both bodies.
+    Union,
+    /// Cuts the tool out of the body built so far.
+    Difference,
+    /// Keeps only what both bodies share.
+    Intersection,
+}
+
+/// Largest nesting depth of boolean steps inside one body.
+///
+/// A step carries the tool's own shape, and that shape may carry steps of its own, so a hostile
+/// file could nest the history; the depth is bounded where the shape is stored, so no walk over a
+/// document can recurse without a limit (ADR 0041, ADR 0197).
+pub const MAX_BOOLEAN_DEPTH: usize = 8;
+
+/// The body a boolean step combines with, frozen when the step was applied.
+///
+/// A solid is either a drawn body — a ring swept on Z and the history of steps cut from it — or a
+/// parametric primitive, and both take part in a boolean in both directions. The step stores which
+/// it was, so a load needs no node and no library to rebuild the result (ADR 0197).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolBody {
+    /// A drawn body: a path and its ordered feature history.
+    Constructive(Constructive),
+    /// A parametric primitive shape and the steps cut from it.
+    Primitive(Primitive),
+}
+
+impl ToolBody {
+    /// How deeply the operand's own steps nest, counted in booleans, for the depth guard.
+    pub fn boolean_depth(&self) -> usize {
+        match self {
+            Self::Constructive(body) => feature_depth(body.features()),
+            Self::Primitive(body) => body
+                .steps()
+                .iter()
+                .fold(1, |depth, boolean| depth.max(1usize.saturating_add(boolean.tool().body().boolean_depth()))),
+        }
+    }
+}
+
+/// The shape a boolean step cuts with, frozen when the step was applied.
+///
+/// The cutter is a node the maker used once, not a live operand: the step stores the body it had
+/// and where it stood in the target's own frame, so the result is a body of its own and a later
+/// edit to the source changes nothing (ADR 0197). The [name](BooleanTool::name) is the source's,
+/// kept so the card can say what cut the body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "BooleanToolWire")]
+pub struct BooleanTool {
+    name: String,
+    body: ToolBody,
+    placement: Placement,
+}
+
+impl BooleanTool {
+    /// Stores the cutter's name, its body and its placement in the target's frame.
+    ///
+    /// The name is a label and nothing else: it is kept for the card, which says "difference · cup
+    /// bore" rather than a number, and is never resolved back to a node. A blank or absurdly long
+    /// name is refused, because a file must not carry a label no surface can print.
+    pub fn new(name: impl Into<String>, body: ToolBody, placement: Placement) -> Result<Self, BooleanError> {
+        let name = name.into();
+        if name.trim().is_empty() || name.chars().count() > MAX_TOOL_NAME {
+            return Err(BooleanError::ToolName { max: MAX_TOOL_NAME });
+        }
+        Ok(Self { name, body, placement })
+    }
+
+    /// The name the cutter had when the step was applied.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The cutter's own body, as it stood when the step was applied.
+    pub const fn body(&self) -> &ToolBody {
+        &self.body
+    }
+
+    /// The cutter's placement in the frame of the body it cut.
+    pub const fn placement(&self) -> Placement {
+        self.placement
+    }
+}
+
+impl TryFrom<BooleanToolWire> for BooleanTool {
+    type Error = BooleanError;
+
+    fn try_from(wire: BooleanToolWire) -> Result<Self, Self::Error> {
+        Self::new(wire.name, wire.body, wire.placement)
+    }
+}
+
+/// Serialized form of [`BooleanTool`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BooleanToolWire {
+    name: String,
+    body: ToolBody,
+    placement: Placement,
+}
+
+/// A boolean step: the body built so far combined with a shape the maker cut it with.
+///
+/// The step is a snapshot, not a reference: the tool's body and placement live in the step, so the
+/// result stands on its own, a later edit to the source changes nothing, and no file can name a
+/// node that is gone (ADR 0197).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Boolean {
+    op: BooleanOp,
+    tool: BooleanTool,
+}
+
+impl Boolean {
+    /// Stores the operation and the shape it cuts with.
+    pub const fn new(op: BooleanOp, tool: BooleanTool) -> Self {
+        Self { op, tool }
+    }
+
+    /// The boolean operation.
+    pub const fn op(&self) -> BooleanOp {
+        self.op
+    }
+
+    /// The shape the step cuts with, frozen when the step was applied.
+    pub const fn tool(&self) -> &BooleanTool {
+        &self.tool
+    }
+}
+
 /// One step of a constructive object's feature history.
+///
+/// The first feature is always the extrusion of the object's own path; every later feature
+/// combines the body built so far with something else ([`Feature::Boolean`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Feature {
     /// Extrusion of the constructive path.
     Extrude(Extrude),
+    /// A boolean step against the body of another object.
+    Boolean(Boolean),
 }
 
-/// Serialized form of [`Feature`]: an extrusion of the constructive path.
+/// Serialized form of [`Feature`]: an extrusion of the constructive path or a boolean step.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum FeatureWire {
     Extrude { height: Length },
+    Boolean { op: BooleanOp, tool: BooleanToolWire },
 }
 
 /// Serialized form of [`Constructive`]; validation happens in its `TryFrom` implementation.
@@ -107,6 +259,9 @@ impl Constructive {
         if !matches!(features.first(), Some(Feature::Extrude(_))) {
             return Err(ConstructiveError::MissingExtrude);
         }
+        if feature_depth(&features) > MAX_BOOLEAN_DEPTH {
+            return Err(ConstructiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH });
+        }
         if !path.is_closed() {
             return Err(ConstructiveError::OpenPath);
         }
@@ -143,8 +298,46 @@ impl Constructive {
     pub fn extrude_feature(&self) -> Option<&Extrude> {
         match self.features.first() {
             Some(Feature::Extrude(extrude)) => Some(extrude),
-            None => None,
+            Some(Feature::Boolean(_)) | None => None,
         }
+    }
+
+    /// Every boolean step, in application order.
+    pub fn booleans(&self) -> impl Iterator<Item = &Boolean> {
+        self.features.iter().filter_map(|feature| match feature {
+            Feature::Boolean(boolean) => Some(boolean),
+            Feature::Extrude(_) => None,
+        })
+    }
+
+    /// Appends a boolean step after the body built so far.
+    ///
+    /// The step carries the shape it cuts with, so nothing is resolved here and no node can be
+    /// named that a later load could not find (ADR 0197).
+    pub fn push_boolean(&mut self, boolean: Boolean) -> Result<(), ConstructiveError> {
+        if self.features.len() >= MAX_OBJECT_FEATURES {
+            return Err(ConstructiveError::FeatureCount { count: self.features.len(), max: MAX_OBJECT_FEATURES });
+        }
+        let depth = 1usize.saturating_add(boolean.tool().body().boolean_depth());
+        if depth > MAX_BOOLEAN_DEPTH {
+            return Err(ConstructiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH });
+        }
+        self.features.push(Feature::Boolean(boolean));
+        Ok(())
+    }
+
+    /// Removes the feature at `index` and returns it.
+    ///
+    /// The extrusion at index zero is the body's own sweep, so it is refused: removing it would
+    /// leave a history with nothing to build.
+    pub fn remove_feature(&mut self, index: usize) -> Result<Feature, ConstructiveError> {
+        if index == 0 {
+            return Err(ConstructiveError::MissingExtrude);
+        }
+        if index >= self.features.len() {
+            return Err(ConstructiveError::FeatureIndex { index, count: self.features.len() });
+        }
+        Ok(self.features.remove(index))
     }
 
     /// The ring the stored path encloses, derived on read.
@@ -176,11 +369,203 @@ impl TryFrom<ConstructiveWire> for Constructive {
     fn try_from(wire: ConstructiveWire) -> Result<Self, Self::Error> {
         let mut features = Vec::with_capacity(wire.features.len());
         for feature in wire.features {
-            let FeatureWire::Extrude { height } = feature;
-            features.push(Feature::Extrude(Extrude::new(height)?));
+            features.push(match feature {
+                FeatureWire::Extrude { height } => Feature::Extrude(Extrude::new(height)?),
+                FeatureWire::Boolean { op, tool } => Feature::Boolean(Boolean::new(op, BooleanTool::try_from(tool)?)),
+            });
         }
         Self::new(wire.path, features)
     }
+}
+
+/// Serialized form of [`Contours`]; validation happens in its `TryFrom` implementation.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContoursWire {
+    paths: Vec<Path>,
+}
+
+/// A flat drawing of several closed rings: one contour boolean's result.
+///
+/// A boolean of two drawn figures leaves one piece, several pieces, or nothing. Several pieces are
+/// this payload: a leaf that draws its rings and has no solid, so nothing extrudes it yet — the
+/// area between its rings is derived on read, not stored (G4). Each ring is closed and encloses
+/// material; a hole is not a ring of the set but an area, which this payload does not carry.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ContoursWire")]
+pub struct Contours {
+    paths: Vec<Path>,
+}
+
+impl Contours {
+    /// Validates the rings and stores them in the order they are given.
+    pub fn new(paths: Vec<Path>) -> Result<Self, ContoursError> {
+        if paths.is_empty() {
+            return Err(ContoursError::Empty);
+        }
+        if paths.len() > MAX_CONTOURS {
+            return Err(ContoursError::Count { count: paths.len(), max: MAX_CONTOURS });
+        }
+        for (index, path) in paths.iter().enumerate() {
+            if !path.is_closed() {
+                return Err(ContoursError::OpenRing { index });
+            }
+            path.to_contour().map_err(|error| ContoursError::Ring { index, error })?;
+        }
+        Ok(Self { paths })
+    }
+
+    /// The rings, in the order they were stored.
+    pub fn paths(&self) -> &[Path] {
+        &self.paths
+    }
+
+    /// How many rings the drawing holds.
+    pub fn len(&self) -> usize {
+        self.paths.len()
+    }
+
+    /// Whether the drawing holds no ring; always false, because a set needs at least one.
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    /// The box of every ring together, in micrometres.
+    ///
+    /// A set is never empty, so the box is always at least one ring's own box.
+    pub fn bounds_micrometres(&self) -> ([i64; 2], [i64; 2]) {
+        let mut bounds: Option<([i64; 2], [i64; 2])> = None;
+        for path in &self.paths {
+            let (min, max) = path.bounds_micrometres();
+            bounds = Some(match bounds {
+                None => (min, max),
+                Some((low, high)) => {
+                    ([low[0].min(min[0]), low[1].min(min[1])], [high[0].max(max[0]), high[1].max(max[1])])
+                }
+            });
+        }
+        bounds.unwrap_or(([0; 2], [0; 2]))
+    }
+
+    /// The same rings moved by a flat offset.
+    pub fn translated(&self, offset: [Length; 2]) -> Result<Self, ContoursError> {
+        let mut paths = Vec::with_capacity(self.paths.len());
+        for (index, path) in self.paths.iter().enumerate() {
+            paths.push(path.translated(offset).map_err(|error| ContoursError::Ring { index, error })?);
+        }
+        Self::new(paths)
+    }
+
+    /// The areas the drawing's rings enclose, derived on read.
+    ///
+    /// A set's rings enclose material and their boundaries divide it into the areas a maker points
+    /// at: two nested rectangles leave the frame between them and the opening inside it. The
+    /// division is the geometry layer's exact partition, carried out in the set's own plane in
+    /// millimetres, and nothing about it is stored: an edited ring derives new areas in the same
+    /// breath as it draws a new outline.
+    ///
+    /// The areas are disjoint and together they cover exactly the material of the rings, so a point
+    /// inside the material lies in one of them and a point outside lies in none. A ring that the
+    /// document holds is already validated, so a failure here is a set built without its
+    /// constructor or a drawing too fine to divide into faces.
+    pub fn areas(&self) -> Result<Vec<Region>, AreaError> {
+        let mut rings = Vec::with_capacity(self.paths.len());
+        for (index, path) in self.paths.iter().enumerate() {
+            let contour = path.to_contour().map_err(|error| AreaError::Ring { index, error })?;
+            let ring = contour.to_geometry().map_err(|error| AreaError::Contour { index, error })?;
+            rings.push(Region::new(ring, Vec::new()).map_err(|error| AreaError::Partition { error })?);
+        }
+        geom::partition_regions(&rings).map_err(|error| AreaError::Partition { error })
+    }
+
+    /// The area the point falls in, in the set's own plane, or `None` when it falls in none.
+    ///
+    /// This is the whole of what a pointer over a drawing reads: the areas are derived and the one
+    /// that contains the point is the one under the hand, so an area needs no id and the document
+    /// stores nothing about it (G4). Two faces that share a boundary answer the first of them, which
+    /// is a boundary point rather than a place a pointer rests.
+    pub fn area_at(&self, point: DVec2) -> Result<Option<Region>, AreaError> {
+        Ok(self.areas()?.into_iter().find(|area| area.contains(point)))
+    }
+}
+
+impl TryFrom<ContoursWire> for Contours {
+    type Error = ContoursError;
+
+    fn try_from(wire: ContoursWire) -> Result<Self, Self::Error> {
+        Self::new(wire.paths)
+    }
+}
+
+/// A validation failure of a contour set.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ContoursError {
+    /// The set holds no ring.
+    #[error("a contour set needs at least one ring")]
+    Empty,
+    /// The set holds more rings than one drawing may carry.
+    #[error("a contour set holds at most {max} rings, got {count}")]
+    Count {
+        /// The supplied ring count.
+        count: usize,
+        /// The accepted maximum.
+        max: usize,
+    },
+    /// One ring is an open chain, which encloses no material.
+    #[error("ring {index} of a contour set is an open chain")]
+    OpenRing {
+        /// Position of the rejected ring in the set.
+        index: usize,
+    },
+    /// One ring is not a ring the document accepts.
+    #[error("ring {index} of a contour set is not a valid ring: {error}")]
+    Ring {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The ring rule the ring broke.
+        error: PathError,
+    },
+}
+
+/// Why a contour set's areas cannot be derived.
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum AreaError {
+    /// One ring of the set is not a closed chain the document can read back.
+    #[error("ring {index} of a contour set cannot become an area: {error}")]
+    Ring {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The rule the ring broke.
+        error: PathError,
+    },
+    /// One ring of the set cannot cross into the geometry layer.
+    #[error("ring {index} of a contour set cannot become an area: {error}")]
+    Contour {
+        /// Position of the rejected ring in the set.
+        index: usize,
+        /// The rule the ring broke.
+        error: ContourError,
+    },
+    /// The geometry layer refused a ring as a region, or refused the partition of them.
+    #[error("the areas of a contour set cannot be derived: {error}")]
+    Partition {
+        /// Why the partition refused the rings.
+        error: RegionError,
+    },
+}
+
+/// Largest number of characters a stored tool name may carry.
+pub const MAX_TOOL_NAME: usize = 120;
+
+/// A validation failure of a boolean step's stored shape.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum BooleanError {
+    /// The name the cutter had is blank or too long.
+    #[error("a boolean tool's name must carry 1 to {max} characters")]
+    ToolName {
+        /// The accepted maximum.
+        max: usize,
+    },
 }
 
 /// A validation failure of a constructive object.
@@ -214,6 +599,35 @@ pub enum ConstructiveError {
     /// The path is an open chain, which encloses no ring to extrude.
     #[error("a constructive object needs a closed path, not an open chain")]
     OpenPath,
+    /// A boolean step carries a tool whose own history nests deeper than the document accepts.
+    #[error("a body's boolean steps nest deeper than {max} levels")]
+    TooDeepBooleans {
+        /// The accepted maximum.
+        max: usize,
+    },
+    /// A boolean step's stored shape is invalid.
+    #[error(transparent)]
+    Boolean(#[from] BooleanError),
+    /// The feature index is outside the history, or names the extrusion at zero.
+    #[error("feature {index} is outside a history of {count} features")]
+    FeatureIndex {
+        /// The rejected index.
+        index: usize,
+        /// The length of the history.
+        count: usize,
+    },
+}
+
+/// The nesting depth of a feature list: one for the body itself, one more per step that carries a
+/// tool with steps of its own.
+fn feature_depth(features: &[Feature]) -> usize {
+    let mut depth = 1;
+    for feature in features {
+        if let Feature::Boolean(boolean) = feature {
+            depth = depth.max(1usize.saturating_add(boolean.tool().body().boolean_depth()));
+        }
+    }
+    depth
 }
 
 /// The geometry payload of an object node.
@@ -237,6 +651,8 @@ pub enum Geometry {
     Primitive(Primitive),
     /// A flat, open or closed chain of drawn segments.
     Path(Path),
+    /// A flat drawing of several closed rings, the result of a contour boolean.
+    Contours(Contours),
 }
 
 impl Geometry {
@@ -244,7 +660,7 @@ impl Geometry {
     pub const fn as_mesh(&self) -> Option<&Mesh> {
         match self {
             Self::Mesh(mesh) => Some(mesh),
-            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -252,7 +668,7 @@ impl Geometry {
     pub const fn as_mesh_mut(&mut self) -> Option<&mut Mesh> {
         match self {
             Self::Mesh(mesh) => Some(mesh),
-            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -260,7 +676,7 @@ impl Geometry {
     pub const fn as_constructive(&self) -> Option<&Constructive> {
         match self {
             Self::Constructive(constructive) => Some(constructive),
-            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -268,7 +684,7 @@ impl Geometry {
     pub const fn as_constructive_mut(&mut self) -> Option<&mut Constructive> {
         match self {
             Self::Constructive(constructive) => Some(constructive),
-            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Primitive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -276,7 +692,7 @@ impl Geometry {
     pub const fn as_primitive(&self) -> Option<&Primitive> {
         match self {
             Self::Primitive(primitive) => Some(primitive),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -284,7 +700,7 @@ impl Geometry {
     pub const fn as_primitive_mut(&mut self) -> Option<&mut Primitive> {
         match self {
             Self::Primitive(primitive) => Some(primitive),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Path(_) | Self::Contours(_) => None,
         }
     }
 
@@ -292,7 +708,7 @@ impl Geometry {
     pub const fn as_path(&self) -> Option<&Path> {
         match self {
             Self::Path(path) => Some(path),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Contours(_) => None,
         }
     }
 
@@ -300,7 +716,29 @@ impl Geometry {
     pub const fn as_path_mut(&mut self) -> Option<&mut Path> {
         match self {
             Self::Path(path) => Some(path),
-            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) => None,
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Contours(_) => None,
+        }
+    }
+
+    /// The one chain a payload draws, when it draws one.
+    ///
+    /// A path object draws the chain the user drew; a constructive body draws the path it grew from
+    /// ([`Constructive::path`]), so a body's profile is editable and combinable wherever the ring
+    /// lives instead of only in the object that happens to store it (X98). A contour set draws
+    /// several rings, which no single chain describes; a mesh and a primitive draw none.
+    pub const fn profile(&self) -> Option<&Path> {
+        match self {
+            Self::Path(path) => Some(path),
+            Self::Constructive(constructive) => Some(constructive.path()),
+            Self::Mesh(_) | Self::Primitive(_) | Self::Contours(_) => None,
+        }
+    }
+
+    /// The ring set, when the payload is a contour set.
+    pub const fn as_contours(&self) -> Option<&Contours> {
+        match self {
+            Self::Contours(contours) => Some(contours),
+            Self::Mesh(_) | Self::Constructive(_) | Self::Primitive(_) | Self::Path(_) => None,
         }
     }
 }
@@ -309,6 +747,10 @@ impl Geometry {
 ///
 /// A panel is not an object: panel rules are manufacturing rules. An object is a leaf in v1, so
 /// several parts are grouped by wrapping them in a container.
+///
+/// An object may be marked as a **tool**: it takes part in a contour boolean and survives it, where
+/// an unmarked operand is consumed. The mark is a property of the object and nothing else — a tool
+/// is not linked to what the boolean produced, so its later shape never reaches the result.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
@@ -319,11 +761,12 @@ pub struct Object {
     pivot_local: PivotLocal,
     #[serde(default)]
     properties: Properties,
+    tool: bool,
     geometry: Geometry,
 }
 
 impl Object {
-    /// Creates an object with a zero pivot.
+    /// Creates an object with a zero pivot; a new object is not a tool.
     pub fn new(id: Id, name: impl Into<String>, placement: Placement, geometry: Geometry) -> Self {
         Self {
             id,
@@ -331,6 +774,7 @@ impl Object {
             placement,
             pivot_local: PivotLocal::ZERO,
             properties: Properties::new(),
+            tool: false,
             geometry,
         }
     }
@@ -383,6 +827,16 @@ impl Object {
     /// Replaces the stable id when a subtree is copied.
     pub(crate) fn set_node_id(&mut self, id: Id) {
         self.id = id;
+    }
+
+    /// Whether the object is marked as a tool, so a contour boolean keeps it.
+    pub const fn is_tool(&self) -> bool {
+        self.tool
+    }
+
+    /// Marks or unmarks the object as a tool.
+    pub(crate) fn set_tool(&mut self, tool: bool) {
+        self.tool = tool;
     }
 
     /// The typed properties of this object.
@@ -523,6 +977,153 @@ mod tests {
         assert_eq!(project.revision(), Revision::ZERO);
     }
 
+    /// The shape a step cuts with: a 50 x 50 ring swept 200 mm, standing where the caller puts it.
+    fn cutter(name: &str, at: (f64, f64, f64)) -> BooleanTool {
+        let path = Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a ring");
+        let body = Constructive::extrude(path, millimetres(200)).expect("a body");
+        let placement = Placement::new(DVec3::new(at.0, at.1, at.2), DQuat::IDENTITY).expect("a placement");
+        BooleanTool::new(name, ToolBody::Constructive(body), placement).expect("a named tool")
+    }
+
+    fn scene(children: Vec<Node>) -> Container {
+        Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, children)
+    }
+
+    #[test]
+    fn a_boolean_step_carries_the_shape_it_cuts_with() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let body = Id::new(5).expect("id");
+        let tool = Id::new(6).expect("id");
+        project
+            .apply_boolean(body, Boolean::new(BooleanOp::Difference, cutter("Cup bore", (25.0, 25.0, -10.0))), None)
+            .expect("a step");
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        assert!(text.contains("\"kind\":\"boolean\""), "the step is written by kind");
+        assert!(text.contains("\"Cup bore\""), "the cutter's name travels with the step");
+        let decoded: Project = serde_json::from_str(&text).expect("load");
+        assert_eq!(decoded, project);
+
+        let stored = decoded.object(body).expect("the body").geometry().as_constructive().expect("a body");
+        let step = stored.booleans().next().expect("one step");
+        assert_eq!(step.op(), BooleanOp::Difference);
+        assert_eq!(step.tool().name(), "Cup bore");
+        let ToolBody::Constructive(shape) = step.tool().body() else {
+            panic!("a drawn cutter");
+        };
+        assert_eq!(shape.height(), Some(millimetres(200)), "the shape is frozen in the step");
+        assert_eq!(step.tool().placement().translation(), DVec3::new(25.0, 25.0, -10.0));
+        assert!(decoded.object(tool).is_some(), "a kept source is untouched");
+    }
+
+    #[test]
+    fn applying_a_boolean_spends_its_cutter_in_the_same_revision() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let body = Id::new(5).expect("id");
+        let tool = Id::new(6).expect("id");
+
+        let revision = project
+            .apply_boolean(body, Boolean::new(BooleanOp::Difference, cutter("Cutter", (0.0, 0.0, 0.0))), Some(tool))
+            .expect("the step and the spent cutter");
+
+        assert_eq!(revision.get(), 1, "one command, one revision");
+        assert!(project.object(tool).is_none(), "the cutter leaves the tree with the step");
+        let stored = project.object(body).expect("the body").geometry().as_constructive().expect("a body");
+        assert_eq!(stored.booleans().count(), 1, "the result keeps the shape it cut with");
+        assert_eq!(stored.booleans().next().expect("a step").tool().name(), "Cutter");
+
+        // A step whose cutter was kept leaves that node alone.
+        let kept = project
+            .apply_boolean(body, Boolean::new(BooleanOp::Union, cutter("Kept", (0.0, 0.0, 0.0))), None)
+            .expect("a step");
+        assert_eq!(kept.get(), 2);
+    }
+
+    #[test]
+    fn a_boolean_refuses_a_nameless_shape_and_a_history_that_nests_too_deep() {
+        assert_eq!(
+            BooleanTool::new(
+                "  ",
+                ToolBody::Constructive(
+                    Constructive::extrude(
+                        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)],)
+                            .expect("a ring"),
+                        millimetres(10)
+                    )
+                    .expect("a body")
+                ),
+                Placement::IDENTITY
+            ),
+            Err(BooleanError::ToolName { max: MAX_TOOL_NAME })
+        );
+
+        // A shape that carries a step of its own may be a cutter, but only so many levels deep.
+        let mut nested = Constructive::extrude(
+            Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)]).expect("a ring"),
+            millimetres(10),
+        )
+        .expect("a body");
+        for level in 1..=MAX_BOOLEAN_DEPTH {
+            let inner =
+                BooleanTool::new("Inner", ToolBody::Constructive(nested.clone()), Placement::IDENTITY).expect("a tool");
+            let mut outer = Constructive::extrude(
+                Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(10), millimetres(10)]).expect("a ring"),
+                millimetres(10),
+            )
+            .expect("a body");
+            let pushed = outer.push_boolean(Boolean::new(BooleanOp::Difference, inner));
+            if level < MAX_BOOLEAN_DEPTH {
+                pushed.expect("a level the document accepts");
+                nested = outer;
+            } else {
+                assert_eq!(pushed, Err(ConstructiveError::TooDeepBooleans { max: MAX_BOOLEAN_DEPTH }));
+            }
+        }
+    }
+
+    #[test]
+    fn a_removed_step_leaves_the_others_in_order_and_never_brings_its_cutter_back() {
+        let mut project =
+            Project::new(scene(vec![sample_body(5, 100, 50).into(), sample_body(6, 20, 20).into()])).expect("project");
+        let five = Id::new(5).expect("id");
+        let six = Id::new(6).expect("id");
+        project
+            .apply_boolean(five, Boolean::new(BooleanOp::Difference, cutter("First", (0.0, 0.0, 0.0))), Some(six))
+            .expect("one step");
+        project
+            .apply_boolean(five, Boolean::new(BooleanOp::Union, cutter("Second", (0.0, 0.0, 0.0))), None)
+            .expect("a second step");
+
+        project.remove_object_boolean(five, 1).expect("remove the first step");
+        let constructive = project.object(five).expect("body").geometry().as_constructive().expect("constructive");
+        assert_eq!(constructive.features().len(), 2, "the extrusion and the second step remain");
+        assert_eq!(
+            constructive.booleans().map(Boolean::op).collect::<Vec<_>>(),
+            vec![BooleanOp::Union],
+            "the step that stayed is the one that was second"
+        );
+        assert!(project.object(six).is_none(), "the spent cutter does not return with undo-shaped edits");
+        assert_eq!(project.remove_object_boolean(five, 0), Err(ProjectError::NoSuchBoolean { id: five, index: 0 }));
+        assert_eq!(project.remove_object_boolean(five, 7), Err(ProjectError::NoSuchBoolean { id: five, index: 7 }));
+    }
+
+    #[test]
+    fn an_unknown_boolean_operation_is_a_readable_load_error() {
+        let mut project = Project::new(scene(vec![sample_body(5, 100, 50).into()])).expect("project");
+        project
+            .apply_boolean(
+                Id::new(5).expect("id"),
+                Boolean::new(BooleanOp::Difference, cutter("Cutter", (0.0, 0.0, 0.0))),
+                None,
+            )
+            .expect("a step");
+        let text = serde_json::to_string(&project).expect("serialize").replace("\"difference\"", "\"subtract\"");
+        let error = serde_json::from_str::<Project>(&text).expect_err("an unknown operation is refused");
+        assert!(error.to_string().contains("unknown variant"), "error was {error}");
+    }
+
     #[test]
     fn object_duplicate_id_is_rejected() {
         let root = Container::new(
@@ -619,7 +1220,7 @@ mod tests {
         assert!((max - DVec3::new(50.0, 50.0, 50.0)).length() < 1.0e-9);
 
         let replacement = Primitive::sphere(millimetres(80), 24, 12).expect("sphere");
-        let revision = project.set_object_primitive(id, replacement.clone()).expect("replace the primitive");
+        let revision = project.set_object_primitive(id, replacement.base()).expect("replace the primitive");
         assert_eq!(revision.get(), 2, "creation was revision one");
         assert_eq!(project.object_primitive(id), Ok(&replacement));
         assert_eq!(
@@ -634,7 +1235,109 @@ mod tests {
         assert_eq!(object.name(), "Ball", "collapse keeps every other field");
         assert_eq!(object.geometry().as_mesh(), Some(&mesh));
         assert!(object.geometry().as_primitive().is_none(), "collapse drops the parameters");
-        assert_eq!(project.set_object_primitive(id, replacement), Err(ProjectError::NotAPrimitiveObject { id }));
+        assert_eq!(project.set_object_primitive(id, replacement.base()), Err(ProjectError::NotAPrimitiveObject { id }));
+    }
+
+    /// A closed rectangle ring, 100 x 50 mm at the given offset.
+    fn rectangle_ring(x: i64, y: i64) -> Path {
+        Path::rectangle([millimetres(x), millimetres(y)], [millimetres(x + 100), millimetres(y + 50)])
+            .expect("a rectangle ring")
+    }
+
+    #[test]
+    fn a_contour_set_holds_closed_rings_and_moves_as_one() {
+        let set = Contours::new(vec![rectangle_ring(0, 0), rectangle_ring(200, 0)]).expect("two rings");
+        assert_eq!(set.len(), 2, "both rings are kept");
+        assert!(!set.is_empty());
+        assert_eq!(set.bounds_micrometres(), ([0, 0], [300_000, 50_000]), "the box holds both rings");
+
+        let moved = set.translated([millimetres(10), millimetres(5)]).expect("a flat move");
+        assert_eq!(moved.bounds_micrometres(), ([10_000, 5_000], [310_000, 55_000]));
+
+        assert_eq!(Contours::new(Vec::new()), Err(ContoursError::Empty), "a set needs a ring");
+        let open = sample_path();
+        assert_eq!(Contours::new(vec![open]), Err(ContoursError::OpenRing { index: 0 }));
+        let many = vec![rectangle_ring(0, 0); MAX_CONTOURS + 1];
+        assert!(matches!(Contours::new(many), Err(ContoursError::Count { .. })));
+    }
+
+    #[test]
+    fn two_nested_rings_leave_the_frame_and_the_opening_as_areas() {
+        let outer =
+            Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]).expect("the frame");
+        let inner = Path::rectangle([millimetres(20), millimetres(10)], [millimetres(60), millimetres(30)])
+            .expect("the opening");
+        let set = Contours::new(vec![outer, inner]).expect("two rings");
+
+        let areas = set.areas().expect("the areas are derived");
+        assert_eq!(areas.len(), 2, "the frame and the opening");
+        let opening = set.area_at(DVec2::new(40.0, 20.0)).expect("a derived set").expect("the opening");
+        assert!((opening.area() - 800.0).abs() < 1.0e-6, "{} mm²", opening.area());
+        assert!(opening.holes().is_empty(), "the opening is a face on its own");
+        let frame = set.area_at(DVec2::new(5.0, 5.0)).expect("a derived set").expect("the frame");
+        assert!((frame.area() - 4200.0).abs() < 1.0e-6, "{} mm²", frame.area());
+        assert_eq!(frame.holes().len(), 1, "the opening is the frame's hole");
+        assert!(set.area_at(DVec2::new(200.0, 20.0)).expect("a derived set").is_none(), "outside every ring");
+    }
+
+    #[test]
+    fn one_ring_of_a_set_is_one_area() {
+        let set = Contours::new(vec![rectangle_ring(0, 0)]).expect("one ring");
+        let areas = set.areas().expect("the area is derived");
+        assert_eq!(areas.len(), 1);
+        assert!((areas[0].area() - 5000.0).abs() < 1.0e-6);
+        assert!(set.area_at(DVec2::new(50.0, 25.0)).expect("a derived set").is_some());
+    }
+
+    #[test]
+    fn an_area_becomes_a_stored_path_again() {
+        let set = Contours::new(vec![rectangle_ring(0, 0)]).expect("one ring");
+        let area = set.area_at(DVec2::new(50.0, 25.0)).expect("a derived set").expect("the area");
+        let path = Path::from_geometry(area.outer()).expect("the ring is a path again");
+        assert!(path.is_closed());
+        assert_eq!(path.bounds_micrometres(), ([0, 0], [100_000, 50_000]), "the ring keeps its place");
+        assert_eq!(path.to_contour().expect("a ring").bounds_micrometres(), ([0, 0], [100_000, 50_000]));
+    }
+
+    #[test]
+    fn a_contour_set_round_trips_and_a_set_object_reports_its_rings() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let root = project.root().id();
+        let set = Contours::new(vec![rectangle_ring(0, 0), rectangle_ring(200, 0)]).expect("two rings");
+        let id = project
+            .add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set.clone()))
+            .expect("a set object is added like any other object");
+        assert_eq!(project.object_contours(id), Ok(&set));
+        assert_eq!(project.object_path(id), Err(ProjectError::NotAPathObject { id }));
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        let decoded: Project = serde_json::from_str(&text).expect("deserialize");
+        assert_eq!(decoded.object_contours(id), Ok(&set), "the set survives the file");
+    }
+
+    #[test]
+    fn the_tool_mark_is_an_object_attribute_and_travels_in_the_file() {
+        let mut project = crate::testing::sample_project();
+        let root = project.root().id();
+        let id = project
+            .add_object(root, "Cutter", Placement::IDENTITY, Geometry::Path(rectangle_ring(0, 0)))
+            .expect("a path object");
+        assert!(!project.object(id).expect("object").is_tool(), "a new object is not a tool");
+        project.set_object_tool(id, true).expect("mark the object");
+        assert!(project.object(id).expect("object").is_tool());
+
+        let text = serde_json::to_string(&project).expect("serialize");
+        assert!(text.contains("\"tool\":true"), "the mark is a field of the object");
+        let decoded: Project = serde_json::from_str(&text).expect("deserialize");
+        assert!(decoded.object(id).expect("object").is_tool(), "the mark survives the file");
+
+        // A panel is a node but not a geometry object, so it carries no such mark.
+        let panel = project.root().children().first().expect("the shelf").id();
+        assert_eq!(project.set_object_tool(panel, true), Err(ProjectError::NotAnObject { id: panel }));
+        // A node nobody has is a missing node, not a wrong kind.
+        let missing = Id::new(900).expect("id");
+        assert_eq!(project.set_object_tool(missing, true), Err(ProjectError::NodeNotFound { id: missing }));
     }
 
     fn sample_path() -> Path {
@@ -704,6 +1407,23 @@ mod tests {
     }
 
     #[test]
+    fn the_profile_is_a_paths_chain_or_the_one_a_body_grew_from() {
+        // The one chain a payload draws, which is what a contour boolean reads: a body answers with
+        // the path it was extruded from, so the ring is reachable wherever it lives (X98).
+        let path = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)])
+            .expect("a rectangle");
+        assert_eq!(Geometry::Path(path.clone()).profile(), Some(&path), "a drawing is its own profile");
+        let body = Constructive::extrude(path.clone(), millimetres(18)).expect("a body");
+        assert_eq!(Geometry::Constructive(body).profile(), Some(&path), "a body owns the profile it grew from");
+        let mesh = Geometry::Mesh(box_mesh());
+        assert_eq!(mesh.profile(), None, "a baked mesh draws no chain");
+        let sphere = Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+        assert_eq!(Geometry::Primitive(sphere).profile(), None, "a primitive draws no chain");
+        let set = Contours::new(vec![path.clone()]).expect("a set");
+        assert_eq!(Geometry::Contours(set).profile(), None, "a contour set draws several rings, not one");
+    }
+
+    #[test]
     fn a_path_object_bounds_use_the_chain_extents() {
         let geometry = Geometry::Path(sample_path());
         let (min, max) = object_bounds_mm(&geometry).expect("bounds");
@@ -737,6 +1457,65 @@ mod tests {
             "a body is not extruded a second time"
         );
         assert_eq!(project.revision(), revision, "a refused extrusion changes nothing");
+    }
+
+    #[test]
+    fn extruding_a_contour_set_leaves_one_body_per_ring_in_one_revision() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let container = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+        let set = Contours::new(vec![left.clone(), right.clone()]).expect("a contour set");
+        let placement = Placement::new(DVec3::new(10.0, 0.0, 0.0), DQuat::IDENTITY).expect("a placement");
+        let id = project.add_object(container, "Union", placement, Geometry::Contours(set)).expect("a set object");
+        let revision = project.revision();
+
+        let bodies = project.extrude_object_contours(id, millimetres(18)).expect("both rings become bodies");
+
+        assert_eq!(bodies.len(), 2, "one body per ring");
+        assert_eq!(bodies.first(), Some(&id), "the drawing's own node is the first body");
+        assert_eq!(project.revision().get(), revision.get() + 1, "one revision for the whole expansion");
+        let first = project.object(id).expect("the node is still there");
+        assert_eq!(first.name(), "Union", "the node keeps its name");
+        assert_eq!(first.placement(), placement, "the node keeps its placement");
+        let body = first.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &left, "the first body owns the first ring");
+        assert_eq!(body.height(), Some(millimetres(18)), "each body carries the typed height");
+        let second = bodies.get(1).and_then(|body| project.object(*body)).expect("the second body");
+        assert_eq!(second.name(), "Union 2", "a sibling is named after the drawing");
+        assert_eq!(second.placement(), placement, "a sibling stands in the drawing's own frame");
+        let body = second.geometry().as_constructive().expect("a constructive body");
+        assert_eq!(body.path(), &right, "the second body owns the second ring");
+        assert_eq!(body.height(), Some(millimetres(18)));
+        assert_eq!(project.parent_of(bodies[1]), project.parent_of(id), "a sibling is a sibling of the drawing");
+        assert_eq!(project.root().children().len(), 2, "the set became one body and made one more");
+        assert_eq!(
+            project.extrude_object_contours(id, millimetres(18)),
+            Err(ProjectError::NotAContoursObject { id }),
+            "a body is not a set and is not expanded a second time"
+        );
+        assert_eq!(project.revision().get(), revision.get() + 1, "a refused expansion changes nothing");
+    }
+
+    #[test]
+    fn extrude_a_contour_set_keeps_the_pivot_a_new_body_starts_with() {
+        let root = Container::new(Id::new(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("valid project");
+        let container = project.root().id();
+        let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+        let right =
+            Path::rectangle([millimetres(0), millimetres(40)], [millimetres(40), millimetres(60)]).expect("ring");
+        let set = Contours::new(vec![left, right]).expect("a contour set");
+        let id = project.add_object(container, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set");
+        let pivot = PivotLocal::new(millimetres(5), millimetres(5), Length::ZERO);
+        project.set_node_pivot(id, pivot).expect("the pivot moves");
+
+        let bodies = project.extrude_object_contours(id, millimetres(18)).expect("both rings become bodies");
+
+        assert_eq!(project.pivot_local(id), Some(pivot), "the node keeps the pivot it had");
+        assert_eq!(project.pivot_local(bodies[1]), Some(PivotLocal::ZERO), "a new body is born at a zero pivot");
     }
 
     #[test]

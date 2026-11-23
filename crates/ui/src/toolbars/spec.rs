@@ -16,7 +16,7 @@
 //!
 //! Every row is a constant, so the ribbon allocates nothing to read the map.
 
-use engine::PrimitiveKind;
+use engine::{ContourOp, PrimitiveKind};
 use model::{ClassCode, FillMode};
 use text::Message;
 
@@ -42,8 +42,13 @@ pub enum ToolKind {
     CloseDraft,
     /// Drops the running chain; the document never changed.
     CancelDraft,
-    /// Extrudes the selected closed path into a body.
+    /// Turns the selected drawing into bodies: a closed path becomes one body in place, and a
+    /// drawing of several rings becomes one body per ring, in one command and one undo entry
+    /// (X100). The height is the session's typed default.
     Extrude,
+    /// Arms the area pull on the selected drawing: the pointer names one area of it and a click
+    /// stores that area as a body, leaving the drawing where it is (G4, ADR 0205).
+    AreaPull,
     /// Opens the card that creates a product frame.
     Product,
     /// Draws the product frame's reserved box exactly as a body cell draws a solid's profile: the same
@@ -83,10 +88,27 @@ pub enum ToolKind {
     FrameAll,
     /// Switches between perspective and orthographic.
     Projection,
-    /// Turns the work-plane grid snap on or off.
-    GridSnap,
+    /// Turns one snap kind on or off: the View tab's Snaps group, one cell per kind (U116).
+    Snap(model::SnapKind),
+    /// Turns every snap kind on, or every kind off: the set's master switch (U116).
+    SnapAll,
+    /// Switches the snap mode between the point itself (3D) and its foot on the plane (2.5D).
+    ///
+    /// The cell draws the reading in force, as the projection cell draws the camera's, so a maker
+    /// reads the mode off the glyph and switches it with one press (U119).
+    SnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     Shadows,
+    /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
+    /// the base ring and every further picked ring as its operands (G3, ADR 0194).
+    ContourBoolean(ContourOp),
+    /// Arms one body boolean over the selected constructive body: the ✓ appends a step of this
+    /// operation to the target's history and leaves the tool body in the tree (W1).
+    ///
+    /// The cell shares the membership rule's words and artwork with the contour boolean of the same
+    /// name, because it is the same operation on a solid instead of on its profile — and the two are
+    /// told apart by the tab they sit on, the Model tab's cells and the Sketch tab's.
+    BodyBoolean(ContourOp),
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
     /// Arms the niche tool: the pointer names the empty space inside the open product and writes
@@ -139,12 +161,14 @@ impl Method {
 ///
 /// A fill cell draws as one split cell rather than two cells a maker has to tell apart: the method
 /// list is the choice between fitting and taking the shape, and the pinned method is the one the
-/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and each row
-/// carries its own glyph so the shape is not a blank line (U84).
+/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and the shape
+/// row carries the niche-fit board — one corner cut, the opposite rounded — so the list offers a
+/// build a maker can see (U84, U117). The three fill cells share that glyph, because the build is
+/// one and the class is what differs.
 const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.post.shape",
     label: Message::FillMethodShape,
-    icon: Some(icons::contour::POLYGON),
+    icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
 }];
 
@@ -152,8 +176,29 @@ const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
 const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
     id: "furniture.panels.shelf.shape",
     label: Message::FillMethodShape,
-    icon: Some(icons::contour::POLYGON),
+    icon: Some(icons::scene::PANEL_SHAPE),
     run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape }),
+}];
+
+/// The wall's second method: take the whole section instead of the largest fit.
+const FILL_WALL_SHAPE: &[VariantSpec] = &[VariantSpec {
+    id: "furniture.panels.wall.shape",
+    label: Message::FillMethodShape,
+    icon: Some(icons::scene::PANEL_SHAPE),
+    run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+}];
+
+/// The Extrude cell's second method: pull one area of the drawing out as its own body.
+///
+/// A cell is one press. The first press turns the whole drawing into bodies — a path into one, a
+/// drawing of several rings into one per ring — and a maker who wants one face of a drawing the
+/// rings leave chooses this row: the pointer then names the area and the drawing stays put
+/// (G4, ADR 0205, ADR 0220).
+const EXTRUDE_AREA: &[VariantSpec] = &[VariantSpec {
+    id: "model.create.extrude.area",
+    label: Message::ExtrudeMethodArea,
+    icon: Some(icons::bodies::PULL_AREA),
+    run: Some(ToolKind::AreaPull),
 }];
 
 /// One tool: one cell of a group's row.
@@ -643,11 +688,32 @@ const SKETCH: [GroupSpec; 7] = [
     },
     GroupSpec {
         id: "sketch.booleans",
-        label: Message::GroupBooleans,
+        label: Message::GroupContourBooleans,
         tools: &[
-            planned("sketch.booleans.union", Message::ToolUnion),
-            planned("sketch.booleans.subtract", Message::ToolSubtract),
-            planned("sketch.booleans.intersect", Message::ToolIntersect),
+            ToolSpec {
+                id: "sketch.booleans.union",
+                label: Message::ToolUnion,
+                icon: Some(icons::contour::BOOLEAN_UNION),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Union)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "sketch.booleans.subtract",
+                label: Message::ToolSubtract,
+                icon: Some(icons::contour::BOOLEAN_SUBTRACT),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Subtract)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "sketch.booleans.intersect",
+                label: Message::ToolIntersect,
+                icon: Some(icons::contour::BOOLEAN_INTERSECT),
+                run: Some(ToolKind::ContourBoolean(ContourOp::Intersect)),
+                method: None,
+                variants: &[],
+            },
         ],
     },
     GroupSpec {
@@ -790,8 +856,8 @@ const MODEL: [GroupSpec; 5] = [
                 label: Message::ToolExtrude,
                 icon: Some(icons::bodies::EXTRUDE),
                 run: Some(ToolKind::Extrude),
-                method: None,
-                variants: &[],
+                method: Some(Message::ExtrudeMethodWhole),
+                variants: EXTRUDE_AREA,
             },
             planned("model.create.revolve", Message::ToolRevolve),
             planned("model.create.loft", Message::ToolLoft),
@@ -802,9 +868,30 @@ const MODEL: [GroupSpec; 5] = [
         id: "model.booleans",
         label: Message::GroupBooleans,
         tools: &[
-            planned("model.booleans.union", Message::ToolUnion),
-            planned("model.booleans.subtract", Message::ToolSubtract),
-            planned("model.booleans.intersect", Message::ToolIntersect),
+            ToolSpec {
+                id: "model.booleans.union",
+                label: Message::ToolUnion,
+                icon: Some(icons::contour::BOOLEAN_UNION),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Union)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "model.booleans.subtract",
+                label: Message::ToolSubtract,
+                icon: Some(icons::contour::BOOLEAN_SUBTRACT),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Subtract)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "model.booleans.intersect",
+                label: Message::ToolIntersect,
+                icon: Some(icons::contour::BOOLEAN_INTERSECT),
+                run: Some(ToolKind::BodyBoolean(ContourOp::Intersect)),
+                method: None,
+                variants: &[],
+            },
         ],
     },
     GroupSpec {
@@ -878,6 +965,16 @@ const FURNITURE: [GroupSpec; 6] = [
                 run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }),
                 method: Some(Message::FillMethodFit),
                 variants: FILL_SHELF_SHAPE,
+            },
+            // The wall is the board in the frontal plane: the back panel row's own fill pair, so
+            // the tool exists because the class carries `WidthAndHeight` (N28, ADR 0200).
+            ToolSpec {
+                id: "furniture.panels.wall",
+                label: Message::ToolWall,
+                icon: Some(icons::scene::WALL),
+                run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
+                method: Some(Message::FillMethodFit),
+                variants: FILL_WALL_SHAPE,
             },
             // The niche is the space the two cells above fill: it sits with them because a maker
             // reads the gap and the part together, and it creates nothing (ADR 0118).
@@ -1055,17 +1152,113 @@ const VIEW: [GroupSpec; 5] = [
             planned("view.navigation.zoom", Message::ToolZoom),
         ],
     },
+    // One cell per kind, in the resolver's own order: a corner, a crossing, a middle, a centre, a
+    // perpendicular, a tangent, an edge, a face, a world axis and the grid. The set is the one the
+    // pointer resolver answers with, so a cell cannot offer a snap the resolver does not have
+    // (U116). The mode cell after the master switch says how every kind below reads a corner above
+    // the plane, and its glyph is the mode in force (U119).
     GroupSpec {
         id: "view.snaps",
         label: Message::GroupSnaps,
-        tools: &[ToolSpec {
-            id: "view.snaps.grid",
-            label: Message::ToolGridSnap,
-            icon: Some(icons::view::GRID_SNAP),
-            run: Some(ToolKind::GridSnap),
-            method: None,
-            variants: &[],
-        }],
+        tools: &[
+            ToolSpec {
+                id: "view.snaps.all",
+                label: Message::SnapAll,
+                icon: Some(icons::view::SNAP_ALL),
+                run: Some(ToolKind::SnapAll),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.mode",
+                label: Message::SnapMode,
+                icon: Some(icons::view::SNAP_SPACE),
+                run: Some(ToolKind::SnapMode),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.vertex",
+                label: Message::SnapVertex,
+                icon: Some(icons::view::SNAP_VERTEX),
+                run: Some(ToolKind::Snap(model::SnapKind::Vertex)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.intersection",
+                label: Message::SnapIntersection,
+                icon: Some(icons::view::SNAP_INTERSECTION),
+                run: Some(ToolKind::Snap(model::SnapKind::Intersection)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.midpoint",
+                label: Message::SnapMidpoint,
+                icon: Some(icons::view::SNAP_MIDPOINT),
+                run: Some(ToolKind::Snap(model::SnapKind::Midpoint)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.centre",
+                label: Message::SnapCentre,
+                icon: Some(icons::view::SNAP_CENTRE),
+                run: Some(ToolKind::Snap(model::SnapKind::Centre)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.perpendicular",
+                label: Message::SnapPerpendicular,
+                icon: Some(icons::view::SNAP_PERPENDICULAR),
+                run: Some(ToolKind::Snap(model::SnapKind::Perpendicular)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.tangent",
+                label: Message::SnapTangent,
+                icon: Some(icons::view::SNAP_TANGENT),
+                run: Some(ToolKind::Snap(model::SnapKind::Tangent)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.edge",
+                label: Message::SnapEdge,
+                icon: Some(icons::view::SNAP_EDGE),
+                run: Some(ToolKind::Snap(model::SnapKind::Edge)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.face",
+                label: Message::SnapFace,
+                icon: Some(icons::view::SNAP_FACE),
+                run: Some(ToolKind::Snap(model::SnapKind::Face)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.axis",
+                label: Message::SnapAxis,
+                icon: Some(icons::view::SNAP_AXIS),
+                run: Some(ToolKind::Snap(model::SnapKind::Axis)),
+                method: None,
+                variants: &[],
+            },
+            ToolSpec {
+                id: "view.snaps.grid",
+                // The grid keeps the cell and the key it always had; its word is the kind's.
+                label: Message::SnapGrid,
+                icon: Some(icons::view::GRID_SNAP),
+                run: Some(ToolKind::Snap(model::SnapKind::Grid)),
+                method: None,
+                variants: &[],
+            },
+        ],
     },
 ];
 
@@ -1093,6 +1286,23 @@ mod tests {
             }
         }
         tools
+    }
+
+    #[test]
+    fn the_box_cell_and_the_box_command_are_one_word() {
+        // The cell arms the rectangle gesture (ADR 0138), so its own id is a method and not a
+        // command; a caller that cannot draw still needs the shape by the word the button prints, so
+        // the registry names it with the cell's own message (X105).
+        let box_cell = every_tool()
+            .into_iter()
+            .find(|(_, tool)| tool.id == "model.primitives.cuboid")
+            .map(|(_, tool)| tool)
+            .expect("the box cell");
+        let command = engine::CommandRegistry::new()
+            .get(engine::object_cmds::OBJECT_CUBOID_CREATE_ID)
+            .expect("the box command is registered");
+        assert_eq!(command.label(), box_cell.label, "the button and the registry print two words");
+        assert_eq!(box_cell.label.text(text::Lang::En), "Box");
     }
 
     #[test]
@@ -1180,6 +1390,9 @@ mod tests {
         assert_eq!(
             live("sketch"),
             [
+                "sketch.booleans.intersect",
+                "sketch.booleans.subtract",
+                "sketch.booleans.union",
                 "sketch.create.arc",
                 "sketch.create.circle",
                 "sketch.create.line",
@@ -1194,6 +1407,9 @@ mod tests {
         assert_eq!(
             live("model"),
             [
+                "model.booleans.intersect",
+                "model.booleans.subtract",
+                "model.booleans.union",
                 "model.create.extrude",
                 "model.primitives.cone",
                 "model.primitives.cuboid",
@@ -1208,13 +1424,30 @@ mod tests {
                 "furniture.panels.post",
                 "furniture.panels.shelf",
                 "furniture.panels.void",
+                "furniture.panels.wall",
                 "furniture.product.frame",
             ]
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
         assert_eq!(
             live("view"),
-            ["view.display.shadows", "view.projection.frame-all", "view.projection.toggle", "view.snaps.grid"]
+            [
+                "view.display.shadows",
+                "view.projection.frame-all",
+                "view.projection.toggle",
+                "view.snaps.all",
+                "view.snaps.axis",
+                "view.snaps.centre",
+                "view.snaps.edge",
+                "view.snaps.face",
+                "view.snaps.grid",
+                "view.snaps.intersection",
+                "view.snaps.midpoint",
+                "view.snaps.mode",
+                "view.snaps.perpendicular",
+                "view.snaps.tangent",
+                "view.snaps.vertex",
+            ]
         );
     }
 
@@ -1245,19 +1478,41 @@ mod tests {
     }
 
     #[test]
-    fn the_grid_snap_is_filed_under_its_own_snaps_caption() {
-        // The snap changes where a click lands, not how the scene looks, so it left *View › Display*
-        // for a group the endpoint, the axis and the object snaps can join (U91).
+    fn the_snaps_group_holds_one_cell_per_kind_in_the_resolvers_order() {
+        // The ten cells are the resolver's ten kinds, in its priority order, so a cell cannot offer a
+        // snap the pointer does not answer with (U116). The grid keeps the cell and the key it has
+        // had since U91.
         let view = tab("view").expect("the view tab");
         let snaps = view.groups.iter().find(|group| group.id == "view.snaps").expect("the snaps group");
         assert_eq!(snaps.label.text(text::Lang::En), "Snaps");
         assert_eq!(snaps.label.text(text::Lang::Ru), "Привязки");
         let tools = snaps.tools.iter().map(|tool| (tool.id, tool.run, tool.key())).collect::<Vec<_>>();
-        assert_eq!(tools, vec![("view.snaps.grid", Some(ToolKind::GridSnap), Some("G"))], "the G key and the cell");
+        // The master switch, then the mode every kind below reads a corner by, then the kinds.
+        let mut expected = vec![
+            ("view.snaps.all", Some(ToolKind::SnapAll), None),
+            ("view.snaps.mode", Some(ToolKind::SnapMode), None),
+        ];
+        expected.extend(model::SnapKind::ALL.into_iter().map(|kind| {
+            let id = match kind {
+                model::SnapKind::Vertex => "view.snaps.vertex",
+                model::SnapKind::Intersection => "view.snaps.intersection",
+                model::SnapKind::Midpoint => "view.snaps.midpoint",
+                model::SnapKind::Centre => "view.snaps.centre",
+                model::SnapKind::Perpendicular => "view.snaps.perpendicular",
+                model::SnapKind::Tangent => "view.snaps.tangent",
+                model::SnapKind::Edge => "view.snaps.edge",
+                model::SnapKind::Face => "view.snaps.face",
+                model::SnapKind::Axis => "view.snaps.axis",
+                model::SnapKind::Grid => "view.snaps.grid",
+            };
+            let key = (kind == model::SnapKind::Grid).then_some("G");
+            (id, Some(ToolKind::Snap(kind)), key)
+        }));
+        assert_eq!(tools, expected, "the master switch, the mode, then the ten kinds corner to grid");
         let display = view.groups.iter().find(|group| group.id == "view.display").expect("the display group");
         assert!(
-            display.tools.iter().all(|tool| tool.run != Some(ToolKind::GridSnap)),
-            "the snap is still filed under Display"
+            display.tools.iter().all(|tool| !matches!(tool.run, Some(ToolKind::Snap(_)))),
+            "a snap cell belongs to the Snaps group and not to Display"
         );
         // The Display group holds the shadow's switch and no number: the intensity is a workspace
         // value and its one control is the slider in Settings › View (U110).
@@ -1400,6 +1655,7 @@ mod tests {
             ToolKind::CloseDraft,
             ToolKind::CancelDraft,
             ToolKind::Extrude,
+            ToolKind::AreaPull,
             ToolKind::Product,
             ToolKind::ProductBox(DrawTool::Rectangle),
             ToolKind::ProductContour,
@@ -1408,15 +1664,34 @@ mod tests {
             ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit },
             ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape },
+            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit },
+            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape },
             ToolKind::Void,
             ToolKind::Assembly,
             ToolKind::Camera,
             ToolKind::Light,
             ToolKind::FrameAll,
             ToolKind::Projection,
-            ToolKind::GridSnap,
+            ToolKind::SnapAll,
+            ToolKind::SnapMode,
+            ToolKind::Snap(model::SnapKind::Vertex),
+            ToolKind::Snap(model::SnapKind::Intersection),
+            ToolKind::Snap(model::SnapKind::Midpoint),
+            ToolKind::Snap(model::SnapKind::Centre),
+            ToolKind::Snap(model::SnapKind::Perpendicular),
+            ToolKind::Snap(model::SnapKind::Tangent),
+            ToolKind::Snap(model::SnapKind::Edge),
+            ToolKind::Snap(model::SnapKind::Face),
+            ToolKind::Snap(model::SnapKind::Axis),
+            ToolKind::Snap(model::SnapKind::Grid),
             ToolKind::Shadows,
             ToolKind::Measure,
+            ToolKind::ContourBoolean(engine::ContourOp::Union),
+            ToolKind::ContourBoolean(engine::ContourOp::Subtract),
+            ToolKind::ContourBoolean(engine::ContourOp::Intersect),
+            ToolKind::BodyBoolean(engine::ContourOp::Union),
+            ToolKind::BodyBoolean(engine::ContourOp::Subtract),
+            ToolKind::BodyBoolean(engine::ContourOp::Intersect),
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::Sphere },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereDiameter },
             ToolKind::Primitive { kind: PrimitiveKind::Sphere, tool: DrawTool::SphereThreePoints },
@@ -1470,20 +1745,25 @@ mod tests {
     #[test]
     fn the_row_is_counted_from_the_spec() {
         let sketch = tab("sketch").expect("sketch");
-        // Six creation tools, the ruler and the draft pair.
-        assert_eq!(sketch.columns(), 9);
-        // The planned groups draw nothing, so the Model tab is the four primitives and the extrusion.
-        assert_eq!(tab("model").expect("model").columns(), 5);
-        assert_eq!(tab("furniture").expect("furniture").columns(), 5);
+        // Six creation tools, the ruler, the draft pair and the three contour booleans.
+        assert_eq!(sketch.columns(), 12);
+        // The planned groups draw nothing, so the Model tab is the four primitives, the extrusion and
+        // the three body booleans (W1).
+        assert_eq!(tab("model").expect("model").columns(), 8);
+        assert_eq!(tab("furniture").expect("furniture").columns(), 6);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        assert_eq!(tab("view").expect("view").columns(), 4);
+        // The View tab's three cells beside the group are the projection pair and the shadow
+        // switch: the Snaps group of twelve cells is the second row.
+        assert_eq!(tab("view").expect("view").columns(), 15);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 9, "the sketch tab is the widest row of the map");
+        assert_eq!(widest, 15, "the View tab's Snaps row is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
-        // The View tab's four cells are the projection pair, the shadow switch and the snap.
-        assert_eq!(tab("view").expect("view").columns(), 2 + 1 + 1);
+        // The View tab's widest row is the Snaps group's twelve cells — the master switch, the mode
+        // and the ten kinds — and its three other cells, the projection pair and the shadow switch,
+        // join it on that row.
+        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 5);
     }
 
     #[test]

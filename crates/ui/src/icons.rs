@@ -384,6 +384,7 @@ icons!(Primitives, "primitives", Model, primitives {
 
 icons!(Bodies, "bodies", Model, bodies {
     EXTRUDE => "extrude",
+    PULL_AREA => "pull-area",
     REVOLVE => "revolve",
     SWEEP => "sweep",
 });
@@ -391,8 +392,14 @@ icons!(Bodies, "bodies", Model, bodies {
 icons!(Scene, "scene", Scene, scene {
     PRODUCT => "product",
     PANEL => "panel",
+    PANEL_SHAPE => "panel-shape",
+    BOARD => "board",
+    OVERLAY => "overlay",
+    ROW => "row",
+    FIT => "fit",
     POST => "post",
     SHELF => "shelf",
+    WALL => "wall",
     VOID => "void": Reference,
     ASSEMBLY => "assembly",
     CAMERA => "camera",
@@ -407,10 +414,25 @@ icons!(View, "view", View, view {
     RESTORE => "restore",
     HOME => "home",
     GRID_SNAP => "grid-snap": Reference,
+    SNAP_ALL => "snap-all": Reference,
+    SNAP_VERTEX => "snap-vertex": Reference,
+    SNAP_INTERSECTION => "snap-intersection": Reference,
+    SNAP_MIDPOINT => "snap-midpoint": Reference,
+    SNAP_CENTRE => "snap-centre": Reference,
+    SNAP_PERPENDICULAR => "snap-perpendicular": Reference,
+    SNAP_TANGENT => "snap-tangent": Reference,
+    SNAP_EDGE => "snap-edge": Reference,
+    SNAP_FACE => "snap-face": Reference,
+    SNAP_AXIS => "snap-axis": Reference,
+    SNAP_SPACE => "snap-space": Reference,
+    SNAP_FOOT => "snap-foot": Reference,
     ORBIT => "orbit",
     PAN => "pan",
     ZOOM => "zoom",
-    LAYOUT => "layout",
+    LAYOUT_SINGLE => "layout-single",
+    LAYOUT_COLUMNS => "layout-columns",
+    LAYOUT_ROWS => "layout-rows",
+    LAYOUT_QUAD => "layout-quad",
     SHADED => "shaded",
     SHADED_EDGES => "shaded-edges",
     WIREFRAME => "wireframe",
@@ -448,6 +470,7 @@ icons!(Actions, "actions", View, actions {
     SETTINGS => "settings",
     SEARCH => "search",
     COMMAND => "command",
+    ASSISTANT => "assistant",
     VISIBLE => "visible": Modify,
     HIDDEN => "hidden": Modify,
     LOCK => "lock": Modify,
@@ -1249,7 +1272,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 117);
+        assert_eq!(seen.len(), 140);
     }
 
     #[test]

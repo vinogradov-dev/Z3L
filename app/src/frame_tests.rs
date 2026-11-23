@@ -14,9 +14,9 @@
 #![allow(clippy::expect_used)]
 
 use crate::file_picker::{Order, PickMode};
-use crate::gizmo_math::SnapTarget;
 use eframe::egui;
 use geom::DVec2;
+use model::SnapKind;
 use model::{ClassCode, ContourSegment, Envelope, Id};
 use scene::Camera;
 use text::{Lang, Message};
@@ -123,6 +123,16 @@ impl Harness {
     /// Runs one idle frame, with no input at all.
     fn frame(&mut self) -> Chrome {
         self.run(Vec::new())
+    }
+
+    /// How many repaint requests the shell's own code made in the frame before the last one.
+    ///
+    /// `egui` names a frame's causes one pass later, and its own widgets ask for frames of their own
+    /// (a scroll area that follows its content, a fading hover), so a delay is no evidence: the
+    /// file that asked is. The shell's own file is where a frame asks for the frame after it, and a
+    /// call that landed is the reason it does (X111).
+    fn shell_requests(&self) -> usize {
+        self.ctx.repaint_causes().iter().filter(|cause| cause.file.ends_with("app/src/main.rs")).count()
     }
 
     /// Draws idle frames until the scene rectangle stops moving.
@@ -296,13 +306,17 @@ impl Harness {
     ///
     /// The status bar is the one strip under the scene rectangle, so the caption a test reads there
     /// is the control it presses instead of a coordinate the bar's layout would have to repeat.
+    /// The middle of the header's mode cell that prints `caption`.
+    ///
+    /// The five gestures are one band in the header's right cluster (U115), so a cell is found above
+    /// the scene: below it is the status bar, which now reports and draws no control.
     fn mode_cell(&self, caption: &str) -> egui::Pos2 {
-        let below_scene = self.scene().bottom();
+        let above_scene = self.scene().top();
         self.drawn_rects
             .iter()
-            .find(|(rect, text)| text == caption && rect.center().y > below_scene)
+            .find(|(rect, text)| text == caption && rect.center().y < above_scene)
             .map(|(rect, _)| rect.center())
-            .unwrap_or_else(|| panic!("the status bar drew no cell named {caption}"))
+            .unwrap_or_else(|| panic!("the header drew no mode cell named {caption}"))
     }
 
     /// Runs frames until `done` holds, the way a window left open does while something outside it
@@ -729,6 +743,37 @@ fn a_pick_belongs_to_the_tab_that_asked_for_it() {
 }
 
 #[test]
+fn the_render_tab_turns_the_workspace_into_the_render_place_and_back() {
+    // The render place is a view of the scene in front, not a replacement for it (ADR 0211): the
+    // header's tab opens it, the page draws instead of the viewport and the ribbon, nothing floats
+    // over it, Escape and a document tab both go back, and no document revision moves either way.
+    let mut harness = Harness::new("frame-render-place");
+    let chrome = harness.settle();
+    let revision = harness.revision();
+    assert!(chrome.ribbon.is_positive(), "the document draws its ribbon band");
+    assert!(chrome.panels.left.is_some(), "and its panels");
+    assert!(!chrome.covers(harness.last_scene.expect("the viewport").center()), "the scene is drawn");
+
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    assert!(harness.app.render_open, "the tab opens the place");
+    let chrome = harness.frame();
+    let words = harness.drawn.clone();
+    let title = Message::RenderTitle.text(text::Lang::En);
+    assert!(words.iter().any(|word| word == title), "the page names itself: {words:?}");
+    assert!(words.iter().any(|word| word == Message::RenderDestination.text(text::Lang::En)), "{words:?}");
+    assert_eq!(chrome.ribbon, egui::Rect::NOTHING, "no ribbon band is drawn behind the place");
+    assert!(chrome.panels.left.is_none() && chrome.panels.right.is_none(), "and no panel floats over it");
+    assert_eq!(harness.revision(), revision, "opening the place writes no document");
+
+    // The same tab again goes back to the document, which is what a pressed tab does.
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    assert!(!harness.app.render_open);
+    let chrome = harness.settle();
+    assert!(chrome.ribbon.is_positive() && chrome.panels.left.is_some(), "the viewport and its chrome are back");
+    assert_eq!(harness.revision(), revision, "and still no document was written");
+}
+
+#[test]
 fn a_modifier_click_in_the_viewport_builds_the_selection_order() {
     // U102: a viewport click reads the same two modifiers a tree row does — Shift appends the node
     // the click resolved to and takes it back out on a second click, Ctrl removes one member, and a
@@ -857,6 +902,28 @@ fn the_delete_key_removes_one_node_without_a_question() {
 }
 
 #[test]
+fn the_delete_key_removes_a_node_while_the_assistant_panel_is_open() {
+    // X123: the chat is a window, not a modal. Counting it as one stopped Delete, Save and Undo
+    // whenever the panel was open, so a person who had just chatted could not remove the object they
+    // clicked. The field still owns its keys; the panel does not own the shell's.
+    let mut harness = Harness::new("frame-delete-chat-open");
+    let chrome = harness.settle();
+    harness.click(harness.tree_row(&chrome, "Loose shelf"), egui::PointerButton::Primary);
+    let [selected] = harness.selected()[..] else {
+        panic!("the click selects exactly one row: {:?}", harness.selected());
+    };
+    harness.app.assistant_open = true;
+    harness.settle();
+
+    harness.press(egui::Key::Delete, egui::Modifiers::NONE);
+
+    assert!(
+        harness.app.tabs.active().session.project().panel(selected).is_none(),
+        "the panel is open and the row still goes"
+    );
+}
+
+#[test]
 fn a_locked_node_refuses_the_delete_key_and_names_itself() {
     // The lock is a guard on a gesture, not a document rule (ADR 0065): the key refuses the whole
     // selection before anything is dispatched, and the status bar says which node is locked.
@@ -875,21 +942,70 @@ fn a_locked_node_refuses_the_delete_key_and_names_itself() {
 }
 
 #[test]
-fn the_grid_key_turns_the_running_drafts_grid_and_nothing_else() {
-    // The key is read with the shell's table and its effect belongs to the draft in front: outside a
-    // draft the shell asks for it and the document changes nothing (U96).
+fn the_grid_key_turns_the_workspaces_snap_and_nothing_else() {
+    // The switch is the workspace's set of kinds and not a tool's, so the key works with no draft in
+    // front and the value survives a restart; it writes no revision and leaves no undo entry (U96,
+    // U116).
     let mut harness = Harness::new("frame-grid-key");
     harness.settle();
-    let idle = harness.app.tabs.active().draw_gizmo.grid();
+    let idle = harness.app.tabs.active().snaps().grid;
     harness.press(egui::Key::G, egui::Modifiers::NONE);
-    assert_eq!(harness.app.tabs.active().draw_gizmo.grid(), idle, "no draft, no snap to turn");
+    assert_ne!(harness.app.tabs.active().snaps().grid, idle, "the key turns the grid with no draft");
+    harness.press(egui::Key::G, egui::Modifiers::NONE);
+    assert_eq!(harness.app.tabs.active().snaps().grid, idle, "and turns it back");
 
     harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Line);
     harness.settle();
     let revision = harness.revision();
     harness.press(egui::Key::G, egui::Modifiers::NONE);
-    assert_ne!(harness.app.tabs.active().draw_gizmo.grid(), idle, "the key turned the draft's grid");
+    assert_ne!(harness.app.tabs.active().snaps().grid, idle, "the key runs with a draft too");
     assert_eq!(harness.revision(), revision, "the grid is view state");
+}
+
+#[test]
+fn the_master_snap_switch_turns_the_whole_set_and_writes_no_revision() {
+    // U116: one cell of the View tab's Snaps group turns every kind off, and a press from a mixed set
+    // turns them all on again; the value is the workspace's, so no revision and no undo entry move.
+    let mut harness = Harness::new("frame-snap-master");
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.snaps().all_on(), "a fresh workspace snaps everything");
+    let revision = harness.revision();
+    let document = harness.app.tabs.active_mut();
+    document.set_all_snaps(false);
+    assert!(!document.snaps().any(), "the master turns every kind off");
+    assert_eq!(
+        document.take_snaps_change(),
+        Some(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode: model::SnapMode::Foot }),
+        "and the shell is told once"
+    );
+    assert_eq!(document.take_snaps_change(), None, "once, not every frame");
+
+    // One kind back on is a mixed set, and the master turns the rest on.
+    document.set_snap_kind(model::SnapKind::Vertex, true);
+    document.set_all_snaps(true);
+    assert!(document.snaps().all_on(), "a mixed set comes back whole");
+    assert_eq!(harness.revision(), revision, "the snap set is view state");
+}
+
+#[test]
+fn the_snap_mode_cell_switches_the_reading_and_the_workspace_keeps_it() {
+    // U119: one press switches the reading every snap answers with. It is view state, so no revision
+    // moves, and the workspace file carries it into the next run exactly as it carries the kinds.
+    let mut harness = Harness::new("frame-snap-mode");
+    harness.settle();
+    let revision = harness.revision();
+    let opening = harness.app.tabs.active().snap_mode();
+    harness.app.tabs.active_mut().toggle_snap_mode();
+    let switched = harness.app.tabs.active().snap_mode();
+    assert_ne!(switched, opening, "the press switches the reading");
+
+    harness.run(Vec::new());
+    assert_eq!(harness.app.settings.snaps.mode, switched, "and the shell carries it into the workspace");
+    let written = std::fs::read_to_string(&harness.path).expect("the workspace file is written");
+    let restored = ui::settings::Settings::from_json(&written).expect("the file parses");
+    assert_eq!(restored.snaps.mode, switched, "the next run opens in the same reading");
+    assert_eq!(harness.revision(), revision, "the mode is view state");
 }
 
 #[test]
@@ -1000,7 +1116,7 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
             && harness.drew(Message::Move.text(Lang::En))
             && harness.drew(Message::Object.text(Lang::En))
             && harness.drew(Message::Rotate.text(Lang::En)),
-        "the bar offers Select beside the three gestures"
+        "the header's band offers Select beside the four gestures"
     );
 
     harness.app.tabs.active_mut().editor.select_node(Some(panel));
@@ -1017,10 +1133,10 @@ fn a_window_opens_in_select_and_the_same_press_moves_only_where_a_handle_is_draw
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision(), revision, "and a drag there moves nothing: no gizmo is armed");
 
-    // The bar's own cell changes the mode, and the same drag now moves the part.
+    // The header's own cell changes the mode, and the same drag now moves the part.
     let cell = harness.mode_cell(&TransformMode::Move.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
-    assert_eq!(harness.app.shell.mode, TransformMode::Move, "the bar's cell changes the mode");
+    assert_eq!(harness.app.shell.mode, TransformMode::Move, "the header's cell changes the mode");
     let revision = harness.revision();
     harness.drag(at, direction * 40.0, egui::PointerButton::Primary);
     assert_eq!(harness.revision().get(), revision.get() + 1, "Move draws the handle, so the press starts one drag");
@@ -1138,8 +1254,97 @@ fn each_of_the_five_gestures_answers_its_key_and_the_bar_prints_the_pair() {
     }
     for mode in TransformMode::ALL {
         let caption = mode.caption(Lang::En);
-        assert!(harness.drew(&caption), "the bar prints `{caption}`: {:?}", harness.drawn);
+        assert!(harness.drew(&caption), "the header's band prints `{caption}`: {:?}", harness.drawn);
     }
+}
+
+#[test]
+fn the_tool_card_stays_where_it_opened_so_the_hand_reaches_it() {
+    // U115: the card is the only surface that finishes a draft and applies a contour edit, so it has
+    // to be reachable. A card anchored to the pointer every frame could never be reached, because the
+    // hand that chases it is what moves it: the owner saw exactly that. It opens where the hand was
+    // and then stays, and the hand walks onto it.
+    let (session, _object) = one_sketch_path();
+    let mut harness = Harness::with_session("frame-card-reach", session);
+    harness.settle();
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let opened = harness.app.tabs.active().tool_card_rect().expect("the draft draws its card");
+    let mut at = scene.center() + egui::vec2(120.0, 0.0);
+    for _ in 0..16 {
+        at += egui::vec2(6.0, 6.0);
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        if opened.contains(at) {
+            break;
+        }
+    }
+    let now = harness.app.tabs.active().tool_card_rect().expect("the card is still up");
+    assert_eq!(now, opened, "the card stays where it opened instead of following the hand");
+    let pointer = harness.ctx.input(|input| input.pointer.hover_pos()).expect("the frame has a pointer");
+    assert!(now.contains(pointer), "the hand reaches the card it was chasing: {pointer:?} is not in {now:?}");
+}
+
+#[test]
+fn a_draft_and_a_contour_edit_commit_from_their_tool_card() {
+    // U115: the status bar's *Finish*, *Apply*, *Cancel* and the along/free switch are the armed
+    // tool's card — the one row that names the tool and holds its two buttons. The card writes
+    // nothing itself: it reports the press and the shell runs the path that already owns it.
+    let (session, object) = one_sketch_path();
+    let mut harness = Harness::with_session("frame-card-commit", session);
+    harness.settle();
+    let ctx = harness.ctx.clone();
+
+    // A running draft draws one row: its tool's name, no number, the finish pair.
+    harness.app.tabs.active_mut().editor.start_drawing(ui::DrawTool::Polyline);
+    harness.settle();
+    let scene = harness.scene();
+    // Two points, so the draft can be finished: the card's check appears only for a draft the commit
+    // would accept, which is the draft's own word (ADR 0077).
+    harness.click(scene.center() - egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    harness.click(scene.center() + egui::vec2(120.0, 0.0), egui::PointerButton::Primary);
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("a running draft draws its card");
+    assert!(view.rows.is_empty(), "a draft asks for no number");
+    assert_eq!(view.title, Some(Message::ToolPolyline), "the row names the tool");
+    assert!(matches!(view.commit, ui::ToolCommit::Pair { .. }), "and holds its two buttons");
+    // The cross is the bar's old *Cancel*: the draft is dropped and the document never changed.
+    let revision = harness.revision();
+    harness.app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome { action: Some(ui::ToolAction::Cancel), ..ui::ToolOutcome::default() },
+    );
+    assert!(harness.app.tabs.active().editor.drawing().is_none(), "the card's cross drops the draft");
+    assert_eq!(harness.revision(), revision, "and writes nothing");
+
+    // A live contour edit draws its own row: the ring's name, its one switch and the pair.
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(object));
+        assert!(
+            document.editor.start_contour_edit(document.session.project(), ui::ContourTarget::Path(object)),
+            "an open chain is editable"
+        );
+    }
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("a contour edit draws its card");
+    assert_eq!(view.title, Some(Message::ContourEdit), "the row names the edit");
+    let toggle = view.toggle.expect("the corner motion is one switch on the card");
+    assert_eq!(toggle.words, Message::FreeMove, "free movement is the default");
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .apply_tool_outcome(&ctx, ui::ToolOutcome { toggle: true, ..ui::ToolOutcome::default() });
+    let view = harness.app.tabs.active().card_view(ui::language(&harness.ctx)).expect("the card stays up");
+    assert_eq!(view.toggle.expect("the switch is still there").words, Message::AlongContour, "the press flips it");
+    // The check is the edit's one command: it ends the mode and leaves one undo entry.
+    harness.app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome { action: Some(ui::ToolAction::Apply), ..ui::ToolOutcome::default() },
+    );
+    assert!(harness.app.tabs.active().editor.contour_edit().is_none(), "the check applies and leaves the edit");
+    assert!(harness.app.tabs.active().last_error.is_none(), "and the applied working copy is accepted");
 }
 
 #[test]
@@ -1187,7 +1392,7 @@ fn the_furniture_move_takes_a_panel_by_its_body_and_slides_it_its_own_way() {
 
     let cell = harness.mode_cell(&TransformMode::Object.caption(Lang::En));
     harness.click(cell, egui::PointerButton::Primary);
-    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the bar's cell arms the object move");
+    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the header's cell arms the object move");
     harness.settle();
 
     let axes = harness.app.tabs.active().session.project().move_axes(&[panel]);
@@ -1389,6 +1594,9 @@ fn a_piece_in_hand_goes_back_on_escape_and_a_click_that_never_moved_writes_nothi
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1677,6 +1885,9 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -1748,6 +1959,9 @@ fn a_piece_in_hand_blocks_no_view_and_the_view_moves_no_piece() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -2455,6 +2669,189 @@ fn draw_body_profile(harness: &mut Harness, tool: DrawTool) -> Id {
     object
 }
 
+/// A scene with one swept body and one ball, placed apart: the shapes a snap must read.
+fn body_and_ball_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("a root id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let square = model::Path::rectangle([mesh(-100), mesh(-75)], [mesh(100), mesh(75)]).expect("a rectangle");
+    let body = model::Constructive::extrude(square, mesh(300)).expect("a body");
+    project.add_object(root, "Box", model::Placement::IDENTITY, model::Geometry::Constructive(body)).expect("a box");
+    let ball = model::Primitive::sphere(mesh(100), 16, 8).expect("a ball");
+    let placed = model::Placement::new(geom::DVec3::new(600.0, 0.0, 150.0), model::Placement::IDENTITY.rotation())
+        .expect("a place");
+    project.add_object(root, "Ball", placed, model::Geometry::Primitive(ball)).expect("a ball");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
+/// Arms the sketch and installs the workspace's snap mode, then lets the viewport settle.
+fn sketch_in_mode(harness: &mut Harness, mode: model::SnapMode) {
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    for _ in 0..24 {
+        harness.run(Vec::new());
+    }
+    {
+        let document = harness.app.tabs.active_mut();
+        let kinds = document.snaps();
+        document.set_snaps(crate::document::SnapChoice { kinds, mode });
+        document.editor.start_drawing(ui::DrawTool::Line);
+    }
+    for _ in 0..24 {
+        harness.run(Vec::new());
+    }
+}
+
+#[test]
+fn a_body_and_a_ball_answer_a_snap_on_every_corner_edge_face_and_centre() {
+    // The owner's report: a drawn cube snapped only to the profile it was drawn from, the marker
+    // stood away from the place the click would take, and a ball snapped nowhere. Every corner of
+    // the body, the middle of every edge and the middle of every face is a candidate; a ball answers
+    // at its own centre and at its quadrants.
+    //
+    // The table is walked in both modes, because the mode is what decides what the answer *is*
+    // (U119, U121). In 2.5D the sketch draws where the view says, so the click stores the candidate's
+    // foot on that plane. In 3D the sketch takes the plane of the face under the pointer: a candidate
+    // lying on that face — the middle of the face, the middle of one of its edges — is in the sketch
+    // plane and captures where it is, while a place off the face the hand is on, the far corner
+    // hidden behind the body or anything of a ball, is not a place the sketch can store and the grid
+    // answers instead. In both modes the marker stands on the point the click stores.
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let mut harness = Harness::with_session("snap-body", body_and_ball_session());
+        sketch_in_mode(&mut harness, mode);
+
+        let project = harness.app.tabs.active().session.project();
+        let boxed = project
+            .object(Id::new(2).expect("the box id"))
+            .expect("the box")
+            .geometry()
+            .as_constructive()
+            .expect("a body");
+        let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+        // Each place, and whether the sketch's plane must be the face the hand points at: the middle
+        // of a visible face is where the plane is answered; the middle of an edge draws no plane of
+        // its own — a ray exactly along it stops at nothing — the far vertical edge is behind the
+        // body, and a ball's surface names the plane that touches it, which holds no place of the
+        // ball.
+        let spots = [
+            ("top face", geom::DVec3::new(x + 100.0, y + 75.0, 300.0), true),
+            ("side face", geom::DVec3::new(x + 200.0, y + 75.0, 150.0), true),
+            ("top edge", geom::DVec3::new(x + 100.0, y, 300.0), false),
+            ("vertical edge", geom::DVec3::new(x, y, 150.0), false),
+            ("ball centre", geom::DVec3::new(600.0, 0.0, 150.0), false),
+            ("ball pole", geom::DVec3::new(600.0, 0.0, 250.0), false),
+        ];
+        for (name, world, on_the_face) in spots {
+            let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
+            harness.run(vec![egui::Event::PointerMoved(at)]);
+            let document = harness.app.tabs.active();
+            let kind = document.draw_gizmo.snap_kind();
+            let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
+            let marker = document.draw_gizmo.hover_screen().expect("a marker at the point it stores");
+            let plane = document.draw_gizmo.plane(harness.camera());
+            let stored = plane.world(geom::DVec2::new(point[0].millimetres_f64(), point[1].millimetres_f64()));
+            match mode {
+                model::SnapMode::Foot => {
+                    assert_eq!(
+                        plane,
+                        gizmo_math::WorkPlane::from_camera(harness.camera()),
+                        "2.5D draws where the view says"
+                    );
+                    assert!(kind.is_some(), "the {name} captures the pointer: {world:?} at {at:?}");
+                    assert_ne!(kind, Some(SnapKind::Grid), "the {name} answers from the scene, not the plane's grid");
+                    assert!(
+                        (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
+                        "the {name} reads a candidate above the plane by its perpendicular foot: {stored:?} \
+                         against {world:?}"
+                    );
+                }
+                model::SnapMode::Space => {
+                    if on_the_face {
+                        assert_ne!(
+                            plane,
+                            gizmo_math::WorkPlane::from_camera(harness.camera()),
+                            "the {name} gives the sketch the plane of the face under the pointer"
+                        );
+                    }
+                    // A place of the plane the pointer named captures it and is stored where it is,
+                    // because in 3D the sketch takes no candidate that stands off its plane.
+                    let foot = plane.world(plane.local(world));
+                    if (world - foot).length() <= 1.0e-3 {
+                        assert!(
+                            kind.is_some_and(|kind| kind != SnapKind::Grid),
+                            "the {name} is a place of the sketch plane: {kind:?}"
+                        );
+                        assert!(
+                            (stored - world).length() < 0.01,
+                            "the {name} is stored where it is: {stored:?} against {world:?}"
+                        );
+                    }
+                }
+            }
+            let drawn =
+                gizmo_math::screen_point(harness.camera(), harness.scene(), stored).expect("the point is on screen");
+            assert!(
+                (marker - drawn).length() < 0.5,
+                "the {name} draws its marker at the point the click takes, in {mode:?}: {marker:?} against {drawn:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_round_body_answers_its_rim_and_its_axis_and_the_air_beside_it_captures_nothing() {
+    // U120: a swept circle used to answer the eight corners of the square around its base, which are
+    // points in the air, while its upper rim and its axis were nowhere. The body now answers its own
+    // rims and axis ends, and the pointer over the corner of that square takes nothing of it.
+    let mut harness = Harness::with_session("snap-round", round_bodies_session());
+    sketch_in_mode(&mut harness, model::SnapMode::Foot);
+    let spots = [
+        ("base rim", geom::DVec3::new(60.0, 0.0, 0.0), Some(SnapKind::Vertex)),
+        ("upper rim", geom::DVec3::new(0.0, 60.0, 200.0), Some(SnapKind::Vertex)),
+        ("axis end", geom::DVec3::new(0.0, 0.0, 200.0), Some(SnapKind::Centre)),
+        ("cone apex", geom::DVec3::new(240.0, 0.0, 160.0), Some(SnapKind::Vertex)),
+        ("box corner", geom::DVec3::new(60.0, 60.0, 200.0), None),
+    ];
+    for (name, world, expected) in spots {
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), world).expect("the spot is on screen");
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        let document = harness.app.tabs.active();
+        let kind = document.draw_gizmo.snap_kind();
+        let point = document.draw_gizmo.hover_point().expect("the pointer places a point");
+        match expected {
+            Some(expected) => {
+                assert_eq!(kind, Some(expected), "the {name} captures the pointer: {world:?} at {at:?}");
+                let stored = geom::DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), 0.0);
+                assert!(
+                    (stored.x - world.x).abs() < 0.01 && (stored.y - world.y).abs() < 0.01,
+                    "the {name} reads its own place by its perpendicular foot: {stored:?} against {world:?}"
+                );
+            }
+            None => assert!(
+                kind.is_none_or(|kind| kind == SnapKind::Grid),
+                "the {name} names no place of the body, so nothing of it may capture: {kind:?}"
+            ),
+        }
+    }
+}
+
+/// A scene with one swept circle and one cone, placed apart: the round bodies a snap must read.
+fn round_bodies_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("a root id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("an empty project");
+    let root = project.root().id();
+    let ring = model::Path::circle([mesh(0), mesh(0)], mesh(60)).expect("a circle");
+    let cylinder = model::Constructive::extrude(ring, mesh(200)).expect("a cylinder");
+    project
+        .add_object(root, "Cylinder", model::Placement::IDENTITY, model::Geometry::Constructive(cylinder))
+        .expect("a cylinder");
+    let cone = model::Primitive::cone(mesh(60), mesh(0), mesh(160), 24).expect("a cone");
+    let placed = model::Placement::new(geom::DVec3::new(240.0, 0.0, 0.0), model::Placement::IDENTITY.rotation())
+        .expect("a place");
+    project.add_object(root, "Cone", placed, model::Geometry::Primitive(cone)).expect("a cone");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
 #[test]
 fn a_box_is_drawn_by_any_rectangle_method_and_swept_on_z() {
     // V4 (ADR 0138): the box cell carries the sketch's four rectangle methods, and the body it
@@ -2602,7 +2999,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
             assert_eq!(node.name(), "Cone", "{tool:?}: the node is what the cell places");
             let stored = node.geometry().as_primitive().expect("{tool:?}: the parameters are stored");
             assert_eq!(stored.kind(), model::PrimitiveKind::Cone, "{tool:?}: a cone");
-            let model::Primitive::Cone(cone) = stored else {
+            let model::PrimitiveShape::Cone(cone) = stored.base() else {
                 panic!("{tool:?}: the shape is a cone");
             };
             let measured = cone.base_radius().millimetres_f64();
@@ -2628,7 +3025,10 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         document.preview_extrude(object, mesh(300), Some(mesh(40))).expect("{tool:?}: the preview builds");
         assert_eq!(document.session.project().revision(), revision, "{tool:?}: a preview writes nothing");
         let preview = document.session.preview().geometry(object).expect("{tool:?}: a previewed solid");
-        let model::Geometry::Primitive(model::Primitive::Cone(previewed)) = preview else {
+        let model::Geometry::Primitive(body) = preview else {
+            panic!("a cone body");
+        };
+        let model::PrimitiveShape::Cone(previewed) = body.base() else {
             panic!("{tool:?}: the preview is a cone");
         };
         assert_eq!(previewed.height(), mesh(300));
@@ -2637,7 +3037,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         document.finish_extrude(object, mesh(300), Some(mesh(40)), Lang::En).expect("{tool:?}: the check stores");
         let project = document.session.project();
         let stored = project.object_primitive(object).expect("{tool:?}: still a cone");
-        let model::Primitive::Cone(cone) = stored else {
+        let model::PrimitiveShape::Cone(cone) = stored.base() else {
             panic!("{tool:?}: the shape is a cone");
         };
         assert_eq!(cone.height(), mesh(300), "{tool:?}: the pulled height");
@@ -2846,6 +3246,76 @@ fn the_empty_space_tool_creates_the_ghost_as_one_classed_part_in_one_undo_step()
     assert!(document.session.can_undo());
     document.session.undo().expect("one undo step");
     assert!(document.session.project().panel(created).is_none(), "one undo removes the part");
+}
+
+#[test]
+fn the_wall_cell_creates_the_frontal_board_in_one_undo_step() {
+    // N28: the wall is the first fill whose free axis is the depth, so it is the first board the
+    // carriage carries towards and away from the maker. The click is still one `panel.create` and
+    // one undo entry, and the part stands in the frontal plane (ADR 0105, ADR 0200).
+    let mut harness = Harness::with_session("frame-fill-wall", crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+
+    let before = harness.revision();
+    let (product, pointer, envelope_size) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let centre = placement.transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let pointer = gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen");
+        assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::BACK_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the wall arms inside the open frame");
+        (product, pointer, (envelope.x(), envelope.y(), envelope.z()))
+    };
+
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    let planned = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the pointer measures a ghost");
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let created = {
+        let document = harness.app.tabs.active();
+        let created = document.editor.selected_node().expect("the new part is selected");
+        let panel = document.session.project().panel(created).expect("the click created a panel");
+        assert_eq!(panel.nominal_size(), planned.nominal_size, "the part is exactly the ghost's size");
+        assert_eq!(panel.placement(), planned.placement, "and exactly the ghost's placement");
+        // The wall is the niche's height by its width, and its material runs along the depth.
+        assert_eq!(panel.nominal_size().length(), envelope_size.2, "the length is the niche's height");
+        assert_eq!(panel.nominal_size().width(), envelope_size.0, "the width is the niche's width");
+        let rotation = panel.placement().rotation();
+        let close = |first: geom::DVec3, second: geom::DVec3| (first - second).length() <= 1.0e-9;
+        assert!(close(rotation.mul_vec3(geom::DVec3::X), geom::DVec3::Z), "the length runs up the case");
+        assert!(close(rotation.mul_vec3(geom::DVec3::Y), geom::DVec3::X), "the width runs across the front");
+        assert!(close(rotation.mul_vec3(geom::DVec3::Z), geom::DVec3::Y), "and the material faces the maker");
+        assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+        assert_eq!(
+            document.session.project().class(created),
+            Some(ClassCode::BACK_PANEL),
+            "the wall cell's class travels with the same command"
+        );
+        created
+    };
+    assert!(harness.revision() > before, "the click writes the document once");
+
+    let document = harness.app.tabs.active_mut();
+    assert!(document.session.can_undo());
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the board");
 }
 
 /// A harness whose open product holds two posts standing at an angle, plus the pointer at the
@@ -3552,7 +4022,7 @@ fn the_ruler_measures_two_points_and_writes_nothing() {
         assert_eq!(axis.micrometres() % 10_000, 0, "the grid snapped the point: {axis}");
     }
     assert!(
-        matches!(harness.app.tabs.active().measure_gizmo.hover().map(|hover| hover.target), Some(SnapTarget::Grid)),
+        matches!(harness.app.tabs.active().measure_gizmo.hover().and_then(|hover| hover.kind), Some(SnapKind::Grid)),
         "the marker says the grid captured the pointer"
     );
 
@@ -3762,7 +4232,12 @@ fn the_ruler_snaps_to_the_board_under_the_pointer() {
     harness.press(egui::Key::M, egui::Modifiers::NONE);
     harness.hover(at);
     let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
-    assert_eq!(hover.target, SnapTarget::Surface, "the panel face captures the pointer");
+    assert_ne!(
+        hover.kind,
+        Some(SnapKind::Grid),
+        "a scene point captures the pointer and not the work plane's grid: {:?}",
+        hover.kind
+    );
     let revision = harness.revision();
     harness.click(at, egui::PointerButton::Primary);
 
@@ -3788,6 +4263,32 @@ fn the_ruler_snaps_to_the_board_under_the_pointer() {
 }
 
 #[test]
+fn the_ruler_answers_the_candidate_the_eye_sees_in_either_snap_mode() {
+    // U119: the ruler stores a point in space, so it declares `Free` and the workspace's mode makes
+    // no difference to it. A surface is not above or below a plane the tool draws on — it is the
+    // place the click takes — so the same click answers the same point in 2.5D and in 3D.
+    let mut answers = Vec::new();
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let mut harness = Harness::new("frame-measure-mode");
+        harness.settle();
+        harness.app.tabs.active_mut().frame_all();
+        harness.settle();
+        {
+            let document = harness.app.tabs.active_mut();
+            let kinds = document.snaps();
+            document.set_snaps(crate::document::SnapChoice { kinds, mode });
+        }
+        let node = *harness.selected().first().expect("the demo selects its first panel");
+        let at = harness.node_point(node);
+        harness.press(egui::Key::M, egui::Modifiers::NONE);
+        harness.hover(at);
+        let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
+        answers.push((hover.point, hover.kind));
+    }
+    assert_eq!(answers[0], answers[1], "one point in both modes: the ruler has no plane to drop a foot onto");
+}
+
+#[test]
 fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
     // The reserved box is a probe surface (ADR 0103) and the first thing the ray meets from
     // outside, so the ruler steps past its near face: the person points at the board inside.
@@ -3803,7 +4304,12 @@ fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
     harness.press(egui::Key::M, egui::Modifiers::NONE);
     harness.hover(at);
     let hover = harness.app.tabs.active().measure_gizmo.hover().expect("the pointer resolves a point");
-    assert_eq!(hover.target, SnapTarget::Surface, "the board captures the pointer, not the envelope");
+    assert_ne!(
+        hover.kind,
+        Some(SnapKind::Grid),
+        "a face of the board captures the pointer and not the envelope or the plane: {:?}",
+        hover.kind
+    );
     harness.click(at, egui::PointerButton::Primary);
 
     let document = harness.app.tabs.active();
@@ -4488,6 +4994,48 @@ fn one_sketch_path() -> (engine::Session, Id) {
     (engine::Session::with_directory(project, testkit::sample_catalog()), object)
 }
 
+#[test]
+fn an_along_contour_drag_grows_the_side_across_frames() {
+    // X96: with the card's *Along contour* switch on, a corner travels both ways along its segment.
+    // It used to stop one micrometre inside its own end, so a ring could be shortened and never
+    // lengthened; the pointer now walks past the corner along the segment's own line and the side
+    // grows frame by frame.
+    let (mut harness, object, corner) = sketching("frame-contour-along-grow");
+    let ctx = harness.ctx.clone();
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .apply_tool_outcome(&ctx, ui::ToolOutcome { toggle: true, ..ui::ToolOutcome::default() });
+    let start = node_point_mm(&harness, object, [0.0, 0.0]);
+    let far = node_point_mm(&harness, object, [120.0, 0.0]);
+    // The screen direction that leaves the corner away from the far end, so the side can only grow.
+    let outward = (start - far).normalized();
+    let first_frame = drafted_corner(&harness, corner);
+
+    harness.press_at(start, egui::PointerButton::Primary);
+    let mut corners = Vec::new();
+    for step in 1..=6 {
+        // The hand walks away along the side's own line and a little off it, so a free move would
+        // carry the corner off that line and an along move cannot.
+        let at = start + outward * (24.0 * step as f32) + egui::vec2(0.0, 6.0 * step as f32);
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        corners.push(drafted_corner(&harness, corner));
+    }
+    harness.release_at(start + outward * 144.0 + egui::vec2(0.0, 36.0), egui::PointerButton::Primary);
+    harness.settle();
+
+    let grown = drafted_corner(&harness, corner);
+    assert_eq!(grown[1], Length::ZERO, "the corner stays on its segment's line: {grown:?}");
+    assert!(grown[0] < Length::ZERO, "the corner passed its own end: {grown:?}");
+    assert!(
+        corners.windows(2).all(|pair| pair[1][0] <= pair[0][0]),
+        "the side grows frame after frame instead of stopping: {corners:?}"
+    );
+    assert!(first_frame[0] >= Length::ZERO, "the corner starts at its own end: {first_frame:?}");
+    assert!(corners.last().is_some_and(|last| last[0] < Length::ZERO), "the last frame is past the start: {corners:?}");
+}
+
 /// A headless frame in contour edit mode on the open chain, framed so its corners are grabbable.
 ///
 /// The mode is entered the way the inspector card enters it, and the chain's first corner is the one
@@ -4503,6 +5051,11 @@ fn sketching(name: &str) -> (Harness, Id, model::PathCorner) {
     };
     {
         let document = harness.app.tabs.active_mut();
+        // These tests are about the gesture, not about the pointer's captures: the sample scene puts
+        // a candidate a few millimetres from the points they drag to, so a snap would answer instead
+        // of the pointer and the assertions below would measure the resolver, not the gesture (U119).
+        let mode = document.snap_mode();
+        document.set_snaps(crate::document::SnapChoice { kinds: model::SnapKinds::none(), mode });
         document.editor.select_node(Some(object));
         assert!(
             document.editor.start_contour_edit(document.session.project(), ui::ContourTarget::Path(object)),
@@ -4512,6 +5065,93 @@ fn sketching(name: &str) -> (Harness, Id, model::PathCorner) {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     (harness, object, corner)
+}
+
+#[test]
+fn a_contour_corner_answers_the_workspace_mode_and_the_marker_stands_on_the_point_it_takes() {
+    // U119: the contour editor asks the one resolver, on the ring's own plane. The sample scene
+    // offers a face centre whose foot on this plane is (60, 40); in 2.5D it captures the dragged
+    // corner and the corner lands on that foot, and in 3D it stands off the plane and captures
+    // nothing, so the corner keeps the pointer's own point. In both modes the marker is painted at
+    // the corner the working copy holds, which is exactly the point the drop writes.
+    for mode in [model::SnapMode::Foot, model::SnapMode::Space] {
+        let name = match mode {
+            model::SnapMode::Foot => "frame-contour-snap-foot",
+            model::SnapMode::Space => "frame-contour-snap-space",
+        };
+        let (mut harness, object, corner) = sketching(name);
+        {
+            let document = harness.app.tabs.active_mut();
+            document.set_snaps(crate::document::SnapChoice { kinds: model::SnapKinds::ALL, mode });
+        }
+        // The candidate is a face centre of the sample scene that stands above the ring's plane, and
+        // the pointer goes to where the eye sees it: the plane is the question, not the screen.
+        let marks = {
+            let document = harness.app.tabs.active();
+            document.session.project().snap_marks(document.editor.flags().sight())
+        };
+        let mark = marks
+            .iter()
+            .find(|mark| mark.kind == model::SnapKind::Centre && mark.point.z > 1.0)
+            .expect("the sample scene has a face centre above the plane")
+            .point;
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), mark).expect("on screen");
+        let from = node_point_mm(&harness, object, [0.0, 0.0]);
+        harness.click(from, egui::PointerButton::Primary);
+        harness.click(from, egui::PointerButton::Primary);
+        harness.hover(at);
+
+        let drafted = drafted_corner(&harness, corner);
+        let capture = harness.app.tabs.active().contour_gizmo.snap().map(|(_, kind)| kind);
+        match mode {
+            model::SnapMode::Foot => {
+                assert!(
+                    same_point(
+                        drafted,
+                        [
+                            Length::from_micrometres((mark.x * 1_000.0).round() as i64),
+                            Length::from_micrometres((mark.y * 1_000.0).round() as i64),
+                        ]
+                    ),
+                    "2.5D lands the corner on the candidate's foot on the ring's plane: {drafted:?} from {mark:?}"
+                );
+                assert!(
+                    capture.is_some_and(|kind| kind != model::SnapKind::Grid),
+                    "and names the scene place that took it: {capture:?}"
+                );
+            }
+            model::SnapMode::Space => {
+                // 3D takes only a candidate that really lies in the ring's plane; the face centre the
+                // pointer points at stands above it, so it never captures, and whatever does capture
+                // is a candidate of the plane itself.
+                let pointer = node_point_under(&harness, object, at);
+                match capture {
+                    None => assert!(
+                        same_point(drafted, pointer),
+                        "nothing captured, so the corner keeps the pointer's point: {drafted:?} against {pointer:?}"
+                    ),
+                    Some(kind) => {
+                        let coplanar = marks.iter().any(|mark| {
+                            mark.point.z.abs() <= 1.0e-3
+                                && same_point(
+                                    drafted,
+                                    [
+                                        Length::from_micrometres((mark.point.x * 1_000.0).round() as i64),
+                                        Length::from_micrometres((mark.point.y * 1_000.0).round() as i64),
+                                    ],
+                                )
+                        });
+                        assert!(coplanar, "3D captures only a candidate in the plane: {drafted:?} ({kind:?})");
+                    }
+                }
+            }
+        }
+
+        // The marker reads the working copy's corner, so the point it draws is the point the drop
+        // writes: one place, and no second decision about where the marker stands.
+        harness.click(at, egui::PointerButton::Primary);
+        assert!(same_point(stored_corner(&harness, object, corner), drafted), "the drop writes the marker's point");
+    }
 }
 
 /// The screen point of one point of a node's own plane, in millimetres.
@@ -5131,6 +5771,9 @@ fn a_carried_piece_gives_its_hand_back_when_the_mouse_leaves_the_work_area() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -5187,6 +5830,9 @@ fn a_view_preset_and_home_leave_the_piece_where_it_stands() {
     harness.app.tabs.active_mut().frame_all();
     harness.settle();
     harness.app.shell.mode = TransformMode::Object;
+    // The carry is the hand's: the workspace's snaps would catch the piece at round millimetres and
+    // the test is about the hand, not about them (U116).
+    harness.app.tabs.active_mut().set_snap_kind(SnapKind::Centre, false);
     harness.settle();
 
     let body = harness.node_point(panel);
@@ -5530,4 +6176,1609 @@ fn a_carried_frames_old_grip_is_no_target() {
     assert_eq!(frame_sides(&harness, frame), sides, "a carried piece's stale grip resizes nothing");
     assert!(harness.app.tabs.active().holding_piece(), "and the piece is still in the hand");
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+}
+
+/// A scene holding a slab 100 x 100 x 18 and a cutter 50 x 50 x 200 that passes through it, both
+/// constructive, with the cutter's id and the slab's.
+fn slab_and_cutter() -> (engine::Session, Id, Id) {
+    use model::{Constructive, Container, Geometry, Path, Placement, Project};
+    let mm = testkit::millimetres;
+    let root = Container::new(Id::new(1).expect("an id"), "Scene", Placement::IDENTITY, Vec::new());
+    let mut project = Project::new(root).expect("an empty project");
+    let slab = Constructive::extrude(Path::rectangle([mm(0), mm(0)], [mm(100), mm(100)]).expect("a slab"), mm(18))
+        .expect("a slab");
+    let cutter = Constructive::extrude(Path::rectangle([mm(0), mm(0)], [mm(50), mm(50)]).expect("a cutter"), mm(200))
+        .expect("a cutter");
+    let cutter_at =
+        Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+    let slab = project
+        .add_object(project.root().id(), "Slab", Placement::IDENTITY, Geometry::Constructive(slab))
+        .expect("the slab is added");
+    let cutter = project
+        .add_object(project.root().id(), "Cutter", cutter_at, Geometry::Constructive(cutter))
+        .expect("the cutter is added");
+    (engine::Session::with_directory(project, testkit::sample_catalog()), slab, cutter)
+}
+
+/// The same scene with the cutter standing clear of the slab, so a difference removes nothing.
+fn slab_and_away_cutter() -> (engine::Session, Id, Id) {
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut project = session.project().clone();
+    let away = model::Placement::new(geom::DVec3::new(-800.0, 0.0, 0.0), geom::DQuat::IDENTITY).expect("a placement");
+    project.set_node_placement(cutter, away).expect("the cutter stands away");
+    (engine::Session::with_directory(project, testkit::sample_catalog()), slab, cutter)
+}
+
+/// The ids the frame draws a body for, one per drawable.
+fn drawn_bodies(harness: &Harness) -> Vec<Id> {
+    harness.app.tabs.active().frame().drawables().iter().map(|drawable| drawable.id).collect()
+}
+
+#[test]
+fn an_armed_body_boolean_cuts_the_frame_and_the_commit_spends_the_cutter() {
+    // W2: the mode appends a step that carries the cutter's shape, and the ✓ spends the cutter — so
+    // the scene is one body with a hole instead of a body and the shape that cut it (ADR 0197).
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut harness = Harness::with_session("frame-body-boolean", session);
+    harness.settle();
+    let revision = harness.revision();
+    assert_eq!(drawn_bodies(&harness), vec![slab, cutter], "both bodies draw before the mode");
+
+    {
+        let document = harness.app.tabs.active_mut();
+        // The last selected node is the primary, so the target is picked last.
+        document.editor.select_nodes(vec![cutter, slab]);
+        assert!(
+            document.editor.arm_body_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the selected body arms the mode"
+        );
+    }
+    harness.settle();
+    {
+        let document = harness.app.tabs.active();
+        assert!(document.editor.boolean_arm().is_some_and(ui::BooleanArm::is_ready), "the cut is on screen");
+        assert_eq!(drawn_bodies(&harness), vec![slab, cutter], "a preview is drawn in place of the target");
+        assert_eq!(harness.revision(), revision, "a preview is not an edit");
+        assert!(!document.can_undo(), "a preview is not an undo entry");
+    }
+
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert_eq!(harness.revision().get(), revision.get() + 1, "one command, one revision");
+    let project = document.session.project();
+    let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    let step = body.booleans().next().expect("one step");
+    assert_eq!(step.tool().name(), "Cutter", "the step froze the cutter's shape and its name");
+    assert!(project.object(cutter).is_none(), "the cutter is spent, so one body is left");
+    assert_eq!(drawn_bodies(&harness), vec![slab], "the frame draws the cut body alone");
+}
+
+#[test]
+fn a_boolean_that_leaves_no_solid_is_a_diagnostic_and_not_a_frozen_frame() {
+    // The owner's report: a cut whose tool missed the body left the whole picture frozen at the
+    // last frame that built, so a move showed only its handles. A node the kernel refuses is a
+    // diagnostic on that node and the rest of the scene keeps drawing and following the pointer
+    // (geometry.md §8). W2: a marked cutter survives the operation, so it is still there to see.
+    let (session, slab, cutter) = slab_and_away_cutter();
+    let mut harness = Harness::with_session("frame-boolean-empty", session);
+    {
+        let document = harness.app.tabs.active_mut();
+        document
+            .session
+            .dispatch(engine::OBJECT_TOOL_SET_ID, &serde_json::json!({ "object": cutter.get(), "tool": true }))
+            .expect("the cutter is a tool");
+        document
+            .session
+            .dispatch(
+                engine::OBJECT_BOOLEAN_SET_ID,
+                &serde_json::json!({ "object": slab.get(), "op": "difference", "tool": cutter.get() }),
+            )
+            .expect("the step is stored");
+    }
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    assert_eq!(drawn_bodies(&harness), vec![cutter], "the body that cannot be built draws nothing");
+    assert_eq!(document.scene_failures.len(), 1, "the node reports its own failure");
+    assert_eq!(document.scene_failures.first().expect("one failure").id, slab);
+    let reported = document.last_error.clone().unwrap_or_default();
+    assert!(reported.starts_with("Slab:"), "the status bar names the body: {reported}");
+
+    // The picture is live: the cutter still follows the pointer, which is what was frozen before.
+    {
+        let document = harness.app.tabs.active_mut();
+        let away =
+            model::Placement::new(geom::DVec3::new(-900.0, 0.0, 0.0), geom::DQuat::IDENTITY).expect("a placement");
+        document
+            .session
+            .dispatch(
+                engine::node_cmds::NODE_PLACEMENT_SET_ID,
+                &serde_json::json!({ "node": cutter.get(), "placement": away }),
+            )
+            .expect("a tool moves freely");
+    }
+    harness.settle();
+    assert_eq!(drawn_bodies(&harness), vec![cutter], "the rest of the scene still follows an edit");
+
+    // Dropping the step brings the body back and takes the sentence with it.
+    {
+        let document = harness.app.tabs.active_mut();
+        document
+            .session
+            .dispatch(engine::OBJECT_BOOLEAN_REMOVE_ID, &serde_json::json!({ "object": slab.get(), "index": 1 }))
+            .expect("the step goes");
+    }
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert_eq!(drawn_bodies(&harness), vec![slab, cutter], "the body builds again");
+    assert!(document.scene_failures.is_empty(), "the scene builds");
+    assert!(document.last_error.is_none(), "the sentence goes with the failure: {:?}", document.last_error);
+}
+
+#[test]
+fn an_armed_boolean_whose_result_is_not_a_solid_refuses_its_enter() {
+    // The preview asks the kernel the same question the ✓ will: a cut that leaves nothing has no
+    // result to store, so the card drops its check and Enter keeps the mode without writing.
+    let (session, slab, cutter) = slab_and_cutter();
+    let mut project = session.project().clone();
+    project
+        .set_node_placement(
+            cutter,
+            model::Placement::new(geom::DVec3::new(-800.0, 0.0, 0.0), geom::DQuat::IDENTITY).expect("a placement"),
+        )
+        .expect("the cutter moves away");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    let mut harness = Harness::with_session("frame-boolean-empty-armed", session);
+    harness.settle();
+    let revision = harness.revision();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![cutter, slab]);
+        assert!(
+            document.editor.arm_body_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the mode arms on the body"
+        );
+    }
+    harness.settle();
+
+    {
+        let document = harness.app.tabs.active();
+        let arm = document.editor.boolean_arm().expect("the mode is armed");
+        assert!(!arm.is_ready(), "a cut that leaves no solid is not a result");
+        assert!(arm.refusal().is_some(), "the arm says why");
+        assert_eq!(harness.revision(), revision, "nothing was written");
+    }
+
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    harness.settle();
+    let document = harness.app.tabs.active();
+    assert!(document.editor.boolean_arm().is_some(), "a refused commit keeps the mode alive");
+    assert_eq!(harness.revision(), revision, "a refused commit writes nothing");
+    let body = document.session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    assert_eq!(body.booleans().count(), 0, "the body keeps its history");
+}
+
+/// A headless window whose root holds one closed ring object per rectangle, named `Ring 1`, `Ring
+/// 2`, …, and their ids in that order.
+///
+/// A ring object is a drawn path, which is what a contour boolean combines (ADR 0194, revised by
+/// W2): the arm's base and its operands are `Geometry::Path` and not a body.
+fn rings_session(name: &str, rings: Vec<([i64; 2], [i64; 2])>) -> (Harness, Vec<Id>) {
+    let mm = testkit::millimetres;
+    let root = model::Container::new(Id::new(1).expect("id"), "Scene", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let mut ids = Vec::new();
+    for (index, (low, high)) in rings.into_iter().enumerate() {
+        let path = model::Path::rectangle([mm(low[0]), mm(low[1])], [mm(high[0]), mm(high[1])]).expect("a ring");
+        let id = project
+            .add_object(root, format!("Ring {}", index + 1), model::Placement::IDENTITY, model::Geometry::Path(path))
+            .expect("a drawn ring");
+        ids.push(id);
+    }
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    (Harness::with_session(name, session), ids)
+}
+
+/// The ink the frame last uploaded gave each ring it draws as a picked line chain.
+fn chain_inks(harness: &Harness) -> Vec<(Id, Option<[f32; 4]>)> {
+    harness.app.tabs.active().highlighted_chains().iter().map(|chain| (chain.id, chain.color)).collect()
+}
+
+#[test]
+fn an_armed_boolean_marks_its_base_ring_and_drops_the_mark_with_the_mode() {
+    // X99: the base is the frame the result is born in. A plain click on the tool replaces the
+    // selection, so the base used to lose its highlight while it was still an operand, and two
+    // rings looked like one selection. The base now takes an ink of its own and the operand keeps
+    // the selection ink, in the frame's own shape list.
+    let (mut harness, rings) =
+        rings_session("frame-ring-boolean-base", vec![([0, 0], [160, 80]), ([80, 0], [240, 80])]);
+    let (base, operand) = (rings[0], rings[1]);
+    harness.settle();
+
+    // Both picked, no boolean: the two rings are one selection, drawn in one ink.
+    harness.app.tabs.active_mut().editor.select_nodes(vec![base, operand]);
+    harness.settle();
+    for (id, ink) in chain_inks(&harness) {
+        assert_eq!(ink, Some(scene::SELECTION_LINE_COLOR), "ring {id:?} is picked and carries the selection ink");
+    }
+
+    let base_ink = harness.app.tabs.active().frame().boolean_base;
+    assert_ne!(base_ink, scene::SELECTION_LINE_COLOR, "the two roles are two inks");
+
+    // Arming marks the base before anything else is picked: the mode is view state the frame has to
+    // follow, so the picture changes with it.
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base]);
+        assert!(
+            document.editor.arm_boolean(engine::ContourOp::Subtract, document.session.project()),
+            "the selected ring arms the mode"
+        );
+    }
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == base).map(|(_, ink)| *ink),
+        Some(Some(base_ink)),
+        "arming the mode marks the base at once"
+    );
+
+    // A plain click picks the tool: the base leaves the selection, stays an operand and keeps its ink.
+    harness.app.tabs.active_mut().editor.select_nodes(vec![operand]);
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == base).map(|(_, ink)| *ink),
+        Some(Some(base_ink)),
+        "the base ring takes the base ink"
+    );
+    assert_eq!(
+        inks.iter().find(|(id, _)| *id == operand).map(|(_, ink)| *ink),
+        Some(Some(scene::SELECTION_LINE_COLOR)),
+        "the operand keeps the selection ink"
+    );
+
+    // Dropping the mode returns every ring to the selection ink: the mark belongs to the mode.
+    harness.app.tabs.active_mut().cancel_boolean();
+    harness.app.tabs.active_mut().editor.select_nodes(vec![base, operand]);
+    harness.settle();
+    let inks = chain_inks(&harness);
+    assert_eq!(inks.len(), 2, "both rings are picked again: {inks:?}");
+    for (id, ink) in inks {
+        assert_eq!(ink, Some(scene::SELECTION_LINE_COLOR), "ring {id:?} keeps no base ink once the mode is gone");
+    }
+}
+
+#[test]
+fn an_armed_boolean_names_its_base_on_the_card() {
+    // The picture marks the base and the card names it, so the words and the rings agree (X99).
+    let (mut harness, rings) =
+        rings_session("frame-ring-boolean-note", vec![([0, 0], [160, 80]), ([80, 0], [240, 80])]);
+    let (base, operand) = (rings[0], rings[1]);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_nodes(vec![base]);
+        assert!(document.editor.arm_boolean(engine::ContourOp::Subtract, document.session.project()));
+        document.editor.select_nodes(vec![operand]);
+    }
+    harness.settle();
+
+    let lang = ui::language(&harness.ctx);
+    let view = harness.app.tabs.active().card_view(lang).expect("a result on screen draws the card");
+    let expected = Message::BooleanBase.with(lang, ["Ring 1"]);
+    assert_eq!(view.note.as_deref(), Some(expected.as_str()), "the card names the base the rings mark");
+}
+
+/// A headless window whose scene root holds one drawing of the given rings, and the drawing's id.
+fn drawing_session(name: &str, rings: Vec<model::Path>) -> (Harness, model::Id) {
+    let root = model::Container::new(model::Id::new(1).expect("id"), "Scene", model::Placement::IDENTITY, Vec::new());
+    let mut project = model::Project::new(root).expect("a project");
+    let root = project.root().id();
+    let set = model::Contours::new(rings).expect("a contour set");
+    let drawing = project
+        .add_object(root, "Union", model::Placement::IDENTITY, model::Geometry::Contours(set))
+        .expect("a drawing");
+    let session = engine::Session::with_directory(project, testkit::sample_catalog());
+    (Harness::with_session(name, session), drawing)
+}
+
+/// The rectangle ring a drawing fixture is built from, in millimetres.
+fn frame_ring(x0: i64, y0: i64, x1: i64, y1: i64) -> model::Path {
+    model::Path::rectangle(
+        [testkit::millimetres(x0), testkit::millimetres(y0)],
+        [testkit::millimetres(x1), testkit::millimetres(y1)],
+    )
+    .expect("a rectangle ring")
+}
+
+#[test]
+fn the_area_pull_creates_the_face_under_the_pointer_in_one_undo_step() {
+    // A drawing of two nested rings: the opening inside the frame is its own area (G4).
+    let (mut harness, drawing) =
+        drawing_session("frame-area", vec![frame_ring(0, 0, 100, 50), frame_ring(20, 10, 60, 30)]);
+    harness.settle();
+    let (pointer, rect, before) = {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(drawing));
+        document.editor.arm_area_pull(drawing);
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, geom::DVec3::new(40.0, 20.0, 0.0))
+            .expect("the opening is on screen");
+        assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+        (pointer, rect, harness.revision())
+    };
+
+    harness.hover(pointer);
+    let measured = harness
+        .app
+        .tabs
+        .active()
+        .editor
+        .area()
+        .region()
+        .map(|area| area.area())
+        .expect("the pointer names the opening");
+    assert!((measured - 800.0).abs() < 1e-3, "the opening is 40 x 20 mm, got {measured}");
+    assert!(
+        harness.drawn.iter().any(|text| text.contains("Pull an area")),
+        "the status bar says what the next click does"
+    );
+
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let created = {
+        let document = harness.app.tabs.active();
+        let created = document.editor.selected_node().expect("the new body is selected");
+        let body = document
+            .session
+            .project()
+            .object(created)
+            .and_then(|object| object.geometry().as_constructive())
+            .expect("the click created a body");
+        assert_eq!(
+            body.contour().expect("a ring").bounds_micrometres(),
+            ([20_000, 10_000], [60_000, 30_000]),
+            "the body stands where the opening stood"
+        );
+        assert!(document.extrude_gizmo.is_active(), "the pull arrow took the body");
+        assert!(document.session.project().object(drawing).is_some(), "the drawing keeps its rings");
+        created
+    };
+    assert!(harness.revision() > before, "the click writes the body once");
+
+    // The ✓ closes the gesture: one entry for the body and its height, and the drawing stays.
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(!harness.app.tabs.active().extrude_gizmo.is_active(), "the ✓ ends the pull");
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().object(created).is_none(), "one undo removes the body");
+    assert!(document.session.project().object(drawing).is_some(), "and leaves the drawing");
+    assert!(!document.session.can_undo(), "the pull was one entry, not two");
+    let _ = rect;
+}
+
+#[test]
+fn escaping_the_area_pull_takes_the_body_back_and_leaves_no_entry() {
+    let (mut harness, drawing) = drawing_session("frame-area-cancel", vec![frame_ring(0, 0, 100, 50)]);
+    harness.settle();
+    let pointer = {
+        let document = harness.app.tabs.active_mut();
+        document.editor.select_node(Some(drawing));
+        document.editor.arm_area_pull(drawing);
+        let rect = document.scene_rect().expect("a scene rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, geom::DVec3::new(50.0, 25.0, 0.0)).expect("on screen");
+        assert!(rect.contains(pointer));
+        pointer
+    };
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.click(pointer, egui::PointerButton::Primary);
+    assert!(harness.revision() > before, "the click wrote the body");
+    assert!(harness.app.tabs.active().extrude_gizmo.is_active());
+
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+
+    let document = harness.app.tabs.active();
+    assert!(!document.extrude_gizmo.is_active(), "Escape drops the pull");
+    assert_eq!(
+        document.session.project().geometry_ids_under(document.session.project().root().id()).map(|ids| ids.len()),
+        Some(1),
+        "the body went with the scope: the drawing is the only geometry left"
+    );
+    assert!(document.session.project().object(drawing).is_some(), "the drawing is untouched");
+    assert!(!document.session.can_undo(), "a cancelled pull leaves no entry");
+    assert_eq!(document.editor.area_pull(), Some(drawing), "the tool stays armed for the next click");
+}
+
+#[test]
+fn a_channel_call_is_answered_at_the_frame_boundary() {
+    // An agent's call is taken at the top of the frame, before anything the frame derives: the
+    // answer is the registry's own listing and the window's own report, and the window is exactly
+    // the one the test is looking at (ADR 0187, ADR 0188).
+    let mut harness = Harness::new("frame-channel");
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
+    let (inspected, inspected_answer) = mcp::queued(mcp::Call::Inspect);
+    harness.app.queued.push(listed);
+    harness.app.queued.push(inspected);
+    harness.frame();
+
+    let listed = listed_answer.take().expect("the frame answered the list");
+    assert!(!listed.failed(), "the listing is not a refusal: {:?}", listed.body());
+    assert!(
+        listed.body()["commands"].as_array().is_some_and(|rows| rows.len() > 50),
+        "the whole registry reaches a caller: {:?}",
+        listed.body()
+    );
+    let reported = inspected_answer.take().expect("the frame answered the report");
+    let window: mcp::Window = serde_json::from_value(reported.body().clone()).expect("the report is a window");
+    assert_eq!(window.tabs.len(), 1, "one scene is open in the window");
+    assert_eq!(window.active, 0, "and it is the one in front");
+    assert!(!window.mode.is_empty(), "the armed gesture is named: {window:?}");
+    assert!(!window.busy, "an idle frame is not a gesture");
+}
+
+#[test]
+fn a_picture_asked_of_a_window_with_no_device_is_a_refusal_and_the_other_calls_answer() {
+    // A window built with no device (`App::headless`) still routes the call: the picture is the one
+    // thing that needs a GPU, and it says so instead of failing the protocol or drawing nothing
+    // (ADR 0228). The rest of the surface is untouched, which is what a caller that only reads the
+    // scene depends on.
+    let mut harness = Harness::new("frame-channel-preview");
+    let (previewed, preview_answer) = mcp::queued(mcp::Call::Preview(mcp::PreviewRequest::default()));
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
+    harness.app.queued.push(previewed);
+    harness.app.queued.push(listed);
+    harness.frame();
+
+    let refused = preview_answer.take().expect("the frame answered the preview");
+    assert!(refused.failed(), "a window with no device cannot draw: {:?}", refused.body());
+    assert!(refused.image().is_none(), "and it sends no picture");
+    let sentence = refused.body()["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains("device"), "{sentence}");
+    let listed = listed_answer.take().expect("the frame answered the listing");
+    assert!(!listed.failed(), "the commands still list: {:?}", listed.body());
+}
+
+#[test]
+fn a_call_that_lands_answers_in_the_frame_it_asks_for_with_no_input_at_all() {
+    // The window paints on input, so a call from the channel used to wait for a pointer only a
+    // person brings: the document moved, the tab was dirty, and the frame the person saw was the old
+    // one (X111, ADR 0225). A call now rings the window the moment it is queued — the mailbox the
+    // window watches is told what to do — and the frame that lands it asks for the frame that shows
+    // it. Nothing in this test touches the pointer or a key.
+    let folder = testkit::scratch_dir("frame-channel-landed");
+    let (mut harness, _panel) = chat_fixture("frame-channel-landed-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+    assert_eq!(harness.shell_requests(), 0, "an idle window asks for no frame of its own");
+
+    let before = harness.revision();
+    let mailbox = harness.app.mailbox.as_ref().expect("the mailbox comes with the channel");
+    let answering = mailbox.post(mcp::Call::Dispatch(shelf_request(product))).expect("the call queues");
+    assert_eq!(harness.revision(), before, "a queued call has not been answered yet: it waits for a frame");
+
+    harness.frame();
+    let answer = answering.take().expect("the frame answered the call");
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_ne!(harness.revision(), before, "the frame that answered the call landed it, and the window is awake");
+    let created = answer.body()["created"][0].as_u64().expect("the answer names the part it created");
+    let shelf = Id::new(created).expect("an id is never zero");
+    assert!(
+        harness.app.tabs.active().frame().drawables().iter().any(|drawable| drawable.id == shelf),
+        "the scene was rebuilt in the frame the call returned, so the part is in it"
+    );
+
+    // `egui` names a frame's causes one pass later, so the request the call's own frame made is read
+    // here: one ask, from the shell, with no pointer behind it.
+    harness.frame();
+    assert_eq!(harness.shell_requests(), 1, "the frame that landed the call asked for the frame that shows it");
+}
+
+#[test]
+fn a_call_waits_for_the_gesture_and_then_lands_with_the_ids_it_created() {
+    // A call that moves the document is not refused because a gesture holds the window: it waits for
+    // the first frame that has the window to itself and answers with the report of what landed. A
+    // refusal here would say nothing about the edit a late frame performs — the answer a caller read
+    // as "nothing landed" while the document held the node (X107, ADR 0223). Reads are answered in
+    // the busy frame, because a question about the document moves nothing.
+    let (mut harness, _panel) = chat_fixture("frame-channel-holds");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    // Plan mode is the state a window's document is born in, and this test is about what a call that
+    // is allowed to write answers, so the person has turned the switch to build (ADR 0190).
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let before = harness.revision();
+
+    harness.app.pending_question =
+        Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(1, Lang::En) });
+    let (dispatched, answered) = mcp::queued(mcp::Call::Dispatch(shelf_request(product)));
+    let (listed, listing_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
+    harness.app.queued.push(dispatched);
+    harness.app.queued.push(listed);
+    harness.frame();
+
+    assert!(
+        !listing_answer.take().expect("a read is answered in the busy frame").failed(),
+        "a question about the document is not held back by a gesture in hand"
+    );
+    assert_eq!(harness.app.queued.len(), 1, "the dispatch waits for a frame that has the window");
+    assert_eq!(harness.revision(), before, "and nothing moves under the hand that holds the window");
+    assert_eq!(harness.app.tabs.active().session.active_product(), Some(product));
+
+    // The person answers the question: the next frame has the window to itself.
+    harness.app.pending_question = None;
+    harness.frame();
+
+    let answer = answered.take().expect("the frame that had the window answered the call");
+    assert!(harness.app.queued.is_empty(), "nothing is left waiting");
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("landed"), "{:?}", answer.body());
+    let created: Vec<u64> = answer.body()["created"]
+        .as_array()
+        .expect("the answer lists what it created")
+        .iter()
+        .filter_map(serde_json::Value::as_u64)
+        .collect();
+    assert_eq!(created.len(), 1, "the answer names the shelf it created: {:?}", answer.body());
+    let shelf = Id::new(created.first().copied().expect("one created id")).expect("an id is never zero");
+    let project = harness.app.tabs.active().session.project();
+    assert!(project.panel(shelf).is_some(), "the panel the answer named is in the document");
+    assert_ne!(harness.revision(), before, "the frame that landed it moved the revision");
+}
+
+#[test]
+fn a_call_whose_caller_gave_up_is_never_performed() {
+    // A caller stops waiting at the channel's deadline. Performing the call then would change the
+    // person's document for a caller that will never hear of it, and the retry that follows builds
+    // the part twice (X107).
+    let (mut harness, _panel) = chat_fixture("frame-channel-abandoned");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let before = harness.revision();
+    let nodes = geometry_count(&harness);
+
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(shelf_request(product)));
+    drop(answering);
+    harness.app.queued.push(pending);
+    harness.frame();
+
+    assert!(harness.app.queued.is_empty(), "the dropped call leaves nothing waiting");
+    assert_eq!(harness.revision(), before, "a caller that is gone moves nothing");
+    assert_eq!(geometry_count(&harness), nodes, "and adds no node to the document");
+}
+
+/// How many geometry nodes the active document holds, so a test can tell a part was added.
+fn geometry_count(harness: &Harness) -> usize {
+    let project = harness.app.tabs.active().session.project();
+    project.geometry_ids_under(project.root().id()).map(|ids| ids.len()).unwrap_or_default()
+}
+
+#[test]
+fn a_refused_batch_answers_the_command_sentence_and_no_created_ids() {
+    // The other half of the same promise: a call that moved nothing says so with the command's own
+    // sentence and names no node, so an empty answer is never read as a landed batch (X107).
+    let mut harness = Harness::new("frame-channel-refused");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let before = harness.revision();
+    // A parent the document does not hold is the command's own refusal: no copy of the document is
+    // installed, so neither the revision nor the history moves.
+    let request = mcp::BatchRequest {
+        steps: vec![mcp::StepRequest::new(
+            "panel.create",
+            serde_json::json!({
+                "parent": 9_999,
+                "name": "Shelf",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )],
+        product: None,
+        atomic: true,
+        dry_run: false,
+        save: false,
+    };
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(request));
+    harness.app.queued.push(pending);
+    harness.frame();
+
+    let answer = answering.take().expect("the frame answered the call");
+    assert!(answer.failed(), "the command refused: {:?}", answer.body());
+    assert_eq!(answer.body()["created"], serde_json::json!([]), "{:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("rolled_back"), "{:?}", answer.body());
+    let refusal = answer.body()["refusal"]["error"].as_str().expect("the command's own sentence");
+    assert!(!refusal.trim().is_empty(), "a refusal says why");
+    assert_eq!(harness.revision(), before, "and the document did not move");
+}
+
+/// One batch that creates a shelf inside `product`, as an agent would send it.
+fn shelf_request(product: Id) -> mcp::BatchRequest {
+    mcp::BatchRequest {
+        steps: vec![mcp::StepRequest::new(
+            "panel.create",
+            serde_json::json!({
+                "parent": product.get(),
+                "name": "Shelf",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )],
+        product: None,
+        atomic: true,
+        dry_run: false,
+        save: false,
+    }
+}
+
+/// The scene file a harness's active tab was saved to, written once, as a person's *Save* would.
+fn saved_tab(harness: &mut Harness, folder: &std::path::Path) -> std::path::PathBuf {
+    let path = folder.join("cabinet.z3l");
+    harness.app.tabs.active_mut().save(&path).expect("the fixture scene is written once");
+    assert!(!harness.app.tabs.active().is_dirty(), "the save leaves the scene clean");
+    path
+}
+
+/// Answers one dispatched batch in the frame after it was queued, as the window's frame does.
+fn answered(harness: &mut Harness, request: mcp::BatchRequest) -> mcp::Answer {
+    let (pending, answering) = mcp::queued(mcp::Call::Dispatch(request));
+    harness.app.queued.push(pending);
+    harness.frame();
+    answering.take().expect("the frame answered the call")
+}
+
+#[test]
+fn a_save_a_caller_asks_for_writes_the_scene_and_marks_the_tab_saved() {
+    // X114: an agent that built a wardrobe owned nothing it made, because the document lived in one
+    // dirty tab and the person's own *Save* was the only write. A caller may now ask for the save,
+    // which goes to the file the scene came from and is the person's *Save* performed for them.
+    let folder = testkit::scratch_dir("frame-channel-save");
+    let (mut harness, _panel) = chat_fixture("frame-channel-save-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let path = saved_tab(&mut harness, &folder);
+    let saved = project::SceneFile::read(&path).expect("the fixture scene reads back");
+    let saved_revision = saved.document().revision().get();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let mut request = shelf_request(product);
+    request.save = true;
+    let answer = answered(&mut harness, request);
+    assert!(!answer.failed(), "the batch landed and the save reached the file: {:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("written"), "{:?}", answer.body());
+    assert_eq!(answer.body()["written"], serde_json::json!(true), "{:?}", answer.body());
+    let reported = answer.body()["revision"].as_u64().expect("the answer names the revision it left");
+    assert_ne!(reported, saved_revision, "the batch moved the document the file now holds");
+    assert!(!harness.app.tabs.active().is_dirty(), "the file holds the document, so the tab is no longer dirty");
+
+    let written = project::SceneFile::read(&path).expect("the file is a scene");
+    assert_eq!(written.document().revision().get(), reported, "the file reads back with the revision the answer named");
+}
+
+#[test]
+fn a_save_a_scene_with_no_path_cannot_take_is_refused_and_writes_no_file() {
+    // The other half: a caller never chooses a path (ADR 0188), so a scene that was never saved
+    // answers with the sentence that names the person's act — and nothing is written into a file
+    // nobody asked for.
+    let folder = testkit::scratch_dir("frame-channel-save-nopath");
+    let (mut harness, _panel) = chat_fixture("frame-channel-save-nopath-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    assert_eq!(harness.app.tabs.active().path(), None, "the fixture scene was never saved");
+    let before = harness.revision();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let mut request = shelf_request(product);
+    request.save = true;
+    let answer = answered(&mut harness, request);
+    assert!(answer.failed(), "the ask was not honoured: {:?}", answer.body());
+    assert_eq!(answer.body()["effect"], serde_json::json!("landed"), "{:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("no_path"), "{:?}", answer.body());
+    let sentence = answer.body()["write_error"].as_str().expect("the answer says what a person can do");
+    assert!(sentence.contains("Save as"), "it names the person's own act: {sentence}");
+    assert_ne!(harness.revision(), before, "the document moved and no file holds it");
+    assert!(harness.app.tabs.active().is_dirty(), "which is exactly what a dirty tab means");
+
+    let scenes: Vec<std::path::PathBuf> = std::fs::read_dir(&folder)
+        .expect("the folder the channel published into")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == project::EXTENSION))
+        .collect();
+    assert!(scenes.is_empty(), "no scene was written into a path nobody chose: {scenes:?}");
+}
+
+#[test]
+fn a_batch_that_did_not_ask_for_the_save_leaves_the_file_alone() {
+    // The window's rule survives the new one: the tab is a person's, and a landed batch that nobody
+    // asked to keep is in the document and not on disk.
+    let folder = testkit::scratch_dir("frame-channel-unsaved");
+    let (mut harness, _panel) = chat_fixture("frame-channel-unsaved-doc");
+    let product = harness.app.tabs.active().session.active_product().expect("the fixture product is open");
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.settle();
+    let path = saved_tab(&mut harness, &folder);
+    let saved = project::SceneFile::read(&path).expect("the fixture scene reads back");
+    let saved_revision = saved.document().revision().get();
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let answer = answered(&mut harness, shelf_request(product));
+    assert!(!answer.failed(), "the batch landed: {:?}", answer.body());
+    assert_eq!(answer.body()["write"], serde_json::json!("window"), "{:?}", answer.body());
+    assert_eq!(answer.body()["written"], serde_json::json!(false), "{:?}", answer.body());
+    assert!(harness.app.tabs.active().is_dirty(), "the change is in the document and not on disk");
+
+    let written = project::SceneFile::read(&path).expect("the file is a scene");
+    assert_eq!(written.document().revision().get(), saved_revision, "the file still holds what was saved");
+    assert_ne!(harness.revision().get(), saved_revision, "and the document moved past it");
+}
+
+#[test]
+fn a_closed_window_removes_the_token_it_published() {
+    // A clean exit leaves nothing behind: a reader that cannot connect reads "no window is open
+    // here", never a token nobody answers (ADR 0188).
+    let folder = testkit::scratch_dir("frame-channel-token");
+    let file = mcp::Channel::file(&folder);
+    {
+        let mut harness = Harness::new("frame-channel-window");
+        assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+        assert!(file.exists(), "the port and the token are published");
+        harness.frame();
+    }
+    assert!(!file.exists(), "a window that closes removes its own token file");
+}
+
+#[test]
+fn the_assistant_switch_closes_and_reopens_the_channel() {
+    // The settings page is the door: the switch pressed on one frame closes or opens the channel,
+    // so the token file always describes the window that is there (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-switch");
+    let file = mcp::Channel::file(&testkit::scratch_dir("frame-channel-switch"));
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace offers the channel");
+
+    harness.app.apply_channel(&harness.ctx);
+    assert!(file.exists(), "the channel publishes its token while the switch is on");
+
+    harness.app.settings.assistant.attach = false;
+    harness.app.apply_channel(&harness.ctx);
+    assert!(harness.app.channel.is_none(), "the switch closes the door");
+    assert!(!file.exists(), "and the token goes with it");
+
+    harness.app.settings.assistant.attach = true;
+    harness.app.apply_channel(&harness.ctx);
+    assert!(file.exists(), "turning it back on publishes a new token");
+}
+
+#[test]
+fn the_settings_window_offers_the_assistant_switch() {
+    // The switch is drawn where a person looks for it: its own page, named, with the sentence that
+    // says what it closes (ADR 0188, ADR 0207).
+    let mut harness = Harness::new("frame-channel-page");
+    harness.app.settings_open = true;
+    harness.app.settings_section = SettingsSection::Assistant;
+    harness.settle();
+    assert!(harness.drew(Message::SectionAssistant.text(Lang::En)), "the page is named: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannel.text(Lang::En)), "and the switch is on it: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AttachChannelHint.text(Lang::En)), "with the sentence that says what it is");
+    assert!(harness.app.settings.assistant.attach, "a fresh workspace leaves the door open");
+}
+
+/// A headless window around one session with a product open and one panel it can rename.
+///
+/// The assistant's turn needs something to change, and a part is born only inside an open product
+/// (ADR 0098), so the fixture builds the product and the panel the way the tool server's own test
+/// does and hands back the panel's id.
+fn chat_fixture(name: &str) -> (Harness, Id) {
+    let (project, product) = testkit::sample_product_project();
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let panel = session
+        .dispatch(
+            "panel.create",
+            &serde_json::json!({
+                "parent": product.get(),
+                "name": "Side",
+                "nominal_size": {"length": 700_000, "width": 500_000},
+                "material": "1-1",
+                "placement": {"translation": [0, 0, 0], "rotation": [0, 0, 0, 1]},
+            }),
+        )
+        .expect("the fixture panel is created")
+        .created_id()
+        .expect("a panel id");
+    (Harness::with_session(name, session), panel)
+}
+
+/// The name the document gives `panel`, or `None` when it is gone.
+fn panel_name(harness: &Harness, panel: Id) -> Option<String> {
+    harness.app.tabs.active().session.project().node(panel).map(|node| node.name().to_owned())
+}
+
+/// One batch step that renames `panel`.
+fn rename_step(panel: Id, name: &str) -> engine::BatchStep {
+    engine::BatchStep::new("node.rename", serde_json::json!({"node": panel.get(), "name": name}))
+}
+
+/// Drives the frame until the panel's turn is over, or `frames` frames have run.
+fn drive_turn(harness: &mut Harness, frames: usize) {
+    for _ in 0..frames {
+        harness.frame();
+        if !harness.app.chat_mut().is_busy() {
+            return;
+        }
+    }
+}
+
+#[test]
+fn each_tab_holds_its_own_conversation_and_its_own_backend() {
+    // J24: the conversation and the backend belonged to the window, so a second scene inherited the
+    // first one's transcript and could take its turn. Both are the tab's now: what one tab said is
+    // not in the other, and coming back finds both where they were left.
+    let (mut harness, panel) = chat_fixture("frame-chat-tabs");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the first scene's answer"),
+    ])));
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+    let first_tab = harness.app.tabs.active_id();
+    let first_lines = harness.app.chat_mut().conversation.lines().len();
+    assert!(first_lines > 2, "the first tab holds a whole turn: {first_lines}");
+
+    harness.app.new_tab().expect("a second scene");
+    let second_tab = harness.app.tabs.active_id();
+    assert_ne!(first_tab, second_tab);
+    assert!(harness.app.chat_mut().conversation.is_empty(), "the new scene starts with nothing said");
+    assert!(harness.app.chat_mut().backend.is_none(), "and with no backend of the first one's");
+    assert!(!harness.app.chat_mut().is_busy(), "and no turn of its own");
+
+    harness.app.chat_mut().note("the second scene's line".to_owned());
+    harness.frame();
+    let first = harness.app.tabs.document(first_tab).expect("the first tab is still open");
+    assert_eq!(first.chat.conversation.lines().len(), first_lines, "the first tab's transcript is untouched");
+    assert!(
+        !first.chat.conversation.lines().iter().any(|line| line.text == "the second scene's line"),
+        "and it never sees what the front tab said"
+    );
+
+    assert!(harness.app.tabs.activate(first_tab));
+    harness.frame();
+    assert_eq!(harness.app.chat_mut().conversation.lines().len(), first_lines, "coming back finds the transcript");
+    assert!(harness.app.chat_mut().backend.is_some(), "and the backend that answered it");
+}
+
+#[test]
+fn a_turn_pauses_when_its_tab_leaves_and_finishes_when_it_comes_back() {
+    // The turn is the tab's too: leaving the scene keeps the reply in flight and lands no step
+    // behind the person's back, and coming back carries on instead of losing the answer (J24).
+    let (mut harness, panel) = chat_fixture("frame-chat-tabs-paused");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the side is renamed"),
+    ])));
+    let first_tab = harness.app.tabs.active_id();
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    // The first frame asks, the second lands the batch: the turn is half done when the tab leaves.
+    harness.frame();
+    harness.frame();
+    assert!(harness.app.chat_mut().is_busy(), "the turn is in flight");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the half that arrived landed");
+    let said = harness.app.chat_mut().conversation.lines().len();
+
+    harness.app.new_tab().expect("a second scene");
+    for _ in 0..12 {
+        harness.frame();
+    }
+    let first = harness.app.tabs.document(first_tab).expect("the first tab is still open");
+    assert!(first.chat.is_busy(), "the turn is paused, not dropped");
+    assert_eq!(first.chat.conversation.lines().len(), said, "and it advanced no step out of sight");
+    assert!(harness.app.chat_mut().conversation.is_empty(), "nothing of it appears in the front scene");
+
+    assert!(harness.app.tabs.activate(first_tab));
+    drive_turn(&mut harness, 24);
+    assert_eq!(
+        harness.app.chat_mut().conversation.lines().last().map(|line| line.text.as_str()),
+        Some("the side is renamed"),
+        "the answer closes the turn in the scene it was asked in"
+    );
+}
+
+#[test]
+fn the_workspace_settings_reach_every_open_tab() {
+    // The backend is the tab's, so a settings change is applied to every tab and not only to the one
+    // in front: a scene that comes forward is already able to send (J24).
+    let (mut harness, _panel) = chat_fixture("frame-chat-tabs-settings");
+    harness.app.new_tab().expect("a second scene");
+    harness.settle();
+    assert_eq!(harness.app.tabs.iter().count(), 2, "two scenes are open");
+    assert!(
+        harness.app.tabs.iter().all(|(_, document)| !document.chat.asks_an_endpoint()),
+        "no model is configured yet"
+    );
+
+    harness.app.settings.assistant.endpoint = "https://example.invalid/v1".to_owned();
+    harness.app.settings.assistant.model = "a-model".to_owned();
+    harness.frame();
+    assert!(
+        harness.app.tabs.iter().all(|(_, document)| document.chat.asks_an_endpoint()),
+        "every open tab took the endpoint, not only the one in front"
+    );
+}
+
+#[test]
+fn the_panel_draws_the_conversation_of_the_tab_in_front() {
+    // One window over the workspace, one transcript: what it says is the front scene's, and every
+    // other scene keeps its own words for the moment it comes forward (J24).
+    let (mut harness, _panel) = chat_fixture("frame-chat-tabs-panel");
+    harness.app.assistant_open = true;
+    let first_tab = harness.app.tabs.active_id();
+    harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, "the first scene's answer");
+    harness.settle();
+    assert!(harness.drew("the first scene's answer"), "the panel draws the scene in front");
+
+    harness.app.new_tab().expect("a second scene");
+    harness.settle();
+    assert!(!harness.drew("the first scene's answer"), "and only that one");
+
+    harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, "the second scene's answer");
+    harness.settle();
+    assert!(harness.drew("the second scene's answer"), "the second scene's words are drawn now");
+    assert!(!harness.drew("the first scene's answer"), "and the first one's are not");
+
+    assert!(harness.app.tabs.activate(first_tab));
+    harness.settle();
+    assert!(harness.drew("the first scene's answer"), "coming back draws its own transcript again");
+    assert!(!harness.drew("the second scene's answer"));
+}
+
+#[test]
+fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
+    // ADR 0187 through the real frame: the answer of one message is one entry, and the panel says so
+    // in its own note line, which is the sentence a person reads instead of reading the history.
+    let (mut harness, panel) = chat_fixture("frame-chat-turn");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the side is renamed"),
+    ])));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the answer landed");
+    assert_eq!(
+        harness.app.chat_mut().conversation.lines().last().map(|line| line.text.as_str()),
+        Some("the side is renamed"),
+        "the model's own words close the turn"
+    );
+    harness.app.tabs.active_mut().session.undo().expect("the whole message is one undo entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"));
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the turn left exactly one entry");
+}
+
+#[test]
+fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again() {
+    // ADR 0189 through the real window, the real wire and a stub on this machine's loopback: the
+    // message stops at the question, nothing leaves until the person says yes, the agreement is in
+    // the workspace file, and clearing it asks again. No provider, no network, no key in the tree.
+    let (mut harness, panel) = chat_fixture("frame-chat-consent");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
+    let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
+    write_agent_key(&folder);
+    harness.app.settings.assistant.endpoint = url.clone();
+    harness.app.settings.assistant.model = "stub-model".to_owned();
+    harness.settle();
+    assert_eq!(
+        harness.app.chat().unconsented(&harness.app.settings.assistant),
+        Some(url.clone()),
+        "the endpoint is installed and nothing has been agreed to yet"
+    );
+
+    // The first message stops at the question: the panel holds the words and the stub hears nothing.
+    harness.app.chat_mut().input = "rename the side".to_owned();
+    harness.settle();
+    let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(field_send, egui::PointerButton::Primary);
+    assert_eq!(harness.app.chat_mut().consent_pending(), Some(url.as_str()), "the message waits for the answer");
+    assert_eq!(harness.app.chat_mut().input, "rename the side", "and stays in the field");
+    harness.frame();
+    assert!(harness.drew(Message::AssistantConsentTitle.text(Lang::En)), "the card is drawn");
+    assert!(
+        harness.drew(&Message::AssistantConsentBody.with(Lang::En, [url.clone()])),
+        "and it names the endpoint the words would leave for"
+    );
+    assert!(
+        requests.recv_timeout(std::time::Duration::from_millis(50)).is_err(),
+        "nothing left the machine before the person answered"
+    );
+
+    // Saying yes remembers the endpoint for the workspace and sends the message it held.
+    let card_send = assistant_send_points(&harness).into_iter().next().expect("the card draws its own Send");
+    harness.click(card_send, egui::PointerButton::Primary);
+    assert!(harness.app.settings.assistant.consents(&url), "the answer is remembered");
+    assert_eq!(harness.app.chat_mut().consent_pending(), None, "and the card is gone");
+    for _ in 0..400 {
+        harness.frame();
+        if !harness.app.chat_mut().is_busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the stub was asked");
+    assert_eq!(request["model"], "stub-model", "the settings' model reaches the endpoint: {request}");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the answer landed");
+    let written = std::fs::read_to_string(&harness.path).expect("the workspace file is written");
+    assert!(written.contains(&url), "the agreement survives the run: {written}");
+    harness.app.tabs.active_mut().session.undo().expect("the answer is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"));
+
+    // Clearing the answer asks again: the question is the workspace's, not the tab's.
+    harness.app.settings.assistant.forget_consent(&url);
+    harness.app.chat_mut().input = "rename it once more".to_owned();
+    harness.settle();
+    let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(field_send, egui::PointerButton::Primary);
+    assert_eq!(harness.app.chat_mut().consent_pending(), Some(url.as_str()), "a cleared consent asks again");
+}
+
+#[test]
+fn the_request_carries_the_live_root_id_and_the_house_conventions() {
+    // X125: the model asked the person for an id, a side order and the units because the request held
+    // only the static guide. The brief is the live scene; the conventions are the house rule. Both
+    // reach the system message through the page, the shell and the backend.
+    let (mut harness, panel) = chat_fixture("frame-chat-brief");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
+    let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
+    write_agent_key(&folder);
+    harness.app.settings.assistant.endpoint = url.clone();
+    harness.app.settings.assistant.model = "stub-model".to_owned();
+    harness.app.settings.assistant.remember_consent(&url);
+    harness.settle();
+
+    harness.app.chat_mut().input = "куб 100 на 200 на 300".to_owned();
+    harness.settle();
+    let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(send, egui::PointerButton::Primary);
+    for _ in 0..400 {
+        harness.frame();
+        if !harness.app.chat_mut().is_busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+
+    let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the stub was asked");
+    let system = request["messages"][0]["content"].as_str().expect("a system message");
+    let root = harness.app.tabs.active().session.project().root().id().get();
+    assert!(system.contains(&format!("root container id = {root}")), "the root id is in the brief");
+    assert!(system.contains("a free body belongs under the root"), "a product is not required");
+    assert!(system.contains("width × depth × height"), "the side order is stated");
+    assert!(system.contains("never show micrometres"), "the person sees millimetres");
+}
+
+#[test]
+fn a_message_to_a_typed_but_unusable_address_answers_the_clause_and_sends_nothing() {
+    // J22: a URL pasted into the URL that was already in the field is not an endpoint. The panel
+    // names the clause instead of saying "no model", and no backend is installed to ask anything.
+    let (mut harness, _panel) = chat_fixture("frame-chat-endpoint-problem");
+    harness.app.assistant_open = true;
+    harness.app.settings.assistant.endpoint =
+        "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+    harness.app.settings.assistant.model = "a-model".to_owned();
+    harness.settle();
+    assert!(!harness.app.chat_mut().asks_an_endpoint(), "an unusable address installs no backend");
+
+    harness.app.chat_mut().input = "hello".to_owned();
+    harness.settle();
+    let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(send, egui::PointerButton::Primary);
+    harness.frame();
+    let clause = harness.app.settings.assistant.problem().expect("the address is still wrong").sentence(Lang::En);
+    let sentence = Message::AssistantProblemFix.with(Lang::En, [clause]);
+    assert!(harness.drew(&sentence), "the panel names the doubled address");
+}
+
+#[test]
+fn the_settings_page_names_the_wrong_clause_beside_the_address() {
+    // The same rule, in the place the person fixes it: a sentence under the field before the panel
+    // has to say anything.
+    let (mut harness, _panel) = chat_fixture("frame-settings-endpoint-problem");
+    harness.app.settings.assistant.endpoint =
+        "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let sentence = Message::AssistantEndpointProblem.with(Lang::En, [Message::AssistantEndpointDoubled.text(Lang::En)]);
+    assert!(harness.drew(&sentence), "the page names the doubled address beside the field");
+}
+
+#[test]
+fn a_remembered_address_is_one_click_away_from_the_settings_page() {
+    // The beginner help that needs no provider name in code (ADR 0189): the workspace already holds
+    // the addresses it agreed to, so a mistyped field is repaired from the list instead of retyped.
+    let (mut harness, _panel) = chat_fixture("frame-settings-use-again");
+    let remembered = "https://api.example.com/v1".to_owned();
+    harness.app.settings.assistant.endpoint = "https://api.example".to_owned();
+    harness.app.settings.assistant.consent = vec![remembered.clone()];
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let point = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantConsentUse.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the remembered list draws *Use again*");
+    harness.click(point, egui::PointerButton::Primary);
+    harness.frame();
+    assert_eq!(harness.app.settings.assistant.endpoint, remembered, "the remembered address is back in the field");
+}
+
+/// The Send buttons the last frame drew, topmost first.
+///
+/// The consent card sits above the field, so the card's own Send is the first one while the card is
+/// drawn; a frame with no card draws exactly one, the field's.
+fn assistant_send_points(harness: &Harness) -> Vec<egui::Pos2> {
+    let mut points: Vec<egui::Pos2> = harness
+        .drawn_rects
+        .iter()
+        .filter(|(_, text)| text == Message::AssistantSend.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .collect();
+    points.sort_by(|left, right| left.y.total_cmp(&right.y));
+    points
+}
+
+/// Writes the key's second home into `folder` with owner-only permissions.
+fn write_agent_key(folder: &std::path::Path) {
+    let path = folder.join(mcp::KEY_FILE);
+    std::fs::create_dir_all(folder).expect("the settings folder");
+    std::fs::write(&path, "sk-test-secret").expect("the key file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    }
+}
+
+#[test]
+fn the_assistant_panel_lists_what_the_rules_found() {
+    // ADR 0191 in the window: the rules find the mistake, the panel shows it and the model only
+    // explains it. The fixture's panel is 700 mm wide in a 600 mm envelope, so the one finding is
+    // the envelope rule and it names the panel the person can select.
+    let (mut harness, panel) = chat_fixture("frame-findings");
+    harness.app.assistant_open = true;
+    harness.frame();
+    let findings = harness.app.chat_mut().findings();
+    assert!(
+        findings.iter().any(|finding| finding.code == engine::Code::EnvelopeOut && finding.nodes.contains(&panel)),
+        "the panel lists the envelope finding: {findings:?}"
+    );
+
+    // The panel re-reads the rules when the document moves: a part that fits leaves no finding.
+    harness
+        .app
+        .tabs
+        .active_mut()
+        .session
+        .dispatch(
+            "panel.resize",
+            &serde_json::json!({
+                "panel": panel.get(),
+                "nominal_size": {"length": 500_000, "width": 400_000},
+            }),
+        )
+        .expect("the panel fits the envelope");
+    harness.frame();
+    assert!(
+        harness.app.chat_mut().findings().is_empty(),
+        "a clean scene reports nothing: {:?}",
+        harness.app.chat_mut().findings()
+    );
+}
+
+#[test]
+fn the_panel_in_plan_mode_draws_the_plan_and_writes_nothing() {
+    // ADR 0190: the first mode is plan, the answer runs with writing off, and what a person sees is
+    // the same dispatch the command line's dry run measured — not prose the model imagined.
+    let (mut harness, panel) = chat_fixture("frame-chat-plan");
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend =
+        Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+
+    assert_eq!(harness.app.tabs.active().session.agent_mode(), engine::AgentMode::Plan, "a tab is born in plan");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "plan wrote nothing");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the only entry");
+    assert!(panel_name(&harness, panel).is_none(), "plan added no entry of its own");
+    assert!(harness.drawn.iter().any(|line| line.starts_with("Plan:")), "the panel drew the plan: {:?}", harness.drawn);
+}
+
+#[test]
+fn a_running_turn_draws_stop_where_send_was() {
+    // The panel took the shell's gesture for the turn's own state, so a working turn drew Send
+    // and the person could not stop the agent from the panel at all. The button follows the turn,
+    // and the gesture only postpones the next message.
+    let (mut harness, panel) = chat_fixture("frame-chat-stop-button");
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend =
+        Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
+
+    harness.settle();
+    assert!(!harness.app.chat_mut().is_busy(), "no turn has started");
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "an idle panel offers Send: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantStop.text(Lang::En)), "and draws no Stop");
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    // The frames before the answer lands draw the panel beside the turn it started.
+    let mut stopped = false;
+    for _ in 0..2 {
+        harness.frame();
+        if harness.drew(Message::AssistantStop.text(Lang::En)) {
+            assert!(!harness.drew(Message::AssistantSend.text(Lang::En)), "Stop replaces Send, never beside it");
+            stopped = true;
+        }
+    }
+    assert!(stopped, "Stop is drawn while the turn runs: {:?}", harness.drawn);
+}
+
+#[test]
+fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
+    // The stop is between calls (ADR 0187): the second answer is never asked for, so the document
+    // holds the first answer and one undo entry — never a batch cut in half.
+    let (mut harness, panel) = chat_fixture("frame-chat-stop");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::calling(vec![rename_step(panel, "Right")]),
+    ])));
+
+    harness.app.send_chat("rename twice".to_owned(), Lang::En);
+    // Two frames carry the first answer: one asks the model, one takes the answer and dispatches it.
+    for _ in 0..6 {
+        harness.frame();
+        if panel_name(&harness, panel).as_deref() == Some("Left") {
+            break;
+        }
+    }
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the first answer landed");
+    harness.app.chat_mut().stop();
+    drive_turn(&mut harness, 12);
+
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the stopped answer never ran");
+    assert!(
+        harness.drawn.iter().any(|line| line == Message::AssistantStoppedLine.text(Lang::En)),
+        "the panel says the turn was stopped: {:?}",
+        harness.drawn
+    );
+    harness.app.tabs.active_mut().session.undo().expect("the landed answer is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "and it was all one entry");
+}
+
+#[test]
+fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
+    // The panel's key is the inventory's row, and the switch a person turns is drawn with the
+    // sentence that stands for it.
+    let (mut harness, _panel) = chat_fixture("frame-chat-panel");
+    harness.settle();
+    assert!(!harness.app.assistant_open, "the panel starts closed");
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.assistant_open, "Ctrl+J opens it");
+    harness.settle();
+    assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn");
+    assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "and the build segment beside it");
+    assert!(harness.drew(Message::AssistantPlanHint.text(Lang::En)), "with the sentence plan means");
+    assert!(
+        harness.drew(Message::AssistantNotConfigured.text(Lang::En)),
+        "and the sentence that says no model is connected"
+    );
+}
+
+/// The header hint that names the assistant's cell: the panel's word and the inventory's key.
+///
+/// The test reads the spelling from the tables instead of writing `Ctrl+J` a second time, so a
+/// remapped key moves the cell and the test with it.
+fn assistant_cell_hint() -> String {
+    let key = ui::inventory::key_label(ui::inventory::ASSISTANT_OPEN).expect("the panel has a key");
+    crate::icons::tool_hint(Message::ShortcutAssistant.text(Lang::En), Some(key))
+}
+
+#[test]
+fn the_plan_answer_names_the_key_the_header_cell_prints() {
+    // The wire's sentence is English and lives in `mcp`, which may not read `ui`'s key table, so the
+    // spelling of the key is asserted here — the one crate that sees both — and a remapped binding
+    // fails a test instead of leaving a model to tell a person about a key that no longer exists
+    // (ADR 0186, X106).
+    let key = ui::inventory::key_label(ui::inventory::ASSISTANT_OPEN).expect("the panel has a key");
+    assert!(mcp::PLAN_NOTE.contains(key), "the plan note names `{key}`: {}", mcp::PLAN_NOTE);
+    assert!(mcp::PLAN_NOTE.contains("a person"), "and says the switch is a person's: {}", mcp::PLAN_NOTE);
+}
+
+#[test]
+fn the_header_cell_opens_the_assistant_and_the_panel_draws_its_two_modes() {
+    // X106: the owner could not find the plan/build switch, because the panel that holds it had no
+    // entry in the interface. The header's cell is that entry: a person presses it where the window's
+    // own surfaces are, and the switch is inside the panel it opens (ADR 0209, ADR 0222).
+    let (mut harness, _panel) = chat_fixture("frame-chat-header-cell");
+    harness.settle();
+    assert!(!harness.app.assistant_open, "the panel starts closed");
+
+    let at = harness.face(&assistant_cell_hint()).unwrap_or_else(|| {
+        panic!(
+            "the header draws the assistant's cell: {:?}",
+            harness.faces.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        )
+    });
+    harness.click(at, egui::PointerButton::Primary);
+    assert!(harness.app.assistant_open, "the header's cell opens the panel");
+    assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn: {:?}", harness.drawn);
+    assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "the build segment is beside it");
+    assert!(harness.drew(Message::AssistantPlanHint.text(Lang::En)), "and the sentence plan means");
+
+    // The same cell closes it, so one press is one toggle whichever door asked for it.
+    harness.click(at, egui::PointerButton::Primary);
+    assert!(!harness.app.assistant_open, "a second press closes the panel");
+}
+
+#[test]
+fn the_assistant_panel_keeps_the_size_it_opens_at() {
+    // X108: a person saw the panel widen by itself, a little every frame, until it filled the
+    // screen. Measured: the field row left its button a guessed `available - 72` points, and the
+    // Russian «Отправить» is wider than that, so the row asked the window for 9.4 more points on
+    // every frame — 420, 476, 486 … 1289 on a 1280-point screen, in both modes and for any content.
+    // The row now measures the button and gives the field the rest, so the width it opens at is the
+    // width it keeps, in either language.
+    for lang in [ui::settings::Language::English, ui::settings::Language::Russian] {
+        let (mut harness, _panel) = chat_fixture("frame-chat-size");
+        harness.settle();
+        harness.app.settings.appearance.language = lang;
+        harness.app.assistant_open = true;
+        harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![])));
+        harness.app.chat_mut().conversation.push(
+            mcp::Speaker::Agent,
+            "an answer long enough to wrap over several lines, which is what the transcript is for ".repeat(3),
+        );
+        harness.app.chat_mut().input =
+            "a message the person is typing that is longer than the field that holds it ".repeat(3);
+        let id = egui::Id::unique("assistant_panel");
+        let mut first = None;
+        let mut last = None;
+        for _ in 0..100 {
+            harness.frame();
+            let rect = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+            first.get_or_insert(rect);
+            last = Some(rect);
+        }
+        let (first, last) = (first.expect("the panel drew"), last.expect("the panel drew"));
+        assert_eq!(first, last, "{lang:?}: the panel kept the size it opened at, first {first:?}, last {last:?}");
+    }
+}
+
+/// Drives frames until the panel's turn is over, with the real time a process needs to answer.
+///
+/// A scripted agent is a thread on the other end of two pipes, so a loop that ran as fast as it
+/// could would outrun it: the turn ends when the process has spoken, not when the frames run out.
+fn drive_agent_turn(harness: &mut Harness) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        harness.frame();
+        if !harness.app.chat_mut().is_busy() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// One scripted agent process and the record of what it saw, over the shared peer in `testkit`.
+fn agent_process(
+    script: impl FnOnce(&mut testkit::acp::Peer) + Send + 'static,
+) -> (Box<dyn mcp::Spawner>, std::sync::Arc<testkit::acp::Seen>) {
+    let running = std::sync::Arc::new(std::sync::Mutex::new(testkit::acp::scripted(script)));
+    let seen = match running.lock() {
+        Ok(held) => held.seen(),
+        Err(poisoned) => poisoned.into_inner().seen(),
+    };
+    let held = std::sync::Arc::clone(&running);
+    let spawner = mcp::ScriptedProcess::new(move || {
+        let mut running = match held.lock() {
+            Ok(held) => held,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let (reader, writer) = running.start().map_err(mcp::BackendError::new)?;
+        Ok(mcp::Started { reader, writer, ending: Box::new(|| {}) })
+    });
+    (Box::new(spawner), seen)
+}
+
+/// One batch the window is asked to run over its own channel, and the answer it gave.
+fn call_channel(harness: &mut Harness, step: mcp::StepRequest) -> mcp::Answer {
+    let mailbox = harness.app.mailbox.as_ref().expect("the mailbox comes with the channel");
+    let answering = mailbox
+        .post(mcp::Call::Dispatch(mcp::BatchRequest {
+            steps: vec![step],
+            product: None,
+            atomic: true,
+            dry_run: false,
+            save: false,
+        }))
+        .expect("the channel takes the call");
+    harness.frame();
+    answering.take().expect("the frame answered the call")
+}
+
+/// One rename step, as a caller over the channel sends it.
+fn rename_call(panel: Id, name: &str) -> mcp::StepRequest {
+    mcp::StepRequest::new("node.rename", serde_json::json!({ "node": panel.get(), "name": name }))
+}
+
+#[test]
+fn an_agent_process_turn_lands_one_undo_entry_and_the_panel_draws_its_calls() {
+    // The door of ADR 0230 through the real frame: a configured agent process is started, told the
+    // person's message, and it edits the document through the window's channel. Two batches arrive
+    // while the turn is open — one lands, one is refused by the window — and the message is one undo
+    // entry, because a batch that reaches the window inside a turn lands in the turn's scope. The
+    // panel draws the calls and the refusal from the protocol's own messages, not from prose.
+    let (mut harness, panel) = chat_fixture("frame-acp-turn");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let folder = testkit::scratch_dir("frame-acp-turn-channel");
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let (asking, want) = std::sync::mpsc::channel::<u8>();
+    let (told, refuses) = std::sync::mpsc::channel::<String>();
+    let (spawner, seen) = agent_process(move |peer| {
+        let Some(session) = peer.open() else { return };
+        let Some(prompt) = peer.read() else { return };
+        peer.say(&session, "Renaming the side.");
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "t1",
+                "title": "command_batch · node.rename",
+                "kind": "edit",
+                "status": "pending",
+            }),
+        );
+        // The test performs the calls the agent is asking for, over the same channel a real process
+        // would use, and hands back the sentence the window answered the second one with.
+        if asking.send(1).is_err() {
+            return;
+        }
+        if asking.send(2).is_err() {
+            return;
+        }
+        let Ok(refusal) = refuses.recv_timeout(std::time::Duration::from_secs(5)) else { return };
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "t2",
+                "title": "command_batch · node.rename",
+                "kind": "edit",
+                "status": "pending",
+            }),
+        );
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "t2",
+                "status": "failed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": refusal } }],
+            }),
+        );
+        peer.answer(&prompt, serde_json::json!({ "stopReason": "end_turn" }));
+        let _ = told;
+    });
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    harness.frame();
+    want.recv_timeout(std::time::Duration::from_secs(5)).expect("the process was given the message");
+    let landed = call_channel(&mut harness, rename_call(panel, "Left"));
+    assert!(!landed.failed(), "the first call landed: {:?}", landed.body());
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the window did what the process asked");
+
+    // A call that names no node is refused by the window, and the sentence it answered with is what
+    // the process reports and the panel draws.
+    let refused = call_channel(
+        &mut harness,
+        mcp::StepRequest::new("node.rename", serde_json::json!({ "node": 999_999, "name": "Ghost" })),
+    );
+    assert!(refused.failed(), "a call that names no node is refused: {:?}", refused.body());
+    let sentence = refused.body()["refusal"]["error"].as_str().unwrap_or_default().to_owned();
+    assert!(!sentence.is_empty(), "a refusal carries its own sentence: {:?}", refused.body());
+    told.send(sentence.clone()).expect("the process hears what the window said");
+
+    drive_agent_turn(&mut harness);
+    assert!(!harness.app.chat_mut().is_busy(), "the turn ended with the process's answer");
+    assert_eq!(seen.complaint(), None, "the process did what it was written to do");
+    assert!(seen.method("session/prompt").is_some(), "the message reached the process as one prompt");
+
+    let drawn: Vec<(mcp::Speaker, String)> =
+        harness.app.chat_mut().conversation.lines().iter().map(|line| (line.speaker, line.text.clone())).collect();
+    assert!(
+        drawn.contains(&(mcp::Speaker::Tool, "command_batch · node.rename".to_owned())),
+        "the panel drew the tool call: {drawn:?}"
+    );
+    assert!(
+        drawn.iter().any(|(speaker, text)| *speaker == mcp::Speaker::Note && text.contains(&sentence)),
+        "the panel drew the refusal the window gave: {drawn:?}"
+    );
+
+    // One message, one entry: the landed call is the whole of it, and the refused one wrote nothing.
+    harness.app.tabs.active_mut().session.undo().expect("the whole message is one undo entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo took the message back");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the turn left exactly one entry");
+}
+
+#[test]
+fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() {
+    // A process that exits with a turn open is a turn that stops: the batch that already landed is
+    // the document, the panel says the process ended, and the history is one entry — a batch is all
+    // or nothing in the window, so nothing is ever cut in half (ADR 0187, ADR 0230).
+    let (mut harness, panel) = chat_fixture("frame-acp-dies");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let folder = testkit::scratch_dir("frame-acp-dies-channel");
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let (asking, want) = std::sync::mpsc::channel::<u8>();
+    let (spawner, seen) = agent_process(move |peer| {
+        let Some(session) = peer.open() else { return };
+        let Some(_prompt) = peer.read() else { return };
+        peer.say(&session, "Working.");
+        // The process dies here, with the turn open and the prompt unanswered.
+        let _ = asking.send(1);
+    });
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    harness.frame();
+    want.recv_timeout(std::time::Duration::from_secs(5)).expect("the process was given the message");
+    let landed = call_channel(&mut harness, rename_call(panel, "Left"));
+    assert!(!landed.failed(), "the call landed before the process died: {:?}", landed.body());
+
+    drive_agent_turn(&mut harness);
+    assert!(!harness.app.chat_mut().is_busy(), "the turn ended when the process did");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the document keeps the completed batch");
+    let last = harness.app.chat_mut().conversation.lines().last().expect("the panel said something last");
+    assert_eq!(last.speaker, mcp::Speaker::Note, "the ending is the panel's own note: {last:?}");
+    assert!(last.text.contains("ended"), "and it says the process ended: {}", last.text);
+    assert_eq!(seen.complaint(), None, "the client itself broke nothing");
+
+    harness.app.tabs.active_mut().session.undo().expect("the landed batch is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo takes it back");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the dead turn left no second entry");
 }

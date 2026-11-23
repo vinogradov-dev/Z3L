@@ -1,5 +1,6 @@
 //! The command line: `z3l export` writes an order package without a window, `z3l run` dispatches a
-//! recipe, `z3l query` answers a question about the scene, `z3l <scene>` opens one.
+//! recipe, `z3l query` answers a question about the scene, `z3l mcp serve` serves the tools over the
+//! standard streams, `z3l <scene>` opens one.
 //!
 //! A package is useless if producing it needs a window and a person, so the subcommand is read and
 //! performed in [`main`](crate::main) before eframe creates a surface: a headless job over saved
@@ -20,10 +21,14 @@
 //! a failed write like any other, and the only exit is the caller's `std::process::exit`.
 
 mod commands;
+mod guide;
+mod inspect;
 mod query;
 mod recipe;
+mod render;
+mod served;
 
-pub use query::QueryKind;
+pub use query::Ask;
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -50,9 +55,18 @@ usage: z3l                 open the editor
        z3l --help          print this text
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
+       z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
+                    [--studio <percent>] [--camera scene|fit]
+       z3l guide           print the domain guide a caller reads before it builds
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
-       z3l query <scene.z3l> tree|box|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
+       z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
+       z3l mcp bridge    carry this process's standard streams into the open window's channel
+       z3l inspect <scene.z3l> [--product <node>]
+       z3l query --resources
+       z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche|materials [--id <node>]
+                    [--at <x,y,z>]
+       z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
 
 export writes an order package from a saved scene without opening a window:
   --out <path>       the package directory for `bundle`, the package file for `single`
@@ -62,8 +76,28 @@ export writes an order package from a saved scene without opening a window:
                      flag a material's price older than this many days, judged against the export
   --no-timestamp     leave the export time out of the manifest, so a package can be compared
 
+render draws the final image of a saved scene and writes it as a PNG, with no window:
+  --out <path>       where the PNG goes
+  --size <w>x<h>     the image size in pixels; 1920x1080 by default
+  --samples <n>      the samples per pixel; 4 is a draft, 256 is a catalogue plate
+  --exposure <stops> the exposure applied before the filmic curve; one stop by default
+  --studio <percent> the studio behind the scene, as a percentage of a white room; zero by default,
+                     which is the black background a render has always had
+  --camera <scene|fit>
+                     `scene` (the default) is the active authored camera, which is the view the
+                     viewport shows; `fit` is the framing the viewport opens a scene with, which
+                     is what a scene without a camera, or one whose camera looks elsewhere, needs
+  The document is read and never written.
+
+guide prints the domain this build works in as one JSON value: the two worlds of the program,
+the order of a build from scratch, the shapes a product frame takes, the three stances of a
+panel, the semantic classes with the words a person types for them, the units and the sides.
+A caller reads it before it composes anything; the same value travels in the tool server's
+`command_list` answer.
+
 commands lists what this build can dispatch: one id, its label and what it creates.
-  --json             print one JSON array instead of one line per command
+  --json             print one JSON array instead of one line per command; each row carries the
+                     JSON Schema of the parameters the command takes
 
 run dispatches a recipe -- one JSON object per line, `{\"command\": <id>, \"params\": {...}}` --
 into one session. The whole file is one undo entry's worth of work: the scene is read once, the
@@ -74,15 +108,43 @@ commands run in order, and the result is written once, at the end -- or not at a
                      by itself, and a part can only be created inside an open one
   --dry-run          dispatch every command and write nothing, so the recipe can be checked first
 
-query reads the scene and prints one JSON report; it never writes:
+mcp serve speaks the Model Context Protocol over standard input and output, so a client we do not
+ship can list the commands and dispatch them. It binds no port and prints no report: those streams
+are the protocol's. A scene named on the line is written back when a batch lands; without one the
+document lives in memory and every answer says nothing was written.
+  --product <node>   the product the tools work in; a scene with exactly one product opens it
+  --attach           serve the local control channel instead of the standard streams: 127.0.0.1 on
+                     an ephemeral port, a token minted for this run and written into the settings
+                     folder, and `ui_inspect` beside the five tools. The channel stops when standard
+                     input closes, and that is how a parent ends it.
+
+mcp bridge carries this process's standard input and output into the control channel the open
+window published, and back. It is the command an agent process is handed as one of its MCP servers:
+the program speaks the protocol on its own stdio, the bridge presents the run token from the settings
+folder and copies bytes, and every call still lands in the window at a frame boundary. It prints
+nothing on standard output, because that stream is the protocol's, and it stops when either side
+closes. The token is never in the bridge's own arguments.
+
+query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
   box          the box a product reserves, in its own frame and in world millimetres
+  bounds       the box a node occupies, in its own frame and in the world: `--id <node>` of a
+               panel, a body, a product or a container with a part in it
   parts        the cut list -- the published `parts` table of the order package
   diagnostics  every panel problem the catalogue resolves, with a stable code
   niche        the empty space around a point: `--at <x,y,z>` in world millimetres, or `--id`
                of a node for the space at its origin
   --id <node>  the node a report is about, where the report takes one
   --at <x,y,z> the point `niche` measures, in world millimetres
+  --resources  list the questions a client may read by URI instead of calling, and the media
+               type of their answers; the reserved boxes, the tree, the cut list and the issues
+               are stable, so a resource is read at z3l://scene/<name> and cached by the
+               revision the answer carries
+
+inspect runs the seven rules over a saved scene and prints one JSON list of what they prove:
+  --product <node>   the product the rules start from; a scene with one product is read without it
+  Every finding carries its stable code, its severity, the document ids it blames, one sentence and
+  the commands a fix would dispatch; nothing is written and the file is never changed.
 ";
 
 /// What one run of the program does.
@@ -106,6 +168,10 @@ pub enum Command {
     Help(&'static str),
     /// Write an order package and exit.
     Export(ExportArgs),
+    /// Draw the final image of a saved scene and exit.
+    Render(RenderArgs),
+    /// Print the domain guide a caller reads before it builds and exit.
+    Guide,
     /// List the commands this build can dispatch and exit.
     Commands {
         /// Print one JSON array instead of one line per command.
@@ -113,8 +179,17 @@ pub enum Command {
     },
     /// Dispatch a recipe into one session and save the result once.
     Run(RunArgs),
+    /// Serve the tools over the standard streams and exit when the client closes them.
+    Mcp(McpArgs),
+    /// Carry this process's standard streams into the open window's control channel and back.
+    ///
+    /// It is the MCP server an agent process is handed: the process speaks the protocol on its own
+    /// stdio, and the door it reaches is the one window a person is looking at (ADR 0188, ADR 0230).
+    McpBridge,
     /// Read the scene and print one JSON report.
     Query(QueryArgs),
+    /// Run the inspector's rules over a saved scene and print what they prove.
+    Inspect(InspectArgs),
 }
 
 /// One `run` request, already checked.
@@ -132,17 +207,37 @@ pub struct RunArgs {
     pub dry_run: bool,
 }
 
+/// One `mcp serve` request, already checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpArgs {
+    /// The saved scene to serve; absent serves a new document that is never written.
+    pub scene: Option<PathBuf>,
+    /// The product the tools work in; the document's only product when it is absent.
+    pub product: Option<Id>,
+    /// Whether to serve the local control channel instead of the standard streams.
+    pub attach: bool,
+}
+
 /// One `query` request, already checked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryArgs {
-    /// The saved scene to read.
-    pub scene: PathBuf,
-    /// Which report to print.
-    pub kind: QueryKind,
-    /// The node the report is about, when the report takes one.
+    /// The saved scene to read; absent lists the resources instead.
+    pub scene: Option<PathBuf>,
+    /// The question, or the table of resources to print.
+    pub ask: Ask,
+    /// The node the question is about, where the question takes one.
     pub id: Option<Id>,
     /// The point `niche` measures, in world millimetres.
     pub at: Option<[f64; 3]>,
+}
+
+/// One `inspect` request, already checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// The product the rules start from; the document's only product when it is absent.
+    pub product: Option<Id>,
 }
 
 /// One `export` request, already checked.
@@ -158,6 +253,47 @@ pub struct ExportArgs {
     pub timestamp: bool,
     /// The age past which a price is flagged stale, in days; absent makes no verdict.
     pub price_max_age_days: Option<u32>,
+}
+
+/// One `render` request, already read from the line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderArgs {
+    /// The saved scene to read.
+    pub scene: PathBuf,
+    /// Where the PNG goes.
+    pub out: PathBuf,
+    /// The image width in pixels.
+    pub width: u32,
+    /// The image height in pixels.
+    pub height: u32,
+    /// The samples taken per pixel.
+    pub samples: u32,
+    /// The exposure stops applied before the filmic curve.
+    pub exposure: f32,
+    /// The studio behind the scene, in percent of a white room.
+    pub studio: f32,
+    /// Which camera the image is drawn from.
+    pub camera: CameraChoice,
+}
+
+/// The two cameras a headless render can draw from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraChoice {
+    /// The scene's active authored camera: the view the viewport shows.
+    Scene,
+    /// The framing the viewport opens a scene with, fitted to its bounds.
+    Fit,
+}
+
+impl CameraChoice {
+    /// Reads `scene` or `fit`, refusing anything else rather than guessing.
+    fn parse(word: &str) -> Result<Self, CliError> {
+        match word {
+            "scene" => Ok(Self::Scene),
+            "fit" => Ok(Self::Fit),
+            other => Err(CliError::Usage(format!("`{other}` is not a camera; name `scene` or `fit`"))),
+        }
+    }
 }
 
 /// The two forms the writer produces.
@@ -204,6 +340,10 @@ pub enum CliError {
     },
     /// A query cannot answer what it was asked.
     Query(String),
+    /// A final render cannot be made: no device, or a request its own ranges refuse.
+    Render(String),
+    /// The tool server cannot start, or stopped with a failure.
+    Mcp(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -216,6 +356,8 @@ impl std::fmt::Display for CliError {
             Self::Recipe(message) => formatter.write_str(message),
             Self::Dispatch { line, command, error } => write!(formatter, "line {line} `{command}`: {error}"),
             Self::Query(message) => formatter.write_str(message),
+            Self::Render(message) => formatter.write_str(message),
+            Self::Mcp(message) => formatter.write_str(message),
         }
     }
 }
@@ -231,9 +373,13 @@ pub fn parse(args: &[String]) -> Result<Command, CliError> {
         None => Ok(Command::Window),
         Some("-h" | "--help" | "help") => Ok(Command::Help(USAGE)),
         Some("export") => export_args(&args[1..]),
+        Some("guide") => guide_args(&args[1..]),
         Some("commands") => commands_args(&args[1..]),
         Some("run") => run_args(&args[1..]),
+        Some("mcp") => mcp_args(&args[1..]),
         Some("query") => query_args(&args[1..]),
+        Some("inspect") => inspect_args(&args[1..]),
+        Some("render") => render_args(&args[1..]),
         Some("directory") => directory_args(&args[1..]),
         Some(other) if other.starts_with("-psn_") => Ok(Command::Window),
         // One scene path opens the editor on it; the extension is the claim, because a path that
@@ -303,6 +449,60 @@ fn export_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Export(ExportArgs { scene, out, format, timestamp, price_max_age_days }))
 }
 
+/// Reads the words after `render`: a scene, `--out`, and the numbers a render takes.
+fn render_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let (mut width, mut height) = render::DEFAULT_SIZE;
+    let mut samples = render::DEFAULT_SAMPLES;
+    let mut exposure = 1.0f32;
+    let mut studio = 0.0f32;
+    let mut camera = CameraChoice::Scene;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--out" => out = Some(PathBuf::from(value(&mut words, "--out")?)),
+            "--size" => (width, height) = render::parse_size(value(&mut words, "--size")?)?,
+            "--samples" => samples = count(value(&mut words, "--samples")?, "--samples")?,
+            "--exposure" => exposure = stops(value(&mut words, "--exposure")?)?,
+            "--studio" => studio = percent(value(&mut words, "--studio")?)?,
+            "--camera" => camera = CameraChoice::parse(value(&mut words, "--camera")?)?,
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not a render option; run `z3l render --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("render reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    let scene = scene
+        .ok_or_else(|| CliError::Usage("render needs a scene: `z3l render <scene.z3l> --out <path>`".to_owned()))?;
+    let out = out.ok_or_else(|| CliError::Usage("render needs `--out <path>` to know where to write".to_owned()))?;
+    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, camera }))
+}
+
+/// A whole number a flag carries, refusing one that is not a number.
+fn count(text: &str, flag: &str) -> Result<u32, CliError> {
+    text.parse::<u32>().map_err(|_| CliError::Usage(format!("`{text}` is not a number of `{flag}` units")))
+}
+
+/// An exposure a flag carries, refusing one that is not a number.
+fn stops(text: &str) -> Result<f32, CliError> {
+    text.parse::<f32>().map_err(|_| CliError::Usage(format!("`{text}` is not an exposure in stops")))
+}
+
+/// A studio the flag carries, as a percentage of a white room.
+fn percent(text: &str) -> Result<f32, CliError> {
+    let value: f32 =
+        text.parse().map_err(|_| CliError::Usage(format!("`{text}` is not a studio in percent of a white room")))?;
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err(CliError::Usage(format!("`{text}` is not a studio between 0 and 100 percent")));
+    }
+    Ok(value)
+}
+
 /// A count of days a flag carries, refusing one that is not a number.
 fn days(text: &str) -> Result<u32, CliError> {
     text.parse::<u32>().map_err(|_| CliError::Usage(format!("`{text}` is not a number of days")))
@@ -311,6 +511,15 @@ fn days(text: &str) -> Result<u32, CliError> {
 /// The value that follows a flag.
 fn value<'a>(words: &mut std::slice::Iter<'a, String>, flag: &str) -> Result<&'a str, CliError> {
     words.next().map(String::as_str).ok_or_else(|| CliError::Usage(format!("`{flag}` needs a value")))
+}
+
+/// Reads the words after `guide`: nothing but the help flag.
+fn guide_args(args: &[String]) -> Result<Command, CliError> {
+    match args.first().map(String::as_str) {
+        None => Ok(Command::Guide),
+        Some("-h" | "--help") => Ok(Command::Help(USAGE)),
+        Some(other) => Err(CliError::Usage(format!("`{other}` is not an option of `guide`; run `z3l --help`"))),
+    }
 }
 
 /// Reads the words after `commands`: nothing, or `--json`.
@@ -359,23 +568,107 @@ fn run_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
 }
 
-/// Reads the words after `query`: one scene, one report kind, and the flag that report takes.
+/// Reads the words after `mcp`: the two subcommands `serve` and `bridge`, and `serve`'s own scene,
+/// product and channel switch.
+///
+/// Every subcommand is spelled out rather than implied so a later verb cannot silently change what
+/// a line does.
+///
+/// `bridge` takes no argument at all: it finds the window through the file the window published in
+/// the settings folder, so the token never travels in an agent's command line or environment.
+fn mcp_args(args: &[String]) -> Result<Command, CliError> {
+    let mut words = args.iter();
+    match words.next().map(String::as_str) {
+        Some("-h" | "--help") => return Ok(Command::Help(USAGE)),
+        Some("bridge") => return bridge_args(words),
+        Some("serve") => {}
+        Some(other) => {
+            return Err(CliError::Usage(format!(
+                "`mcp {other}` is not a subcommand; run `z3l mcp serve [<scene.z3l>]` or `z3l mcp bridge`"
+            )));
+        }
+        None => {
+            return Err(CliError::Usage(
+                "`mcp` needs a subcommand: `z3l mcp serve [<scene.z3l>]` or `z3l mcp bridge`".to_owned(),
+            ));
+        }
+    }
+    let mut scene: Option<PathBuf> = None;
+    let mut product: Option<Id> = None;
+    let mut attach = false;
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            "--attach" => attach = true,
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not an option of `mcp serve`; run `z3l --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("`mcp serve` reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    Ok(Command::Mcp(McpArgs { scene, product, attach }))
+}
+
+/// Reads the words after `mcp bridge`: nothing, because the window is found in the settings folder.
+fn bridge_args(mut words: std::slice::Iter<'_, String>) -> Result<Command, CliError> {
+    match words.next().map(String::as_str) {
+        None => Ok(Command::McpBridge),
+        Some("-h" | "--help") => Ok(Command::Help(USAGE)),
+        Some(other) => Err(CliError::Usage(format!(
+            "`mcp bridge` takes no argument, and `{other}` is one; it finds the window in the settings folder"
+        ))),
+    }
+}
+
+/// Reads the words after `inspect`: one scene and an optional product.
+fn inspect_args(args: &[String]) -> Result<Command, CliError> {
+    let mut scene: Option<PathBuf> = None;
+    let mut product: Option<Id> = None;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--product" => product = Some(node_id(value(&mut words, "--product")?)?),
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("`{other}` is not an inspect option; run `z3l --help`")));
+            }
+            other if scene.is_some() => {
+                return Err(CliError::Usage(format!("inspect reads one scene, so `{other}` has no place")));
+            }
+            other => scene = Some(PathBuf::from(other)),
+        }
+    }
+    let scene = scene.ok_or_else(|| CliError::Usage("inspect needs a scene: `z3l inspect <scene.z3l>`".to_owned()))?;
+    Ok(Command::Inspect(InspectArgs { scene, product }))
+}
+
+/// Reads the words after `query`: the resource table, or one scene and one report.
+///
+/// `--resources` names a table that needs no scene, so the first two words a line writes are read
+/// together: `--resources` or a scene, and then the report. A flag combination the chosen report does
+/// not read is refused here, before any file is opened.
 fn query_args(args: &[String]) -> Result<Command, CliError> {
     let mut scene: Option<PathBuf> = None;
-    let mut kind: Option<QueryKind> = None;
+    let mut report: Option<Ask> = None;
+    let mut resources = false;
     let mut id: Option<Id> = None;
     let mut at: Option<[f64; 3]> = None;
     let mut words = args.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
             "-h" | "--help" => return Ok(Command::Help(USAGE)),
+            "--resources" => resources = true,
             "--id" => id = Some(node_id(value(&mut words, "--id")?)?),
             "--at" => at = Some(point(value(&mut words, "--at")?)?),
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not a query option; run `z3l --help`")));
             }
-            other if scene.is_none() => scene = Some(PathBuf::from(other)),
-            other if kind.is_none() => kind = Some(QueryKind::parse(other)?),
+            other if scene.is_none() && report.is_none() && !resources => scene = Some(PathBuf::from(other)),
+            other if report.is_none() => report = Some(Ask::parse(other)?),
             other => {
                 return Err(CliError::Usage(format!(
                     "a query reads one scene and one report, so `{other}` has no place"
@@ -383,9 +676,24 @@ fn query_args(args: &[String]) -> Result<Command, CliError> {
             }
         }
     }
-    let scene = scene.ok_or_else(|| CliError::Usage("query needs a scene: `z3l query <scene.z3l> tree`".to_owned()))?;
-    let kind = kind.ok_or_else(|| CliError::Usage(format!("query needs a report: {}", QueryKind::WORDS)))?;
-    Ok(Command::Query(QueryArgs { scene, kind, id, at }))
+    if resources && report.is_some() {
+        return Err(CliError::Usage(format!(
+            "`--resources` lists every resource, so `{}` has no place",
+            match report {
+                Some(Ask::Question(name)) => name.to_owned(),
+                Some(Ask::Resource(resource)) => resource.uri.to_owned(),
+                _ => "--resources".to_owned(),
+            }
+        )));
+    }
+    let ask = if resources {
+        Ask::Resources
+    } else {
+        report.ok_or_else(|| CliError::Usage(format!("query needs a report: {}", Ask::names())))?
+    };
+    let args = QueryArgs { scene, ask, id, at };
+    query::check(&args)?;
+    Ok(Command::Query(args))
 }
 
 /// Reads a node id: a non-zero whole number, because zero is the document's "no entity".
@@ -471,13 +779,30 @@ pub fn run(command: &Command) -> Option<i32> {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
+        Command::Guide => Some(print_stdout(&(guide::report() + "\n"))),
         Command::Commands { json } => Some(print_stdout(&(commands::report(*json) + "\n"))),
         Command::Run(args) => Some(match recipe::perform(args) {
             Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
             Err(error) => fail(&error, EXIT_FAILED),
         }),
+        Command::Render(args) => Some(match render::perform(args) {
+            Ok(lines) => print_stdout(&(lines.join("\n") + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
         Command::Query(args) => Some(match query::report(args) {
             Ok(report) => print_stdout(&(report + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Inspect(args) => Some(match inspect::report(args) {
+            Ok(report) => print_stdout(&(report + "\n")),
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::Mcp(args) => Some(match served::perform(args) {
+            Ok(()) => EXIT_OK,
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::McpBridge => Some(match served::bridge() {
+            Ok(()) => EXIT_OK,
             Err(error) => fail(&error, EXIT_FAILED),
         }),
     }
@@ -506,7 +831,7 @@ mod tests {
     use std::path::Path;
 
     use model::{PanelNominalSize, Placement, Project};
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use testkit::{millimetres, sample_material_id, sample_product_project, scratch_dir};
 
     use super::*;
@@ -525,12 +850,40 @@ mod tests {
         path
     }
 
+    /// The revision the scene file holds, read the way the door reads it.
+    fn args_product_revision(path: &Path) -> u64 {
+        SceneFile::read(path).expect("the saved scene reads").into_document().revision().get()
+    }
+
     /// One panel under the product, so at least one table has a record that came from the document.
     fn add_side(project: &mut Project, product: model::Id) {
         let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
         project
             .add_panel(product, "Side", size, Some(sample_material_id()), millimetres(18), Placement::IDENTITY)
             .expect("the side is added");
+    }
+
+    #[test]
+    fn an_inspect_line_prints_what_the_rules_prove() {
+        let directory = scratch_dir("j9-inspect");
+        let scene = saved_scene(&directory);
+        let command = parse(&words(&["inspect", &scene.display().to_string()])).expect("the line parses");
+        let Command::Inspect(args) = command else {
+            panic!("the line names an inspection");
+        };
+        let report: Value =
+            serde_json::from_str(&inspect::report(&args).expect("the rules run")).expect("one JSON value");
+        let findings = report["findings"].as_array().expect("the report holds a list");
+        assert!(
+            findings.iter().any(|finding| finding["code"] == json!("envelope_out")),
+            "the fixture's 700 mm panel leaves the 600 mm envelope: {report}"
+        );
+        assert!(findings.iter().all(|finding| finding["nodes"].as_array().is_some_and(|nodes| !nodes.is_empty())));
+        assert_eq!(
+            report["document"]["revision"],
+            json!(args_product_revision(&scene)),
+            "the report names the revision it read"
+        );
     }
 
     #[test]
@@ -698,7 +1051,8 @@ mod tests {
             "--dry-run",
             "--id",
             "--at",
-            "tree|box|parts|diagnostics|niche",
+            "--resources",
+            "tree|box|bounds|parts|diagnostics|niche",
         ] {
             assert!(USAGE.contains(flag), "the help names `{flag}`: {USAGE}");
         }
@@ -739,12 +1093,88 @@ mod tests {
         assert_eq!(
             query,
             Command::Query(QueryArgs {
-                scene: PathBuf::from("scene.z3l"),
-                kind: QueryKind::Niche,
+                scene: Some(PathBuf::from("scene.z3l")),
+                ask: Ask::Question("niche"),
                 id: None,
                 at: Some([1.5, -2.0, 3.0]),
             })
         );
+        assert_eq!(
+            parse(&words(&["query", "--resources"])).expect("the resource table"),
+            Command::Query(QueryArgs { scene: None, ask: Ask::Resources, id: None, at: None })
+        );
+    }
+
+    #[test]
+    fn render_reads_a_size_a_count_a_stop_and_a_camera_or_the_defaults() {
+        let defaults = parse(&words(&["render", "scene.z3l", "--out", "plate.png"])).expect("a render");
+        assert_eq!(
+            defaults,
+            Command::Render(RenderArgs {
+                scene: PathBuf::from("scene.z3l"),
+                out: PathBuf::from("plate.png"),
+                width: render::DEFAULT_SIZE.0,
+                height: render::DEFAULT_SIZE.1,
+                samples: render::DEFAULT_SAMPLES,
+                exposure: 1.0,
+                studio: 0.0,
+                camera: CameraChoice::Scene,
+            })
+        );
+        let named = parse(&words(&[
+            "render",
+            "scene.z3l",
+            "--out",
+            "plate.png",
+            "--size",
+            "2480x3508",
+            "--samples",
+            "512",
+            "--exposure",
+            "1.5",
+            "--studio",
+            "40",
+            "--camera",
+            "fit",
+        ]))
+        .expect("every render flag at once");
+        assert_eq!(
+            named,
+            Command::Render(RenderArgs {
+                scene: PathBuf::from("scene.z3l"),
+                out: PathBuf::from("plate.png"),
+                width: 2480,
+                height: 3508,
+                samples: 512,
+                exposure: 1.5,
+                studio: 40.0,
+                camera: CameraChoice::Fit,
+            })
+        );
+    }
+
+    #[test]
+    fn a_render_refuses_a_missing_scene_a_missing_out_and_a_broken_number() {
+        let error = parse(&words(&["render", "--out", "plate.png"])).expect_err("a render needs a scene");
+        assert!(error.to_string().contains("scene.z3l"), "{error}");
+        let error = parse(&words(&["render", "scene.z3l"])).expect_err("a render needs a destination");
+        assert!(error.to_string().contains("--out"), "{error}");
+        for (flag, value) in [
+            ("--size", "a4"),
+            ("--samples", "many"),
+            ("--exposure", "dark"),
+            ("--studio", "bright"),
+            ("--camera", "sideways"),
+        ] {
+            let error = parse(&words(&["render", "scene.z3l", "--out", "plate.png", flag, value]))
+                .expect_err("a broken value is a sentence");
+            assert!(error.to_string().contains(value), "{flag}: {error}");
+        }
+        let error = parse(&words(&["render", "one.z3l", "two.z3l", "--out", "plate.png"]))
+            .expect_err("one render reads one scene");
+        assert!(error.to_string().contains("two.z3l"), "{error}");
+        let error = parse(&words(&["render", "scene.z3l", "--out"])).expect_err("a flag without a value");
+        assert!(error.to_string().contains("--out"), "{error}");
     }
 
     #[test]

@@ -78,6 +78,12 @@ ties `Side::Left` to `OpeningView::Left`, so a reader never infers a side from a
   front of the piece sees on their left is `+X`; that is `Side::Left`, and `OpeningView::Left` looks
   from it. A left door and a right door are named by the same rule.
 
+The reading is the person's and the caller's, not the document's: no command, query, class or answer
+takes or returns a side, because the next reader may read «слева» the other way round. The tool
+surface states the frame and asks the caller to say back which axis it put each group of parts on
+(ADR 0227); the value object in the code names the four sides for the interface, where a person does
+name them.
+
 ## 3. Place in the tree
 
 - A product is the top node of its own assembly. Everything inside it — panels, facades, fittings,
@@ -178,25 +184,39 @@ opening another closes the previous one. Openness is session state per tab, neve
 (ADR 0029). An open piece exposes its parts the way an open group does, so a click inside it selects
 the part under the pointer and a double click enters one level further.
 
+**A created frame is open in every door.** The session opens the piece `product.create` made, in the
+same act, so a caller over the command line or the channel reads it from `open_product` in the answer
+and writes the first part with no second step (ADR 0100, X112).
+
 **Leaving is Escape**, exactly as it leaves a group: with a part of the open piece selected and no
 open container above it, the key closes the product and selects the piece again. Escape first drops
 the creation arm and then the levels, so it never skips a step.
 
-**A closed product accepts no new parts.** Moving, renaming, deleting and re-parenting it stay
-allowed; the lock is about adding work, not about owning the object.
+**A closed product is not offered to a person, and is writable by a caller.** The ribbon, the palette
+and the empty-space tool offer new parts only inside the open piece, so a maker never scatters work by
+accident; a command is not gated by it, because a caller names the piece the task means and has no
+"open" at all ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)).
+Moving, renaming, deleting and re-parenting remain allowed either way.
 
 ## 6. Creating parts
 
-- A panel, a facade or a fitting is created only inside the **open** product. The command's `enabled`
-  check refuses when no product is open or when the target parent is not inside it, and the message
-  says which: «сначала создайте изделие» or «изделие закрыто».
+- A person creates a panel, a facade or a fitting only inside the **open** product: the interface's
+  `enabled` check refuses when no product is open or when the target parent is not inside it, and the
+  message says which: «сначала создайте изделие» or «изделие закрыто».
+- A command is not gated by the open piece. `panel.create` writes into the container its `parent`
+  names — a closed product, a group inside one, or the root — because a program has no open piece and
+  the document knows nothing about one
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)). The part
+  is not an orphan when the caller names the piece's group; a stray part is a report's business.
 - The refusal writes nothing: no revision, no history entry.
 - Free modelling is untouched: a primitive, a drawn figure, a mesh object or a hardware model can be
-  created without a product. The guard applies to classes whose `level` is `Part` or `Fitting`.
+  created without a product. The interface's guard applies to classes whose `level` is `Part` or
+  `Fitting`.
 
 ## 7. Filling a niche
 
-The maker's flow: open a product, choose “add a post” or “add a shelf”, point at the empty space.
+The maker's flow: open a product, choose “add a post”, “add a shelf” or “add a wall”, point at the
+empty space.
 
 - The cursor ray enters the product's **own** envelope, in the product's frame, never the world box
   around it; from a micrometre inside it the ray probes to the first surface, and the point rests a
@@ -204,9 +224,12 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   pointing into an empty piece still measures the whole reserved space (0109). Pointing at a wall
   measures the void in front of it, which is what the maker sees.
 - A **post** takes the niche's height and the depth the void leaves it; a **shelf** takes its width and
-  depth. Which axis pair a class fills is the class trait `fill` (`HeightAndDepth`, `WidthAndDepth`,
-  `None`). Each takes the cell's own cut at the board's thickness, so a post stands against a splayed
-  wall with the depth the slab really has (0106).
+  depth; a **wall** — the back board — takes its width and height and stands in the frontal plane, the
+  material running towards the open front. Which axis pair a class fills is the class trait `fill`
+  (`HeightAndDepth`, `WidthAndDepth`, `WidthAndHeight`, `None`). Each takes the cell's own cut at the
+  board's thickness, so a post stands against a splayed wall with the depth the slab really has (0106).
+  The wall's creation asks nothing about overlay or inset: the mounting is a property of the part,
+  edited after it exists (0200).
 - The part has **two builds**, chosen from the tool's own method list under a «Способ построения» /
   “Build method” caption and remembered by the workspace. The cell keeps the post or shelf glyph while
   a build is armed or pinned, so the list is a choice of build, not a choice of panel (0110):
@@ -249,9 +272,17 @@ The maker's flow: open a product, choose “add a post” or “add a shelf”, 
   command and one undo entry: the outline — a rectangle with its corner cuts, or the ring — and the
   end bevels travel in the same `panel.create`, so a shaped part is never a create followed by a
   second edit.
-- The two fills handle a product in any orientation, because the cell is measured in the product's own
+- **The same answer is a command a caller can dispatch.** `panel.fill` takes the point in world
+  millimetres, the class, the mode and the place on the free axis, measures the niche with the same
+  `Project::fill_plan` the ghost reads, and writes one `panel.create` — so a caller that cannot point
+  at a splayed cell asks the program for the part instead of computing an outline and a stance itself
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)). It names
+  the piece it writes in, and a caller that is not sure which piece a task means asks the person to
+  open it rather than guessing. A hidden part is the person's sight, not a program's: a caller
+  measures every part in the way.
+- The three fills handle a product in any orientation, because the cell is measured in the product's own
   frame; a curved boundary is measured by the box around its body, so the part fits with a gap. A
-  drawer, a back panel and a facade need their own fill rules.
+  drawer and a facade need their own fill rules.
 
 **Exact distances.** While a fill, a box creation or a move runs, the viewport shows one distance field
 per direction of the work plane — from the new face to the first surface — and exactly one of them is
@@ -338,8 +369,8 @@ volume asks the program for it when such a report exists.
   neighbouring parts and to the 1 mm grid; wall objects are a separate decision.
 - **The interface word?** «Каркас изделия» / «Product frame».
 - **What a closed product refuses?** Creation only, in version 1.
-- **Which parts can fill a niche?** A post and a shelf first; a drawer, a back panel and a facade
-  later.
+- **Which parts can fill a niche?** A post, a shelf and a wall; a drawer and a facade need their own
+  rules.
 - **What the placeholder class is called?** «Изделие общего назначения» / “general product”, a
   `level = Product` row that is never offered for a part.
 - **How a new frame is placed?** Beside the nearest product, on the floor, clear of every envelope,

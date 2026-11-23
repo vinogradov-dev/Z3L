@@ -14,3 +14,6 @@ mesh = { workspace = true }
 model = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# The decor's size is a physical length and arrives from a record: micrometres in, millimetres at the
+# frame's own boundary, which is where `scene` already lives.
+units = { workspace = true }

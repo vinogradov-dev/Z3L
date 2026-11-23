@@ -26,10 +26,12 @@ whole file. If the anchor is wrong or missing, fix the row — the map is a cont
 area, never read them at start — the task report already quotes the entries that name the task's
 files. `plan/notes/<ID>.md` is the research note of one task: it is where a session writes what it
 measured, decided and ruled out, and the task report prints it, so the next session does not repeat
-the search. Template: `state-contract/templates/NOTE.md`. `plan/rename.md` is the same kind of file: it holds the measured
-inventory and the procedure for the pre-release rename (task R1). `plan/refactor.md` is the third:
-the design rules, the audit procedure and the subtask template for the design-rules refactor
-(task S7). `plan/archive/done.md` is history; `git log --oneline` replaces it.
+the search. Template: `state-contract/templates/NOTE.md`. `plan/refactor.md` is the same kind of
+file: the design rules, the audit procedure and the subtask template for the design-rules refactor
+(task S7). `plan/rename.md` is a fourth and the only one that outlives its task: it is the record of
+the rename that landed at `d4a56f3` (R1), so it is read when a change adds a surface that carries the
+product name, never as a procedure to take. `plan/archive/done.md` is history; `git log --oneline`
+replaces it.
 
 Answering the next step has its own procedure (§1.1); it never re-derives the state from the code.
 
@@ -58,10 +60,11 @@ The contract is a template, not prose duplicated here: read
 `STATE` and `## Now` decide the answer, an interrupted session resumes at `now:` instead of starting
 over, and a broken plan is repaired with the tool (`--repair` on a write) rather than answered around
 or edited by hand. The plan declares the streams beside the state line (`STREAMS: agent=J catalog=O
-prototypes=Q`): `state=` and `task=` are the `app` stream's — this checkout's — and each declared
+prototypes=Q`), with `cargo xtask state streams <key>=<letters> …` as the line's only writer: `state=`
+and `task=` are the `app` stream's — this checkout's — and each declared
 stream is read from its own `[~]` entry, its own `plan/SESSION.<key>.md` and its row in
 `cargo xtask status` (ADR 0176). A question about the current or next tasks is answered for the stream
-this checkout serves — the branch names it — and opens with that stream's name; never as four lists
+this checkout serves — the branch names it — and opens with that stream's name; never as five lists
 merged into one, and never for another stream's entries.
 
 ### 1.2 Reading code with the language server
@@ -127,7 +130,7 @@ their tests is not started until the first link compiles. This is what prevents 
 - **Rust only.** No JS/TS, no scripting runtime, no code generation into other languages.
 - **Native.** Windows, Linux and macOS from one codebase. No webview shells, no browser as the primary target.
 - **Free and accessible.** Dependencies must be free and permissively licensed: MIT, Apache-2.0, BSD-2-Clause/3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0. GPL/AGPL or anything requiring an account, a paid tier or a foreign payment card is a stop-and-ask. Every new dependency needs one sentence of justification.
-- **Pure Rust dependencies.** Z3L does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates.
+- **Pure Rust dependencies.** Z3L does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates. One exception is counted and proved instead of assumed: `openssl-sys` is the operating system's TLS on Linux, and the gate allows it while the resolved feature graph leaves its `vendored` feature off — the build that ships C (ADR 0189).
 - **Graphics:** `wgpu` (cross-platform, pure Rust). **UI:** `egui`/`eframe`. Do not add a second GUI toolkit or a second GPU abstraction.
 - **Performance is native, not "good enough for a demo".** Keep the frame path free of document scans and allocations; rebuild only what changed.
 - **Language:** code, comments, docs, commit messages — English. Discussion with the owner — Russian.
@@ -137,8 +140,10 @@ their tests is not started until the first link compiles. This is what prevents 
 ```text
 app                    L8  composition root: window, input, egui <-> wgpu, kernel adapter
 crates/ui              L7  egui panels and viewport, dispatches commands
+crates/mcp             L7  the editor as a tool server: the command registry projected into four MCP tools over stdio
 crates/engine          L6  session, selection, view state, command registry, undo/redo
 crates/render          L5  wgpu renderer
+crates/final           L5  the final render: BVH, sampler, tracer, PNG
 crates/scene           L4  renderer-agnostic frame description, camera, lights, grid
 crates/export          L3  order package: one manifest and flat tables other programs read
 crates/mesh            L3  evaluation cache: revision -> solid, triangle mesh and a panel's derived holes
@@ -162,6 +167,9 @@ xtask                  the host's rules and the ci gate; no plan logic
 - `model` holds serializable data and its invariants only: no `wgpu`, no `egui`, no window, no file I/O, no geometry kernels.
 - `kernel` is our port: `model` and `param` never see a third-party kernel type. `kernel-truck` is the only crate allowed to depend on `truck`; the app constructs it and injects it into the session.
 - `engine` must not depend on `wgpu` or `egui`: that is what keeps "everything is a command" honest.
+- `mcp` sits beside `ui` and the two do not depend on each other: it reaches the document only through
+  `engine`, it is forbidden `egui`, `eframe` and `wgpu` the way `engine` is, and it is the only crate
+  allowed to depend on `rmcp` and `tokio` (ADR 0186). No editor path awaits it.
 - `render` must not depend on `egui`: the renderer is a library, the shell wires it into `egui_wgpu`. Symmetrically, `ui` must not depend on `wgpu`, and `testkit` is reachable only through `[dev-dependencies]`. `cargo xtask layers` enforces all three.
 - `ui` never mutates the document directly: it dispatches commands and renders session state.
 - `scene` is data about a frame (what to draw), `render` is the driver that draws it. The document stores placements; cameras and viewports belong to the session or the shell.
@@ -215,7 +223,7 @@ Every change comes with tests. Domain invariants, unit conversions, command beha
 
 Prefer the standard library and the crates we already have. A new crate must be justified, licensed permissively, maintained, and pinned in the workspace. No dependency may pull in a web runtime, a second GUI toolkit or a second async runtime.
 
-Z3L is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources. Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
+Z3L is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources, with the one counted exception of §2 (`openssl-sys` without `vendored`, ADR 0189). Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
 
 ### 4.9 Do not invent the domain
 
@@ -279,6 +287,7 @@ runtime.
 | Geometry kernel | `truck` (Apache-2.0), behind the `kernel` port; only `kernel-truck` may use it |
 | Math | `glam`, re-exported through `geom` |
 | Serialization | `serde` (+ `serde_json` until a binary format exists) |
+| Assistant transport | `ureq` over the operating system's TLS, in `mcp` only (ADR 0189) |
 | Errors | `thiserror` per crate |
 | Logging | `log` (the shell installs the sink) |
 | Tests | built-in test harness; `testkit` for fixtures |
@@ -337,6 +346,8 @@ line budget.
 
 Then check by hand:
 
+- [ ] Every question the task raised was asked before the first edit and answered in the note or
+      `plan/questions.md`; nothing ambiguous was decided by the session (§8).
 - [ ] New behaviour has tests; a fixed bug has a regression test.
 - [ ] No new `unwrap`/`expect`/panic path (tests in the same file may use them).
 - [ ] No floating-point physical sizes outside the geometry/render boundary.
@@ -386,7 +397,9 @@ writes `plan/SESSION.md` from the entry in one validated step — a declared str
 the head of `## Next` into the order, which is where the old `take` then `start` pair came from. A
 task that arrives out of the work
 order — an owner-directed interjection — is filed with `cargo xtask task add --at top`, which puts it
-first in `## Now` and points `state` at it; an entry filed under `## Bugs` or `## Next` joins the
+first in `## Now` and points `state` at it; without `--at top` a new entry lands at the end of `## Next`,
+the section work is collected in before a stream takes it, so filing never disturbs the order a session
+is working through, and `--section Bugs` files a defect; an entry filed under `## Bugs` or `## Next` joins the
 order with `cargo xtask task take <ID> [--at top|end]`, which leaves `STATE:` alone when `## Now`
 still has work and becomes the current task when it is empty; `cargo xtask task defer <ID>` moves an
 open entry the other way, out of the order and back under `## Next`, and points `STATE:` at the next
@@ -400,9 +413,9 @@ must not lose more than the current sub-step — and close the task with
 `plan/SESSION.md`. The research note under `plan/notes/` stays: it says what a session measured and
 ruled out, and the next one reads it through `cargo xtask task <ID>`.
 
-### 6.2 Branch workflow: four streams, four worktrees
+### 6.2 Branch workflow: five streams, five worktrees
 
-The tree is split into four streams, each in its own git worktree, so two sessions never edit the same
+The tree is split into five streams, each in its own git worktree, so two sessions never edit the same
 checkout — which is how a plan line and a source file were lost once.
 
 | Stream | Branch | Where it is checked out | Task letters |
@@ -411,15 +424,16 @@ checkout — which is how a plan line and a source file were lost once.
 | MCP and the assistant | stream/agent | a sibling checkout, z3l-wt/agent | J |
 | the materials catalogue and the workshop standards | stream/catalog | z3l-wt/catalog | O |
 | the prototype mechanism | stream/prototypes | z3l-wt/prototypes | Q |
+| the final render: the tracer, its BVH and the image it writes | stream/render | z3l-wt/render | Y |
 
 - `main` holds only verified, merge-ready work and moves forward only through a `--no-ff` merge of `dev`, so the merge point is explicit. Nothing is committed directly to `main`.
 - A stream branches from `dev` and merges back into `dev` when its task is finished and `cargo xtask ci` is green there. It merges `dev` in often and never merges into another stream. A hot-fix follows the same path: fix, gate, merge.
-- **The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a stream back, because git will not move a branch another worktree has checked out and only this checkout writes `plan/`. The integration session merges every finished stream before it takes the next task, and closes the entry with the merged hash.
-- The stream's letter is the phase of its tasks: `J`, `O` and `Q` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A task runs in the checkout of its letter's stream.
-- **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task step` and `task close` happen there and nowhere else. A stream commits code and never `plan/`, so four branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit.
+- **The primary checkout collects.** A stream pulls `dev` in from its own worktree; the primary pulls a stream back, because git will not move a branch another worktree has checked out and only this checkout writes `plan/`. The integration session merges every finished stream before it takes the next task, and closes the entry with the merged hash. The `base` freshness rule is therefore judged here alone: a stream worktree's own commits leave its copy of `plan/` stale by design, so `cargo xtask status` and `cargo xtask plan` say which checkout the rule belongs to instead of refusing to print the state.
+- The stream's letter is the phase of its tasks: `J`, `O`, `Q` and `Y` are declared by `cargo xtask task phase`, and the application stream keeps the area letters because the order may not be renumbered. A stream is declared in one place, the `STREAMS:` line of `plan/STATUS.md`, with the line's only writer: `cargo xtask state streams agent=J catalog=O prototypes=Q render=Y,L` (an undeclared checkout cannot mark its own task, because its letters still belong to `app`). A task runs in the checkout of its letter's stream.
+- **`plan/` has one writer: the primary checkout on `dev`.** Filing, `task start`, `task close` and a `state` or `file` write happen there and nowhere else. A stream commits code and never the shared plan files, so five branches do not fight over the backlog; a stream works its entry without changing its marker, and the integration session closes it after the merge with the hash of the merged commit. The two files a stream does own are its own: `plan/SESSION.<key>.md` through `cargo xtask task step` and `plan/notes/<ID>.md` through `cargo xtask task note`, each of them named by the task's stream and written by no other checkout.
 - A worktree builds its own copy of the plan tool: the binary records its workspace root when it is compiled, so one build directory shared by two checkouts makes the tool write the other checkout's plan. Run the tool from the worktree whose plan it edits.
-- The lock file lives inside a checkout, so nothing enforces the one-writer rule across worktrees but the rule itself.
-- A stream's live task is written down even though only this checkout writes `plan/`: `cargo xtask task start J1` marks the `[~]` entry and writes `plan/SESSION.<key>.md`, so three checkouts do not hide behind an idle state line (P17, ADR 0176).
+- The lock file lives inside a checkout; what holds the one-writer rule across worktrees is the tool: in a checkout whose branch is a declared `stream/<key>` it refuses every plan write except the stream's own two files, and says which checkout to run the verb in (P26).
+- A stream's live task is written down even though only this checkout writes `plan/`: the primary runs `cargo xtask task start J1`, which marks the `[~]` entry and writes `plan/SESSION.<key>.md`, so three checkouts do not hide behind an idle state line (P17, ADR 0176); the stream keeps that note true from its own worktree with `task step`, which writes the note from the entry when the primary's start left it out of this branch, and records what it measured with `task note`.
 
 ## 7. Anti-patterns
 
@@ -440,6 +454,18 @@ checkout — which is how a plan line and a source file were lost once.
 
 ## 8. Working with the owner
 
+- **An unclear task is a question, not a guess.** This is a duty, not a preference: the session
+  must ask, and a session that builds a reading of its own has failed the task even when the gate is
+  green and the code is clean. When a task is ambiguous, when a fact it needs is missing, or when a
+  sentence of it does not match what the tree does today, do not pick a reading and build it: say
+  what is unclear, say what the code measures now, and offer the two or three plausible shapes with
+  what each one changes and costs. Ask once, with the options and the default you would take, and
+  leave the work untouched until the answer arrives — a guess costs the owner a whole rework and
+  spends their time twice, and a defect that survives it is reported to them a second time. A task
+  whose answer needs a decision outside the tree (a place, a gesture, a document field, a behaviour
+  a maker expects) is the same case, not an invitation to improvise. "It seemed reasonable" is not
+  an answer to "why did you do that": the question goes to the owner before the first edit, and the
+  answer is written into the task's note.
 - **Plan before build.** Any task larger than one file starts with a plan; the owner is the technical director and approves it.
 - **Explain non-obvious decisions in one sentence** (why this crate, this representation, this boundary). Do not re-explain variables and functions.
 - **Expertise leads; the owner can overrule.** When a brief contradicts what the domain, UI/UX or these
@@ -467,8 +493,9 @@ checkout — which is how a plan line and a source file were lost once.
 - `plan/map.md` — where each feature lives (feature → path + anchor); the dashboard prints it as `MAP`.
 - `cargo xtask help` — every command with a one-line summary, generated from the command table. The plan is read with `task`/`status`, written with the `task` verbs and `state`, and `agents` prints the session contract below, versioned with the tool.
 - `plan/debt.md` — accepted gaps, tagged by area; append-only, an entry leaves when the fix lands.
-- `plan/rename.md` — the pre-release rename (task R1): what the product name touches today, the
-  measured procedure and its gotchas. Read only when R1 is taken.
+- `plan/rename.md` — the pre-release rename, which landed at `d4a56f3` (R1): what the old name
+  touched, what the move cost, the four steps and the gotchas that outlived it. History, not a task
+  to take; read it when a change adds a surface that carries the product name.
 - `plan/refactor.md` — the design-rules refactor (task S7 and its subtasks): how to measure a module,
   the boundary, data, clean-code, documentation and test rules (`B`, `D`, `C`, `H`, `T` ids), the
   legibility test, what to borrow from a reference project, the audit procedure and the subtask

@@ -941,6 +941,7 @@ fn fill_text(fill: Fill) -> &'static str {
     match fill {
         Fill::HeightAndDepth => "height-and-depth",
         Fill::WidthAndDepth => "width-and-depth",
+        Fill::WidthAndHeight => "width-and-height",
     }
 }
 

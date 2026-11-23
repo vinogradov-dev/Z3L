@@ -1,0 +1,2 @@
+{ "id": "1-3", "kind": "sheet-material", "name": "HDF back sheet 4 mm", "slug": "board-3",
+  "props": { "thickness": { "type": "length", "value": 4000 }, "color": { "type": "text", "value": "raw" } } }

@@ -412,7 +412,10 @@ For furniture CAD the base form is not a cube but a **panel / plate**, so the la
 around:
 
 - thin rectangular plate: one face `u × v` with `1.2–2` units of visible side;
-- upright: the same plate standing on `w`, its thickness in `v`;
+- upright: the same plate standing on `w` — the face vertical, `u × w`, and the thickness in `v`;
+  one narrow band across the top and one down the side, both passive, and the vertical face the
+  largest and loudest shape. A slab whose top or side is as loud as its face reads as a column; the
+  drawing follows the class, not the word;
 - cabinet module: two or three plates sharing an edge;
 - cylinder: one top ellipse, two vertical sides, one bottom arc; the side wall is one face;
 - sphere: one circle plus its equator ellipse, never shading;
@@ -421,6 +424,10 @@ around:
 The same basis serves `cuboid`, `cylinder`, `panel`, `assembly` and `extrude`: the source profile is a
 passive face (`0.12–0.18`) and the geometry the action creates takes the result tone (`0.45–0.60`)
 with the heavy outline. A plate stays a plate at every size.
+
+`post` is the `panel` board stood up and nothing else: turning the plate on its face moves its
+thickness from `w` to `v`, so the two glyphs differ in orientation, never in mass — the same face in
+the result tone, the same two passive thickness bands, the same near vertical edge.
 
 ### 9.3. How one solid is composed
 
@@ -712,7 +719,7 @@ Visual dictionary:
 |---|---|
 | furniture dimension | thin frame parallelepiped |
 | panel | thin plate / rectangular part |
-| upright | vertical panel |
+| upright | vertical panel — the plate standing, its face vertical |
 | shelf | horizontal panel |
 | facade | front flat panel |
 | drawer | elongated volume / box |
@@ -920,6 +927,7 @@ appears in a toolbar does not become a geometry icon.
 | settings | gear, 6–8 teeth | |
 | search | magnifier, handle at 45° | |
 | command palette | a prompt field: a frame with `>` and a caret | opens the command list |
+| assistant panel | a speech bubble with two lines | opens the conversation with the agent |
 | visible / hidden | eye / eye with a slash | |
 | lock / unlock | padlock, shackle closed / open | |
 | pin | pushpin, head over a needle | keeps one method of a tool as the click default |
@@ -949,9 +957,9 @@ units and solid shapes, §7.3). They are not shrunken toolbar drawings.
 
 `assets/icons/actions/<name>.svg`, kebab-case: `confirm`, `dismiss`, `cancel`, `undo`, `redo`,
 `delete`, `add`, `remove`, `duplicate`, `rename`, `copy`, `paste`, `file-new`, `file-open`,
-`file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `visible`,
-`hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`, `error`,
-`info`, `help`, `pin`.
+`file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `assistant`,
+`visible`, `hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`,
+`error`, `info`, `help`, `pin`.
 
 A theme owns its icons: `contour/close` closes a ring, `actions/dismiss` dismisses a surface. They are
 different actions with different glyphs; never rename a geometry action to free a name.

@@ -19,7 +19,7 @@ A project that works in several checkouts adds one optional line under the state
 (`plan/SESSION.agent.md`) and its own entry in progress; the primary stream is `app`, it owns every
 phase no other stream names, and `STATE: task=` and `state=` speak about it alone. Without the line
 there is one stream and the contract is the one above. A question about the current tasks is answered
-for the stream the checkout serves — its branch names it — and never for the four lists merged.
+for the stream the checkout serves — its branch names it — and never for every stream's list merged.
 
 `plan/notes/<ID>.md` is an optional fourth thing: the research note of one task. It carries what a
 session measured and ruled out — file and line pointers, dead ends, choices — never status, a
@@ -48,7 +48,7 @@ table, so one help lists everything.
 | `task [<id>]` | one task in full: fields, files with line counts and last commits, map rows, notes, `RELATED`, debt, questions, ADRs, the closing commit |
 | `task list` | one line per task, filtered by `--section`, `--status`, `--phase` and `--grep` |
 | `task --md` / `--paths` | the same task for an agent, or one path per line for a shell loop |
-| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none |
+| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none. `add` lands an entry at the end of `## Next` unless `--section` says otherwise, and `--at top` is the interjection: it implies `## Now` and points `state` at the new task |
 | `task phase <L> --name <text>` / `task phase --declare L=text …` | the phase legend: one clause per id prefix, declared or updated in the same gated write; several letters travel in one call because a plan whose ids name an undeclared phase is refused |
 | `state set k=v` / `state streams` / `state next` / `state where` | one field of the `STATE:` line, the `STREAMS:` declaration (`state streams agent=J catalog=O`, no pairs puts the plan back on one stream), the `## Next` paragraph, or the `## Where we are` prose; `state next --task <id>` moves the paragraph and the current task in one write |
 | `file <plan/map.md\|…>` | one reference file (`map`, `debt`, `questions`, `refactor`, `rename`, the template) through the same gate and diff |
@@ -103,21 +103,26 @@ let backlog = state_contract::edit::set_marker(&backlog, "A3", state_contract::e
 let plan = state_contract::PlanText {
     status: &status,
     backlog: &backlog,
-    session: Some(&session),
-    notes: None,
+    sessions: &sessions,        // the session notes as `(path, text)`
+    notes: None,                // `plan/notes/` when the change touches it, else the disk
+    references: Some(&map),     // `plan/map.md`, `plan/debt.md`, `plan/questions.md` as `(path, text)`
 };
 state_contract::check_text(root, &plan, &git)?; // the caller writes only after this returns `Ok`
 ```
+
+A file the change writes is checked as it will be, not as it is on disk: the notes and the three
+validated reference files enter the plan as text, so a `file` write of `plan/map.md` cannot land a
+stale row (P27).
 
 The prose under `## Next` is the one part of `plan/STATUS.md` a command has to own, because the gate
 requires it to name the current task: `edit::set_section` replaces a whole section body, and a close
 that changes the current task takes the new paragraph with it.
 
 An empty work order is a legal state: `STATE: task=-` says no task is scheduled, `## Now` holds
-none, and `## Next` opens with `Nothing is scheduled`. `close` and `defer` that empty the order write
-that line and that sentence in the same validated write, `take` puts a parked entry back and restores
-`task=`, and `status`, `next` and `task` render the empty order instead of looking up a task called
-`-`.
+none of the plan's own tasks (a declared stream may still be working one), and `## Next` opens with
+`Nothing is scheduled`. `close` and `defer` that empty the order write that line and that sentence
+in the same validated write, `take` puts a parked entry back and restores `task=`, and `status`,
+`next` and `task` render the empty order instead of looking up a task called `-`.
 
 The phase legend is the intro paragraph of `plan/BACKLOG.md` that says what each id prefix means. A
 project may leave it out; once it is there the gate holds the file to it — every clause in the form
@@ -196,7 +201,7 @@ session note without `now:` turns a resume into a rewrite.
 | debt tags | a `plan/debt.md` entry carries a tag the `Tags:` line does not declare, or tags without a `Tags:` line |
 | budget | `STATUS.md` over 70 lines, any session note over 50 — a warning nobody reads is not a check |
 | history | a done task without a commit hash, or a hash that is not a commit in the repository |
-| base | `base` is not a commit, or is not an ancestor of `HEAD`; `HEAD` itself is legal while the plan edit is uncommitted |
+| base | `base` is not a commit, or is not an ancestor of `HEAD`; an idle plan whose `base` lags commits that touched anything but `plan/` — except in a `stream/<key>` worktree of a declared stream, where that lag is the design and the primary judges it; `HEAD` itself is legal while the plan edit is uncommitted |
 | readme | `README.md` carries a `Status:` line or an `M<digit>` milestone: a README describes the product, the state lives in `plan/STATUS.md` |
 
 The `files:` hint may wrap onto an indented continuation line, and a task marker may be wrapped in
@@ -217,4 +222,5 @@ table entry, and the only code it adds is its layer rules and its `ci` step list
 
 ## License
 
-MIT OR Apache-2.0.
+Apache-2.0 — [`LICENSE`](LICENSE); the attribution notices are in [`NOTICE`](NOTICE).
+Copyright 2026 Alexander Grigoryevich Vinogradov.

@@ -40,7 +40,8 @@ pub enum Place {
     Ribbon,
     /// The context menu offers it for a matching selection (U92).
     ContextMenu,
-    /// The armed tool shows and edits its parameters in the tool card (U97).
+    /// The armed tool shows and edits its parameters in the tool card, or commits a running draft
+    /// and a contour edit from that card's one row (U97, U115).
     ToolCard,
     /// The palette can build its parameters and dispatch it.
     Palette,
@@ -185,6 +186,8 @@ pub const EDIT_UNDO: &str = "edit.undo";
 pub const EDIT_REDO: &str = "edit.redo";
 /// The id of the command palette.
 pub const PALETTE_OPEN: &str = "palette.open";
+/// The id that opens the assistant panel, where a person talks to an agent (J7).
+pub const ASSISTANT_OPEN: &str = "assistant.open";
 /// The id that hides both side panels, or shows the pair the last press put away.
 pub const PANELS_HIDE: &str = "view.panels.hide";
 /// The id that folds both side panels to strips, or unfolds them again.
@@ -208,6 +211,7 @@ pub const ACTIONS: &[Action] = &[
     Action { id: EDIT_UNDO, words: Message::ShortcutUndo },
     Action { id: EDIT_REDO, words: Message::ShortcutRedo },
     Action { id: PALETTE_OPEN, words: Message::ShortcutPalette },
+    Action { id: ASSISTANT_OPEN, words: Message::ShortcutAssistant },
     Action { id: PANELS_HIDE, words: Message::ShortcutHidePanels },
     Action { id: PANELS_COLLAPSE, words: Message::ShortcutCollapsePanels },
     // The five gestures the viewport offers are one band and five keys (U113, X88). They write no
@@ -234,6 +238,7 @@ pub const KEYS: &[Binding] = &[
     Binding { id: EDIT_UNDO, key: egui::Key::Z, chord: Chord::Ctrl, label: "Ctrl+Z" },
     Binding { id: EDIT_REDO, key: egui::Key::Y, chord: Chord::Ctrl, label: "Ctrl+Y" },
     Binding { id: PALETTE_OPEN, key: egui::Key::K, chord: Chord::Command, label: "Ctrl+K" },
+    Binding { id: ASSISTANT_OPEN, key: egui::Key::J, chord: Chord::Ctrl, label: "Ctrl+J" },
     Binding { id: PANELS_HIDE, key: egui::Key::Num0, chord: Chord::Ctrl, label: "Ctrl+0" },
     Binding { id: PANELS_COLLAPSE, key: egui::Key::Num0, chord: Chord::CtrlShift, label: "Ctrl+Shift+0" },
     Binding { id: "view.layout.maximize", key: egui::Key::W, chord: Chord::Alt, label: "Alt+W" },
@@ -379,6 +384,16 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "panel.fill",
+        // The three ribbon cells arm the empty-space gesture, so the command they write through has
+        // no button of its own: a caller that cannot point names the niche's point, its class and
+        // its mode, and the same model answer makes the part (N37).
+        label: Message::CmdFillNiche,
+        places: &[Place::Api],
+        applies: Applies::Always,
+        icon: None,
+    },
+    Row {
         id: "panel.contour.create",
         label: Message::CmdCreateContourPanel,
         places: &[Place::Api],
@@ -388,7 +403,9 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "panel.outline.set",
         label: Message::CmdSetPanelOutline,
-        places: &[Place::Card],
+        // A contour edit commits from its card's one row as well as from the panel's card: the ✓ is
+        // the same command, whichever surface the hand is nearest (U115).
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,
     },
@@ -542,7 +559,9 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "panel.machining.update",
         label: Message::CmdUpdateMachining,
-        places: &[Place::Card],
+        // The ring of a contour cutout is edited in the viewport and committed by the tool card's
+        // ✓, which is this command (U115).
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,
     },
@@ -687,6 +706,16 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "object.cuboid.create",
+        // The registry's own word is the ribbon cell's, so the id and the button print one shape
+        // (X105). No surface runs it yet: the box cell is the rectangle gesture (ADR 0138), and the
+        // reason lives in `plan/debt.md`.
+        label: Message::ToolBox,
+        places: &[Place::Api],
+        applies: Applies::Always,
+        icon: None,
+    },
+    Row {
         id: "object.extrude.height.set",
         label: Message::CmdSetExtrusionHeight,
         places: &[Place::Ribbon],
@@ -696,7 +725,7 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "object.contour.replace",
         label: Message::CmdReplaceContour,
-        places: &[Place::Card],
+        places: &[Place::Card, Place::ToolCard],
         applies: Applies::Context(ActsOn::Object),
         icon: None,
     },
@@ -709,14 +738,79 @@ pub const ROWS: &[Row] = &[
     },
     Row {
         id: "object.path.extrude",
-        label: Message::CmdExtrudePath,
+        label: Message::CmdExtrudeDrawing,
         places: &[Place::Ribbon],
         applies: Applies::Context(ActsOn::Object),
         icon: Some(crate::icons::bodies::EXTRUDE),
     },
+    // The area pull is the Extrude cell's second method: a drawing of several rings has no one
+    // profile to sweep, so this method arms the pointer and the click names an area of the drawing
+    // (G4, X100). The first method of the same cell extrudes the whole drawing, one body per ring.
+    // The command creates a body and leaves the drawing where it was. The row carries no artwork of
+    // its own: the cell draws the extrude glyph, and a second drawing for one gesture would say the
+    // two are different tools.
+    Row {
+        id: "object.area.extrude",
+        label: Message::CmdExtrudeArea,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
+    // The contour booleans take a base ring and one or more rings beside it, so they act on a
+    // selection rather than on the node under the pointer; the ribbon's three cells arm them and
+    // the registered command behind each cell stores the result (G3, ADR 0194).
+    Row {
+        id: "contour.boolean.union",
+        label: Message::ToolUnion,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: Some(crate::icons::contour::BOOLEAN_UNION),
+    },
+    Row {
+        id: "contour.boolean.subtract",
+        label: Message::ToolSubtract,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: Some(crate::icons::contour::BOOLEAN_SUBTRACT),
+    },
+    Row {
+        id: "contour.boolean.intersect",
+        label: Message::ToolIntersect,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: Some(crate::icons::contour::BOOLEAN_INTERSECT),
+    },
     Row {
         id: "object.path.replace",
         label: Message::CmdReplacePath,
+        places: &[Place::Card, Place::ToolCard],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
+    // A body boolean is a mode: the Model tab's three cells arm it, the target is the selected
+    // body and the tool is the next body picked, so it acts on the selection rather than on the one
+    // node under the pointer. Its artwork belongs to the cells, one operation each, which is why the
+    // row carries none (W1).
+    Row {
+        id: "object.boolean.set",
+        label: Message::CmdSetBoolean,
+        places: &[Place::Ribbon],
+        applies: Applies::Context(ActsOn::Selection),
+        icon: None,
+    },
+    // The mark says a body is a tool: the card offers it, and it is what lets a cutter enter the
+    // body it cuts and survive the operation that spends an unmarked one (W2, ADR 0197).
+    Row {
+        id: "object.tool.set",
+        label: Message::CmdSetToolMark,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Object),
+        icon: None,
+    },
+    // The object card lists the steps a body carries and removes one from its row.
+    Row {
+        id: "object.boolean.remove",
+        label: Message::CmdRemoveBoolean,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Object),
         icon: None,
@@ -788,6 +882,16 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Container),
         icon: Some(crate::icons::scene::VOID),
     },
+    // The snap resolver is the canonical atom: it reads the pointer's ray and the document, answers
+    // a point and a kind, and writes nothing. The View tab's Snaps group draws its ten switches, and
+    // the drawing tool, the ruler and the object move consume it (ADR 0118, ADR 0199, U116).
+    Row {
+        id: "snap.scene",
+        label: Message::GroupSnaps,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::view::SNAP_VERTEX),
+    },
     // The ground shadow's switch is view state: it writes no document, leaves no undo entry and the
     // renderer reads it per view (U107). Its intensity is one workspace value with no command of its
     // own — a field on the Settings page, not a capability (U110).
@@ -810,7 +914,7 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "view.display.shadows"];
+pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {

@@ -3,12 +3,14 @@
 //! A product is an ordinary container whose class carries `level = Product` and which stores an
 //! authored [`Envelope`] (ADR 0097); the model refuses either half without the other. `product.create`
 //! is the one creation path and always leaves a class, using the registry's general-product
-//! placeholder when the caller names none. `product.envelope.set` edits the box and never a child
-//! size: the content bounds of the parts are derived when asked and never stored.
+//! placeholder when the caller names none; the session opens the piece the command made, so creating
+//! a frame and opening it are one act for every door (ADR 0100). `product.envelope.set` edits the box
+//! and never a child size: the content bounds of the parts are derived when asked and never stored.
 
 use catalog::Directory;
 use geom::Contact;
 use model::{ClassCode, Envelope, Id, Placement, Project};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,7 +28,7 @@ pub const PRODUCT_CREATE_LABEL: Message = Message::CmdCreateProduct;
 /// Parameters for `product.create`.
 ///
 /// A product is a container whose class is level `Product` and which stores its authored envelope.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProductCreate {
     /// Id of the container that receives the product; the root or a plain group.
@@ -54,8 +56,12 @@ impl ProductCreate {
 }
 
 /// The `product.create` command.
-pub(crate) const PRODUCT_CREATE: CommandSpec =
-    CommandSpec::new(PRODUCT_CREATE_ID, PRODUCT_CREATE_LABEL, product_create_enabled, product_create_run);
+pub(crate) const PRODUCT_CREATE: CommandSpec = CommandSpec::new::<ProductCreate>(
+    PRODUCT_CREATE_ID,
+    PRODUCT_CREATE_LABEL,
+    product_create_enabled,
+    product_create_run,
+);
 
 fn product_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<ProductCreate>(params, PRODUCT_CREATE_ID) else {
@@ -90,7 +96,7 @@ pub const PRODUCT_ENVELOPE_SET_ID: &str = "product.envelope.set";
 pub const PRODUCT_ENVELOPE_SET_LABEL: Message = Message::CmdSetProductEnvelope;
 
 /// Parameters for `product.envelope.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProductEnvelopeSet {
     /// Product whose authored box changes.
@@ -100,7 +106,7 @@ pub struct ProductEnvelopeSet {
 }
 
 /// The `product.envelope.set` command.
-pub(crate) const PRODUCT_ENVELOPE_SET: CommandSpec = CommandSpec::new(
+pub(crate) const PRODUCT_ENVELOPE_SET: CommandSpec = CommandSpec::new::<ProductEnvelopeSet>(
     PRODUCT_ENVELOPE_SET_ID,
     PRODUCT_ENVELOPE_SET_LABEL,
     product_envelope_set_enabled,

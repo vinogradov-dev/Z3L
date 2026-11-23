@@ -25,7 +25,7 @@
 use eframe::egui::{self, Pos2, Response, Stroke, Ui, Vec2};
 use engine::EditScope;
 use geom::{DVec2, DVec3};
-use model::{Geometry, Id, Placement, Primitive, Project};
+use model::{Geometry, Id, Placement, PrimitiveShape, Project};
 use scene::Camera;
 use units::Length;
 
@@ -132,8 +132,13 @@ impl Body {
                 bounds_centre(&body.contour().ok()?)?
             }
             Geometry::Path(path) => bounds_centre(&path.to_contour().ok()?)?,
-            Geometry::Primitive(Primitive::Cone(_)) => DVec2::ZERO,
-            Geometry::Mesh(_) | Geometry::Primitive(Primitive::Sphere(_)) => return None,
+            Geometry::Primitive(body) => match body.base() {
+                PrimitiveShape::Cone(_) => DVec2::ZERO,
+                PrimitiveShape::Sphere(_) => return None,
+            },
+            // A contour set is several rings, so there is no one profile to pull yet: a set is
+            // extruded area by area, which is a later change (G4).
+            Geometry::Mesh(_) | Geometry::Contours(_) => return None,
         };
         let placement = project.world_placement(object)?;
         let axis_origin = placement.transform_point(DVec3::new(centre.x, centre.y, 0.0));
@@ -178,6 +183,15 @@ impl ExtrudeGizmo {
     /// behind. `height` is the typed default the ribbon would hand an extrusion.
     pub(crate) fn start_profile(&mut self, object: Id, scope: EditScope, height: Length) {
         self.start_pull(Pull { object, committed: None, scope: Some(scope), height, top: None });
+    }
+
+    /// Starts a pull on a body a click has just created, inside `scope` (G4).
+    ///
+    /// The area pull stores its body on the click, in the scope its ✓ closes, so the arrow adjusts the
+    /// height the body already has and a ✕ rolls the whole pull back. The precedence is the cone's:
+    /// the node exists, the number is typed or dragged, and one command closes the gesture.
+    pub(crate) fn start_created(&mut self, object: Id, scope: EditScope, height: Length) {
+        self.start_pull(Pull { object, committed: Some(height), scope: Some(scope), height, top: None });
     }
 
     /// Starts a pull on the cone a cell has just drawn and created (ADR 0141).

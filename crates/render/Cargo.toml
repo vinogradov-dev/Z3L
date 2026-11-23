@@ -22,6 +22,8 @@ wgpu = { workspace = true }
 wgpu = { workspace = true, features = ["noop"] }
 # Parses and validates `scene.wgsl` in tests; already in the tree through `wgpu`.
 naga = { version = "30", features = ["wgsl-in"] }
+# A decor's size is a physical length, and the tests build one; the crate itself only reads it.
+units = { workspace = true }
 # Tests build a polyline, which carries a document id; already in the tree through `scene`.
 model = { workspace = true }
 # The ignored pixel test renders the product envelope offscreen and writes it next to the UI shots.

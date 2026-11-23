@@ -8,6 +8,7 @@
 use std::fmt;
 use std::num::NonZeroU64;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// A stable document identifier.
@@ -15,7 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// Identifiers are never reused while a document is edited, so commands, hardware references and
 /// the undo stack can refer to a container, panel or catalogue entry without holding a pointer.
 /// Zero is reserved for "no entity" and is rejected on construction and deserialization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Id(NonZeroU64);
 
@@ -45,7 +46,7 @@ impl fmt::Display for Id {
 /// Machining ids share the document id space: they are allocated from the project counter, scanned
 /// for uniqueness together with nodes, and a file whose `next_id` does not exceed them is rejected.
 /// The wrapper keeps a record id from being passed where a node id is expected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct MachiningId(Id);
 
@@ -106,7 +107,7 @@ impl Revision {
 macro_rules! stable_id {
     ($(#[$meta:meta])* $name:ident, $description:literal) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema)]
         #[serde(transparent)]
         pub struct $name(u32);
 
@@ -175,7 +176,7 @@ stable_id!(
 /// and it is never reused, so a scene cannot silently point at a new item with the same number
 /// once a package is disconnected. It is written `712-34` and read back from that form, so a
 /// package's records stay diffable and a person can read the number that names the package.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
 pub struct ItemId {
     package: u32,

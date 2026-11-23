@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use geom::{DVec3, Region, Segment, subtract_regions};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
@@ -50,7 +51,7 @@ use crate::{
 /// variant never changes afterwards. The rectangle variant keeps its corner features and bows as
 /// the parameters of a contour generator, while the contour variant keeps the finished ring. Both
 /// produce one `geom::Region`, so no later stage branches on which variant a panel was created with.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PanelOutline {
     /// The nominal rectangle, generated from its corner features and bowed edges.

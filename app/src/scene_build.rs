@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use engine::Session;
 use geom::{Aabb, DMat4, DVec2, DVec3};
-use kernel::{SolidKernel, TessOptions};
+use kernel::TessOptions;
 use kernel_truck::TruckKernel;
 use mesh::{EvaluationCache, PanelEval};
 use model::{
@@ -34,10 +34,11 @@ use units::Length;
 
 /// A panel's surface colour, taken in tree order, in linear RGB: v1 has no per-panel material
 /// colour and the three tones keep neighbouring parts readable.
-const PANEL_COLORS: [[f32; 4]; 3] = [[0.62, 0.42, 0.22, 1.0], [0.50, 0.34, 0.20, 1.0], [0.45, 0.47, 0.50, 1.0]];
+pub(crate) const PANEL_COLORS: [[f32; 4]; 3] =
+    [[0.62, 0.42, 0.22, 1.0], [0.50, 0.34, 0.20, 1.0], [0.45, 0.47, 0.50, 1.0]];
 
 /// A common debug colour for every band on a panel.
-const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
+pub(crate) const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
 
 /// The default surface colour of a geometry object; v1 has no per-object material.
 const OBJECT_COLOR: [f32; 4] = [0.58, 0.60, 0.64, 1.0];
@@ -188,6 +189,21 @@ pub struct EvaluatedScene {
     pub bounds: Bounds,
     /// One box per container, in tree order: what the shell draws the bracket of an open level on.
     pub levels: Vec<LevelBounds>,
+    /// The nodes this pass could not build, in tree order, each with its sentence.
+    ///
+    /// A node whose geometry the kernel refuses — a boolean that leaves no solid, a contour it
+    /// cannot tessellate — is a diagnostic on that node, never a reason to lose the picture: the
+    /// rest of the scene still draws and still follows the pointer (`geometry.md` §8).
+    pub failures: Vec<SceneFailure>,
+}
+
+/// One node the evaluation could not build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneFailure {
+    /// The node whose geometry failed.
+    pub id: Id,
+    /// The sentence the status bar prints, already naming the node.
+    pub message: String,
 }
 
 /// Builds the demonstration project the interface tests draw.
@@ -311,24 +327,15 @@ pub fn evaluate(
     let mut evaluation = Evaluation::new(cache, kernel, session, flags, open_product);
     let mut scene_bounds = Bounds::empty();
     for child in project.root().children() {
-        let subtree = match evaluation.collect(std::slice::from_ref(child), root_world) {
-            Ok(subtree) => subtree,
-            Err(error) => {
-                // A failed pass must not leave half-evaluated bodies in the kernel, nor a stale
-                // entry that claims a mesh the document no longer produces.
-                evaluation.kernel.clear();
-                return Err(error);
-            }
-        };
-        scene_bounds.include_bounds(subtree);
+        scene_bounds.include_bounds(evaluation.collect(std::slice::from_ref(child), root_world));
     }
-    let Evaluation { cache, frame, levels, .. } = evaluation;
+    let Evaluation { cache, frame, levels, failures, .. } = evaluation;
     cache.finish();
     let mut frame = frame;
     if let Some(lighting) = authored_lighting_with(project, &[], flags) {
         frame.lighting = lighting;
     }
-    Ok(EvaluatedScene { frame, bounds: scene_bounds, levels })
+    Ok(EvaluatedScene { frame, bounds: scene_bounds, levels, failures })
 }
 
 /// The frame lighting from the authored lights.
@@ -452,6 +459,8 @@ struct Evaluation<'a> {
     /// The world box of every container met, so the shell can bracket the open ones without a
     /// second walk of the tree.
     levels: Vec<LevelBounds>,
+    /// The nodes this pass could not build, with the sentence each one reports.
+    failures: Vec<SceneFailure>,
     palette_index: usize,
 }
 
@@ -472,11 +481,12 @@ impl<'a> Evaluation<'a> {
             options: TessOptions::default(),
             frame: SceneFrame::default(),
             levels: Vec::new(),
+            failures: Vec::new(),
             palette_index: 0,
         }
     }
 
-    fn collect(&mut self, children: &[Node], parent: Placement) -> Result<Bounds, String> {
+    fn collect(&mut self, children: &[Node], parent: Placement) -> Bounds {
         let mut bounds = Bounds::empty();
         for child in children {
             // A hidden node takes its whole subtree with it, so the frame, its bounds, its
@@ -484,26 +494,36 @@ impl<'a> Evaluation<'a> {
             if self.flags.is_hidden(child.id()) {
                 continue;
             }
-            let child_bounds = match child {
-                Node::Container(container) => {
-                    let world = Placement::compose(parent, container.placement()).map_err(describe)?;
-                    let subtree = self.collect(container.children(), world)?;
-                    let subtree = match container.envelope() {
-                        Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
-                        None => subtree,
-                    };
-                    // Recorded for every container, open or not: which of them are open is view
-                    // state that moves without a rebuild, so the filtering happens at paint time.
-                    self.levels.push(LevelBounds { id: container.id(), corners: subtree.corners() });
-                    subtree
-                }
-                Node::Panel(panel) => self.collect_panel(panel, parent)?,
-                Node::Object(object) => self.collect_object(object, parent)?,
-                Node::Camera(_) | Node::Light(_) => Bounds::empty(),
-            };
-            bounds.include_bounds(child_bounds);
+            match self.collect_child(child, parent) {
+                Ok(child_bounds) => bounds.include_bounds(child_bounds),
+                // One node the geometry kernel refuses is a diagnostic on that node: the rest of
+                // the scene draws, so a person can see and fix the part that failed instead of a
+                // picture frozen at the last frame that happened to build (`geometry.md` §8).
+                Err(message) => self.failures.push(SceneFailure { id: child.id(), message }),
+            }
         }
-        Ok(bounds)
+        bounds
+    }
+
+    /// One child of the tree, or the sentence saying why it could not be built.
+    fn collect_child(&mut self, child: &Node, parent: Placement) -> Result<Bounds, String> {
+        Ok(match child {
+            Node::Container(container) => {
+                let world = Placement::compose(parent, container.placement()).map_err(describe)?;
+                let subtree = self.collect(container.children(), world);
+                let subtree = match container.envelope() {
+                    Some(envelope) => self.collect_product(container.id(), envelope, world, subtree)?,
+                    None => subtree,
+                };
+                // Recorded for every container, open or not: which of them are open is view
+                // state that moves without a rebuild, so the filtering happens at paint time.
+                self.levels.push(LevelBounds { id: container.id(), corners: subtree.corners() });
+                subtree
+            }
+            Node::Panel(panel) => self.collect_panel(panel, parent)?,
+            Node::Object(object) => self.collect_object(object, parent)?,
+            Node::Camera(_) | Node::Light(_) => Bounds::empty(),
+        })
     }
 
     /// Records one product's authored box as a scene item and returns the subtree bounds with it.
@@ -582,7 +602,8 @@ impl<'a> Evaluation<'a> {
     ///
     /// A mesh payload is drawn as stored. A constructive or primitive payload is evaluated through
     /// the cache's one evaluator — the same function `object.collapse` bakes — so the collapsed
-    /// object keeps the shape the viewport showed.
+    /// object keeps the shape the viewport showed. A body with a boolean step is built by the kernel
+    /// from the shapes the steps froze, so the derivation reads nothing outside the body.
     fn collect_object(&mut self, object: &model::Object, parent: Placement) -> Result<Bounds, String> {
         let world = Placement::compose(parent, object.placement()).map_err(describe)?;
         let revision = self.session.project().revision();
@@ -592,18 +613,20 @@ impl<'a> Evaluation<'a> {
             self.session.drawn_geometry(object.id()).ok_or_else(|| format!("{}: no geometry", object.name()))?;
         let evaluated = self
             .cache
-            .object_with(revision, object.id(), geometry)
+            .object_with(revision, object.id(), geometry, self.kernel, &self.options)
             .map_err(|error| format!("{}: {error}", object.name()))?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
         let mut bounds = Bounds::empty();
-        // A path has no solid: it is drawn as an unlit chain of line segments, and its points are
-        // sampled from the same analytic segments a later extrusion uses. The chain leaves its
-        // colour to the frame, so a theme switch repaints it without a rebuild.
-        if let Some(points) = evaluated.polyline() {
-            for point in points.iter() {
-                bounds.include_point(transform.transform_point3(*point));
+        // A drawing has no solid: it is drawn as unlit chains of line segments, one chain per ring,
+        // and their points are sampled from the same analytic segments a later extrusion uses. A
+        // chain leaves its colour to the frame, so a theme switch repaints it without a rebuild.
+        if !evaluated.polylines().is_empty() {
+            for points in evaluated.polylines() {
+                for point in points.iter() {
+                    bounds.include_point(transform.transform_point3(*point));
+                }
+                self.frame.push_polyline(Polyline::in_ink(object.id(), Arc::clone(points), transform));
             }
-            self.frame.push_polyline(Polyline::in_ink(object.id(), Arc::clone(points), transform));
             return Ok(bounds);
         }
         if let Some(mesh) = evaluated.body() {
@@ -1214,7 +1237,7 @@ mod tests {
             return;
         };
         for count in [500, 2_000] {
-            let (cold, warm, edit, whole) = upload_costs(&render_state.device, count);
+            let (cold, warm, edit, whole) = upload_costs(&render_state.device, &render_state.queue, count);
             println!(
                 "upload at {count} drawables: cold {cold:?}, unchanged {warm:?}, one edit {edit:?}, whole {whole:?}"
             );
@@ -1227,6 +1250,7 @@ mod tests {
     /// whole-frame upload, each measured on the real adapter.
     fn upload_costs(
         device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
         count: u64,
     ) -> (std::time::Duration, std::time::Duration, std::time::Duration, std::time::Duration) {
         use std::time::{Duration, Instant};
@@ -1244,14 +1268,14 @@ mod tests {
         // The frame the last editor built, uploaded into an empty renderer, is what every edit cost
         // before the cache: one vertex and index buffer per drawable and one flattened edge list.
         let started = Instant::now();
-        renderer.upload(device, &scene).expect("the first upload");
+        renderer.upload(device, queue, &scene).expect("the first upload");
         let cold = started.elapsed();
 
         // A second upload of the same frame, which is what a camera move or a theme change asks for.
         let mut warm = Duration::MAX;
         for _ in 0..5 {
             let started = Instant::now();
-            renderer.upload(device, &scene).expect("an unchanged frame uploads");
+            renderer.upload(device, queue, &scene).expect("an unchanged frame uploads");
             warm = warm.min(started.elapsed());
         }
 
@@ -1265,14 +1289,14 @@ mod tests {
             session.dispatch("node.placement.set", &params).expect("move one ball");
             scene = evaluate(&mut cache, &mut kernel, &session, &flags, None).expect("the edited scene").frame;
             let started = Instant::now();
-            renderer.upload(device, &scene).expect("the edited frame uploads");
+            renderer.upload(device, queue, &scene).expect("the edited frame uploads");
             edit = edit.min(started.elapsed());
         }
 
         // The same edited frame into an empty renderer: the cost the cache removed.
         let mut fresh = ViewportRenderer::new(device, 1280, 800);
         let started = Instant::now();
-        fresh.upload(device, &scene).expect("the whole frame uploads");
+        fresh.upload(device, queue, &scene).expect("the whole frame uploads");
         let whole = started.elapsed();
         (cold, warm, edit, whole)
     }

@@ -7,18 +7,19 @@
 //! anything on its own: the creation commands call the rule (ADR 0082).
 
 use geom::DVec3;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use units::Length;
 
 use crate::placement::lengths_from_millimetres;
 use crate::tree::panel_bounds;
-use crate::{Contour, ContourError, Mesh, Node, Path, PathError, Placement, PlacementError, RectCorner};
+use crate::{Contour, ContourError, Contours, Mesh, Node, Path, PathError, Placement, PlacementError, RectCorner};
 
 /// The content point a newly created node puts at its local zero.
 ///
 /// A frame is chosen only at creation: an edit, a move or a turn never recomputes it (ADR 0082).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameAnchor {
     /// The content's own creation origin: an open chain's first point, a closed ring's bounds centre.
@@ -160,6 +161,24 @@ impl Anchored for Path {
             return Err(FrameError::OffPlane { micrometres: z.micrometres() });
         }
         Ok(self.translated([x, y])?)
+    }
+}
+
+impl Anchored for Contours {
+    fn anchor(&self, strategy: FrameAnchor) -> Result<[Length; 3], FrameError> {
+        let (min, max) = self.bounds_micrometres();
+        match strategy {
+            FrameAnchor::CreationOrigin | FrameAnchor::CenterOfBounds => Ok(flat_center(min, max)),
+            FrameAnchor::BBoxBaseCorner(corner) => Ok(flat_corner(corner, min, max)),
+        }
+    }
+
+    fn shifted(&self, offset: [Length; 3]) -> Result<Self, FrameError> {
+        let [x, y, z] = offset;
+        if !z.is_zero() {
+            return Err(FrameError::OffPlane { micrometres: z.micrometres() });
+        }
+        self.translated([x, y]).map_err(|_| FrameError::OutOfRange)
     }
 }
 

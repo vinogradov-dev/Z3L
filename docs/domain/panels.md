@@ -382,7 +382,7 @@ cutout removes a volume from the panel body:
 
 - `CutoutShape::Rectangle` is a rectangle in the panel plane.
 - `CutoutShape::Contour` is a closed ring of directed lines and arcs, with the same ring rules as any
-  contour: at least three segments, closed, non-zero area and not self-intersecting. The contour
+  contour: non-empty, closed, non-zero area and not self-intersecting. The contour
   variant moved the schema to 14, and anchored machining records moved it to 16; an older file with
   the legacy `{"cutout": {…}}` entries loads unchanged and is rewritten in the record form.
 - The ring becomes a solid by sampling it into the kernel profile at the shared contour tolerance; the
@@ -458,6 +458,12 @@ A panel with an issue stays in the document, is drawn where possible and shows a
 All changes are `engine` commands with stable ids and typed parameters. The UI never writes to the document directly.
 
 - `panel.create` — parent, name, nominal length, nominal width, material, placement. Thickness is not passed.
+- `panel.fill` — parent, a point in world millimetres, a class and a fill mode, with an optional place
+  on the free axis and an optional name. It measures the niche at the point, plans the part exactly
+  as the empty-space tool does, and writes it through `panel.create`'s own path: one revision and one
+  undo entry. The class's `fill` trait chooses the axis pair, so a post, a shelf and a back wall are
+  one command with three classes
+  ([0226](../decisions/0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md)).
 - `panel.contour.create` — parent, name, a constructive object as the source ring, material,
   placement. The ring is copied, anchored at the panel zero and becomes the outline; the panel is a
   contour panel from then on.
@@ -504,8 +510,8 @@ A panel owns its cutouts, banding and machining; the scene tree never splits it 
 An outline command is closed over its variant. A contour panel rejects `panel.resize`, `panel.corner.*`,
 `panel.bow.*`, `panel.edge_banding.*` and `panel.corner_banding.*`; a rectangle panel rejects
 `panel.outline.set` and `panel.ring_banding.*`. `panel.contour.create` validates the source object and
-the ring before it allocates an id. `panel.outline.set` runs the full ring validation — closed, at
-least three segments, non-zero area, no self-intersection, a usable panel size — and refuses an edit
+the ring before it allocates an id. `panel.outline.set` runs the full ring validation — closed,
+non-empty, non-zero area, no self-intersection, a usable panel size — and refuses an edit
 that would drop a ring segment carrying banding, so no band is lost silently. A failed outline command
 leaves the document, its revision and the id counter unchanged.
 

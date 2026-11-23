@@ -21,6 +21,9 @@ use text::{Lang, Message};
 /// The extension a price list is written with: a supplier's export, saved as CSV.
 pub(crate) const PRICE_LIST_EXTENSION: &str = "csv";
 
+/// The extension a final render is written with.
+pub(crate) const IMAGE_EXTENSION: &str = "png";
+
 /// Which way the file manager is asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PickMode {
@@ -30,6 +33,8 @@ pub(crate) enum PickMode {
     Save,
     /// Read a price list for the directory application: a supplier's CSV, not a scene.
     Prices,
+    /// Write a final render: a PNG, chosen by the render place.
+    Image,
 }
 
 /// The order one gesture gives the system file manager.
@@ -56,6 +61,7 @@ impl Order {
             PickMode::Open => Message::OpenSceneTitle,
             PickMode::Save => Message::SaveSceneAsTitle,
             PickMode::Prices => Message::PriceListTitle,
+            PickMode::Image => Message::SaveImageAsTitle,
         }
         .text(self.lang)
     }
@@ -64,6 +70,7 @@ impl Order {
     pub(crate) fn filter(&self) -> &'static str {
         match self.mode {
             PickMode::Prices => Message::PriceListFiles,
+            PickMode::Image => Message::ImageFiles,
             PickMode::Open | PickMode::Save => Message::SceneFiles,
         }
         .text(self.lang)
@@ -73,6 +80,7 @@ impl Order {
     pub(crate) fn extension(&self) -> &'static str {
         match self.mode {
             PickMode::Prices => PRICE_LIST_EXTENSION,
+            PickMode::Image => IMAGE_EXTENSION,
             PickMode::Open | PickMode::Save => EXTENSION,
         }
     }
@@ -228,7 +236,7 @@ fn ask(order: &Order) -> Option<PathBuf> {
     }
     let picked = match order.mode {
         PickMode::Open | PickMode::Prices => pollster::block_on(dialog.pick_file()),
-        PickMode::Save => pollster::block_on(dialog.save_file()),
+        PickMode::Save | PickMode::Image => pollster::block_on(dialog.save_file()),
     };
     picked.map(|handle| handle.path().to_owned())
 }

@@ -2,12 +2,15 @@
 
 use catalog::Directory;
 use geom::Contact;
-use model::{Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
+use model::{FillRefusal, Id, ItemId, Level, MachiningId, Project, ProjectError, Resting};
+use schemars::JsonSchema;
 use serde_json::Value;
 use text::Message;
 use thiserror::Error;
 
-use crate::class_rules::{self, ClassRefusal, CreationRefusal};
+use crate::area_cmds;
+use crate::class_rules::ClassRefusal;
+use crate::contour_cmds;
 use crate::mesh_cmds;
 use crate::node_cmds;
 use crate::object_cmds;
@@ -50,22 +53,22 @@ impl CommandOutcome {
     }
 }
 
-/// What a creating command adds, and where its parameters say it lands.
+/// What a creating command adds, as the word a discovery report prints.
 ///
-/// The level is the class trait the guard reads: a furniture part or fitting is born only inside
-/// the one open product, while a free scene object is not gated (ADR 0098). A command that creates
-/// nothing declares no [`Creation`], and a parameter set that does not name a parent is left to the
-/// command's own parser so a malformed request still reports its parameters.
+/// The level is the class trait ADR 0098 names: a furniture part or fitting belongs to a piece,
+/// while a free scene object belongs to the scene. It is a *description* of what the command
+/// makes, not a gate: a command writes wherever its own parameters are valid, and whether a piece
+/// is open is the interface's question, asked by the surfaces that offer the command (ADR 0226).
+/// A command that creates nothing declares no [`Creation`].
 #[derive(Clone, Copy, Debug)]
 pub struct Creation {
     level: Level,
-    parent_of: fn(&Value) -> Option<Id>,
 }
 
 impl Creation {
-    /// Declares the level of the created node and the parameter that names its parent.
-    pub const fn new(level: Level, parent_of: fn(&Value) -> Option<Id>) -> Self {
-        Self { level, parent_of }
+    /// Declares the class level of the node the command creates.
+    pub const fn new(level: Level) -> Self {
+        Self { level }
     }
 
     /// The class level of the node the command creates.
@@ -74,14 +77,23 @@ impl Creation {
     }
 }
 
+/// The JSON Schema of one command's parameters, derived from the struct its `run` parses.
+///
+/// A function rather than a value, so the schema is built when a discovery surface asks for it and
+/// costs nothing to a command dispatch or a frame (ADR 0185).
+type ParamsSchema = fn() -> Value;
+
 /// Metadata and implementation of one document command.
 ///
 /// The id is lowercase `<area>.<verb>` and stable forever. The label is a [`Message`], so the
-/// palette, a CLI and the assistant print the same words in the user's language.
+/// palette, a CLI and the assistant print the same words in the user's language. The parameter
+/// schema is derived from the typed struct the command parses, so what a model is told it may send
+/// and what the parser accepts cannot drift apart.
 #[derive(Clone, Copy, Debug)]
 pub struct CommandSpec {
     id: &'static str,
     label: Message,
+    schema: ParamsSchema,
     enabled_fn: fn(&Session, &Value) -> bool,
     run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     creation: Option<Creation>,
@@ -89,16 +101,29 @@ pub struct CommandSpec {
 
 impl CommandSpec {
     /// Defines a command from its metadata and implementation.
-    pub const fn new(
+    ///
+    /// `P` is the typed parameter struct the command's `run` parses. Naming it here is what makes
+    /// the published schema a description of the parser instead of a second, hand-written table:
+    /// one accessor serves the CLI, the documentation and the assistant (ADR 0185).
+    pub const fn new<P: JsonSchema>(
         id: &'static str,
         label: Message,
         enabled_fn: fn(&Session, &Value) -> bool,
         run_fn: fn(&mut Project, &Directory, &Value, &dyn Contact) -> Result<CommandOutcome, CommandError>,
     ) -> Self {
-        Self { id, label, enabled_fn, run_fn, creation: None }
+        Self { id, label, schema: params_schema::<P>, enabled_fn, run_fn, creation: None }
     }
 
-    /// Declares what the command creates, so the session can apply ADR 0098's guard.
+    /// The JSON Schema of the parameters this command takes.
+    ///
+    /// It is the schema of the struct the command parses, so a caller can build a request without
+    /// reading our source: every required field, every optional one and the closed set of names
+    /// (`additionalProperties: false`, because every parameter struct denies unknown fields).
+    pub fn params_schema(self) -> Value {
+        (self.schema)()
+    }
+
+    /// Declares what the command creates, so a discovery surface can say which level it builds.
     pub const fn creating(mut self, creation: Creation) -> Self {
         self.creation = Some(creation);
         self
@@ -116,9 +141,9 @@ impl CommandSpec {
 
     /// The class level of the node the command creates, or `None` when it creates none.
     ///
-    /// A discovery surface reads it — the command line's `commands --json` and, later, the
-    /// assistant — so a caller knows whether an id builds something before it dispatches it. The
-    /// level is the class trait ADR 0098 gates; it says nothing about the parameters.
+    /// A discovery surface reads it — the command line's `commands --json` and the assistant — so a
+    /// caller knows whether an id builds something before it dispatches it. It says nothing about
+    /// where the command may write and nothing about the parameters.
     pub const fn creation_level(self) -> Option<Level> {
         match self.creation {
             Some(creation) => Some(creation.level()),
@@ -126,31 +151,30 @@ impl CommandSpec {
         }
     }
 
-    /// Whether the command applies to this session and these parameters.
+    /// The word a report prints for what this command creates, or `None` when it creates nothing.
     ///
-    /// This is a pure check for menus, toolbars and enabled state. It never mutates the document.
-    pub fn enabled(self, session: &Session, params: &Value) -> bool {
-        (self.enabled_fn)(session, params)
+    /// The four words are English because they are a wire contract read by a machine, not a
+    /// sentence the interface translates — the same reading [`CommandError`]'s display takes. The
+    /// command line's discovery report and the tool list a model reads print this one word, so the
+    /// two cannot name one level differently.
+    pub const fn creation_word(self) -> Option<&'static str> {
+        match self.creation_level() {
+            Some(Level::Product) => Some("product"),
+            Some(Level::Component) => Some("component"),
+            Some(Level::Part) => Some("part"),
+            Some(Level::Fitting) => Some("fitting"),
+            None => None,
+        }
     }
 
-    /// Why the command may not create its node in this session, or `Ok` when it creates nothing
-    /// gated (ADR 0098).
+    /// Whether the command applies to this session and these parameters.
     ///
-    /// The session asks this after a command has run on a copy and before that copy replaces the
-    /// document, so a refusal writes nothing and leaves the history untouched. The command's own
-    /// `enabled` check asks [`crate::allow_creation`] directly, so the button, the palette and a
-    /// future assistant agree about the refusal.
-    pub(crate) fn creation_refusal(self, session: &Session, params: &Value) -> Result<(), CreationRefusal> {
-        let Some(creation) = self.creation else {
-            return Ok(());
-        };
-        if !class_rules::is_furniture(creation.level()) {
-            return Ok(());
-        }
-        let Some(parent) = (creation.parent_of)(params) else {
-            return Ok(());
-        };
-        class_rules::allow_creation(session.project(), parent, session.active_product())
+    /// This is a pure check for menus, toolbars and enabled state. It never mutates the document,
+    /// and it is where a surface keeps its own rule — the open product among a creation command's
+    /// parameters, for instance — because a command writes wherever its parameters are valid
+    /// (ADR 0226).
+    pub fn enabled(self, session: &Session, params: &Value) -> bool {
+        (self.enabled_fn)(session, params)
     }
 
     /// Runs the command on a working copy of the document.
@@ -169,9 +193,60 @@ impl CommandSpec {
     }
 }
 
+/// The schema of `P`, in the JSON Schema dialect [`schemars`] emits.
+///
+/// A pure function of the type: no session, no document and no failure path, because the value is
+/// built from a derive over a `serde` type rather than serialized from a running document. The one
+/// thing the derive cannot say is a unit — a field's own doc comment shadows the type's, so a length
+/// described as "side along +X" arrives without its micrometres (X115, J19) — and the pass below
+/// states it from [`UNITS`] instead of from a hundred field comments.
+fn params_schema<P: JsonSchema>() -> Value {
+    let mut schema = schemars::schema_for!(P).to_value();
+    annotate_units(&mut schema);
+    schema
+}
+
+/// The unit every number of a type is in, as the schema annotation a caller reads.
+///
+/// The rows are the types whose numbers a caller sends, not a table of fields: a new command that
+/// takes a [`units::Length`] is annotated by name, so a unit cannot be forgotten. The words are the
+/// guide's (`engine::guide().units`) and the type's own doc comment, so one vocabulary serves both.
+const UNITS: [(&str, &str); 3] = [("Length", "micrometres"), ("Degrees", "millidegrees"), ("Placement", "millimetres")];
+
+/// Writes `unit` beside every `$ref` to a type [`UNITS`] names, through the whole schema.
+///
+/// A JSON Schema annotation is an open object, so an unknown key is legal and a validator ignores it;
+/// this one is what a caller reads to know that `2400000` is 2.4 m and `2400.0` is 2.4 m in a
+/// placement. A field description is left alone: the unit is a property of the type, so it is
+/// written once per occurrence from one table rather than restated in prose that can drift.
+fn annotate_units(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let named = map.get("$ref").and_then(Value::as_str).and_then(|reference| reference.rsplit('/').next());
+            if let Some(name) = named
+                && let Some((_, unit)) = UNITS.iter().find(|(type_name, _)| *type_name == name)
+            {
+                map.insert("unit".to_owned(), Value::from(*unit));
+            }
+            for (key, inner) in map.iter_mut() {
+                if key != "unit" {
+                    annotate_units(inner);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                annotate_units(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The commands compiled into this build.
 static COMMANDS: &[CommandSpec] = &[
     panel_cmds::CREATE,
+    panel_cmds::FILL,
     panel_cmds::CONTOUR_CREATE,
     panel_cmds::OUTLINE_SET,
     panel_cmds::OUTLINE_CONTOUR,
@@ -216,12 +291,20 @@ static COMMANDS: &[CommandSpec] = &[
     object_cmds::OBJECT_PRIMITIVE_CREATE,
     object_cmds::OBJECT_PRIMITIVE_REPLACE,
     object_cmds::OBJECT_EXTRUDE_CREATE,
+    object_cmds::OBJECT_CUBOID_CREATE,
     object_cmds::OBJECT_EXTRUDE_HEIGHT_SET,
     object_cmds::OBJECT_CONTOUR_REPLACE,
     object_cmds::OBJECT_PATH_CREATE,
     object_cmds::OBJECT_PATH_EXTRUDE,
     object_cmds::OBJECT_PATH_REPLACE,
+    object_cmds::OBJECT_TOOL_SET,
+    object_cmds::OBJECT_BOOLEAN_SET,
+    object_cmds::OBJECT_BOOLEAN_REMOVE,
     object_cmds::OBJECT_COLLAPSE,
+    area_cmds::OBJECT_AREA_EXTRUDE,
+    contour_cmds::CONTOUR_UNION,
+    contour_cmds::CONTOUR_SUBTRACT,
+    contour_cmds::CONTOUR_INTERSECT,
     mesh_cmds::MESH_VERTICES_MOVE,
     scene_cmds::CAMERA_CREATE,
     scene_cmds::LIGHT_CREATE,
@@ -252,7 +335,7 @@ impl CommandRegistry {
 }
 
 /// Why a command could not be dispatched or a history operation failed.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum CommandError {
     /// No command with this id is registered.
     #[error("unknown command `{id}`")]
@@ -279,14 +362,6 @@ pub enum CommandError {
         /// What the class forbids.
         refusal: ClassRefusal,
     },
-    /// A furniture part may not be created outside the open product.
-    #[error("`{command}` cannot create furniture here: {refusal}")]
-    CreationRefused {
-        /// The stable command id.
-        command: &'static str,
-        /// What the session or the target parent refuses.
-        refusal: CreationRefusal,
-    },
     /// Deriving geometry for the command failed.
     #[error("cannot evaluate `{command}`: {message}")]
     Evaluation {
@@ -294,6 +369,26 @@ pub enum CommandError {
         command: &'static str,
         /// A human-readable evaluation message.
         message: String,
+    },
+    /// The point a command measured names no niche, in the query's own sentence.
+    #[error("{message}")]
+    NoNiche {
+        /// The sentence the query prints for the same point.
+        message: String,
+    },
+    /// The void a fill measured leaves no part the board can make.
+    #[error("`{command}` cannot fill the void: {refusal}")]
+    FillRefused {
+        /// The stable command id.
+        command: &'static str,
+        /// Why the measured void has no part in it.
+        refusal: FillRefusal,
+    },
+    /// The workshop's catalogue holds no material the part could be cut from.
+    #[error("`{command}` needs a board: the catalogue holds no panel material")]
+    NoMaterial {
+        /// The stable command id.
+        command: &'static str,
     },
     /// The catalogue does not contain the requested material.
     #[error("unknown material {material}")]
@@ -325,11 +420,6 @@ impl CommandError {
         Self::ClassRefused { command, refusal }
     }
 
-    /// The creation guard's refusal, tagged with the command that asked it (ADR 0098).
-    pub(crate) fn creation(command: &'static str, refusal: CreationRefusal) -> Self {
-        Self::CreationRefused { command, refusal }
-    }
-
     /// A placement that would land a part inside one that stays behind, naming both (ADR 0162).
     pub(crate) fn resting(command: &'static str, project: &Project, resting: Resting) -> Self {
         Self::RestingInTheWay {
@@ -349,6 +439,63 @@ fn part_name(project: &Project, id: Id) -> String {
 mod tests {
     use super::*;
     use text::Lang;
+
+    #[test]
+    fn every_schema_that_takes_a_length_says_which_unit_it_is_in() {
+        // A model built the first wardrobe a thousand times its size because a field's own doc comment
+        // ("side along +X") shadowed the type's, so nothing on the surface said micrometres (X115,
+        // J19). The unit is a property of the type, so it is annotated on every occurrence from one
+        // table; this test is what stops a new field from arriving without one.
+        let registry = CommandRegistry::new();
+        let mut seen: Vec<String> = Vec::new();
+        for spec in registry.specs() {
+            let schema = spec.params_schema();
+            let mut refs: Vec<(String, Option<String>)> = Vec::new();
+            collect_units(&schema, &mut refs);
+            for (name, unit) in refs {
+                let Some((_, expected)) = UNITS.iter().find(|(type_name, _)| *type_name == name) else {
+                    continue;
+                };
+                assert_eq!(
+                    unit.as_deref(),
+                    Some(*expected),
+                    "{} takes `{name}`, so its schema must say `{expected}`",
+                    spec.id()
+                );
+                seen.push(name);
+            }
+        }
+        for (name, _) in UNITS {
+            assert!(
+                seen.iter().any(|seen| seen == name),
+                "no command schema references `{name}`, so the table row is stale"
+            );
+        }
+    }
+
+    /// Every `$ref` in a schema with the `unit` written beside it, through the whole object.
+    fn collect_units(value: &Value, found: &mut Vec<(String, Option<String>)>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map.get("$ref").and_then(Value::as_str).and_then(|schema| schema.rsplit('/').next())
+                {
+                    let unit = map.get("unit").and_then(Value::as_str).map(str::to_owned);
+                    found.push((name.to_owned(), unit));
+                }
+                for (key, inner) in map {
+                    if key != "unit" {
+                        collect_units(inner, found);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    collect_units(item, found);
+                }
+            }
+            _ => {}
+        }
+    }
 
     #[test]
     fn registry_exposes_panel_commands() {
@@ -490,7 +637,95 @@ mod tests {
         assert_eq!(move_vertices.id(), "mesh.vertices.move");
         assert_eq!(move_vertices.label().text(Lang::En), "Move vertices");
         assert!(registry.get("missing.command").is_none());
-        assert_eq!(registry.specs().len(), 57);
+        // The three contour booleans are one family: one command per membership rule, one label
+        // each, so the toolbar, the palette and a CLI name the same operations (G3).
+        for (id, label) in [
+            ("contour.boolean.union", "Union"),
+            ("contour.boolean.subtract", "Subtract"),
+            ("contour.boolean.intersect", "Intersect"),
+        ] {
+            let spec = registry.get(id).expect("a contour boolean is registered");
+            assert_eq!(spec.label().text(Lang::En), label);
+        }
+        // A body boolean appends a step and removes one; the tool is a node reference that the
+        // command checks, so the arm and the ✓ ask the same question.
+        let set = registry.get("object.boolean.set").expect("object.boolean.set is registered");
+        assert_eq!(set.label().text(Lang::En), "Set boolean");
+        let remove = registry.get("object.boolean.remove").expect("object.boolean.remove is registered");
+        assert_eq!(remove.label().text(Lang::En), "Remove boolean");
+        let mark = registry.get("object.tool.set").expect("object.tool.set is registered");
+        assert_eq!(mark.label().text(Lang::En), "Set tool mark");
+        // A pulled area is a body born from a drawing, so it creates one and names its own area.
+        let area = registry.get("object.area.extrude").expect("object.area.extrude is registered");
+        assert_eq!(area.label().text(Lang::En), "Extrude area");
+        // A niche is filled by one command the three ribbon cells and any caller share (N37).
+        let fill = registry.get("panel.fill").expect("panel.fill is registered");
+        assert_eq!(fill.label().text(Lang::En), "Fill a niche");
+        assert_eq!(fill.creation_word(), Some("part"));
+        assert_eq!(registry.specs().len(), 66);
+    }
+
+    #[test]
+    fn every_command_publishes_a_schema_of_its_parameters() {
+        let registry = CommandRegistry::new();
+        for spec in registry.specs() {
+            let schema = spec.params_schema();
+            assert_eq!(schema["type"], "object", "{} takes one parameter object", spec.id());
+            assert_eq!(
+                schema["additionalProperties"],
+                false,
+                "{} denies unknown fields, so the schema must say so",
+                spec.id()
+            );
+            let properties = schema["properties"].as_object().expect("a parameter struct has named fields");
+            assert!(!properties.is_empty(), "{} describes no field", spec.id());
+            for name in schema["required"].as_array().into_iter().flatten() {
+                let name = name.as_str().expect("a required entry is a field name");
+                assert!(
+                    properties.contains_key(name),
+                    "{} requires `{name}`, which is not one of its properties",
+                    spec.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_schema_marks_an_optional_field_optional() {
+        // `panel.create` carries three fields a tool may leave out — the class, the outline and the
+        // bevels — and five that a request must name. The schema is the derive's reading of the same
+        // `serde` attributes the parser reads, so a field that becomes required changes this list:
+        // a hand-written schema would silently keep describing the old shape.
+        let registry = CommandRegistry::new();
+        let schema = registry.get("panel.create").expect("panel.create is registered").params_schema();
+        let mut required: Vec<&str> = schema["required"]
+            .as_array()
+            .expect("required is a list")
+            .iter()
+            .filter_map(|name| name.as_str())
+            .collect();
+        required.sort_unstable();
+        assert_eq!(required, ["material", "name", "nominal_size", "parent", "placement"]);
+        for optional in ["class", "outline", "bevels"] {
+            assert!(schema["properties"][optional].is_object(), "{optional} is described");
+            assert!(!required.contains(&optional), "{optional} is optional, so a caller may omit it");
+        }
+    }
+
+    #[test]
+    fn a_schema_refuses_the_type_a_placements_frame_needs() {
+        // A nested model type is described through its own wire form, not as an opaque value: a
+        // placement is a translation and a quaternion, and a caller that sends millimetres as a
+        // float is told the field's type instead of guessing (`Placement`, ADR 0024).
+        let registry = CommandRegistry::new();
+        let schema = registry.get("node.placement.set").expect("node.placement.set is registered").params_schema();
+        assert!(
+            schema["properties"]["placement"].is_object(),
+            "the placement is described as an object, got {}",
+            schema["properties"]["placement"]
+        );
+        let defs = schema["$defs"].as_object().expect("a nested struct is defined once");
+        assert!(defs.contains_key("Placement"), "the placement's own definition is in the report");
     }
 
     #[test]

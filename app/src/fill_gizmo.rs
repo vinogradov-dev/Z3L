@@ -281,6 +281,7 @@ pub(crate) fn plan(
     let niche = project.niche(point, sight, None).map_err(|refusal| match refusal {
         model::NicheRefusal::Outside => refusal_sentence(FillRefusal::Outside),
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
+        model::NicheRefusal::Footprint => refusal_sentence(FillRefusal::Footprint),
     })?;
     plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None, sight)
 }
@@ -353,24 +354,12 @@ pub(crate) fn plan_at(
     })
 }
 
-/// The reason a void cannot be filled, in the maker's words.
+/// The reason a void cannot be filled, in the words the model states for every caller.
+///
+/// One wording serves the ghost, `panel.fill` and the query beside them, so a maker and a caller
+/// read the same sentence about one measured void (N37).
 fn refusal_sentence(refusal: FillRefusal) -> String {
-    match refusal {
-        FillRefusal::Outside => "Point at the empty space inside the open product.".to_owned(),
-        FillRefusal::Unrepresentable => {
-            "The empty space here is not one straight shape; point at a plainer gap.".to_owned()
-        }
-        FillRefusal::OtherProduct => "The void belongs to another product; open it to fill it.".to_owned(),
-        FillRefusal::NoFrame => "The open product has no frame.".to_owned(),
-        FillRefusal::TooThin => "The void is thinner than the material.".to_owned(),
-        FillRefusal::TooSmall => "The void is too small for a panel.".to_owned(),
-        FillRefusal::WallsDisagree => {
-            "The walls here lean against each other, so no flat board meets them all; use the largest fit.".to_owned()
-        }
-        FillRefusal::Wedge => {
-            "The void narrows across the board's thickness, where no end bevel helps; use the largest fit.".to_owned()
-        }
-    }
+    refusal.sentence().to_owned()
 }
 
 /// Paints one size at `position`, on a quiet plate so it stays legible over the scene.
@@ -541,6 +530,41 @@ mod tests {
         assert!(ghost.low_face().is_some_and(|face| (face.x - 251.0).abs() < 1e-9), "the fields measure the -X face");
         assert!((ghost.free_low - 251.0).abs() < 1e-9, "and the low end is that same face");
         assert!((ghost.free_high - 269.0).abs() < 1e-9, "with the board inside the void");
+    }
+
+    #[test]
+    fn a_wall_stands_in_the_frontal_plane_and_its_ghost_is_the_plan() {
+        // N28: the wall is the third fill pair, so the ghost needs no rule of its own — it draws the
+        // plan the click will store, in the stance ADR 0105 fixes for the wall.
+        let (project, product) = piece();
+        let point = DVec3::new(300.0, 280.0, 360.0);
+        let ghost = plan(&project, product, point, Fill::WidthAndHeight, millimetres(18), Sight::none())
+            .expect("a wall fills the void");
+        assert_eq!(ghost.nominal_size.length(), millimetres(720), "the niche height is the wall's length");
+        assert_eq!(ghost.nominal_size.width(), millimetres(600), "and the niche width is its width");
+        assert_eq!(ghost.size_mm, DVec3::new(720.0, 600.0, 18.0));
+        let near = |point: DVec3, wanted: DVec3| (point - wanted).length() < 1e-9;
+        assert!(near(ghost.placement.translation(), DVec3::new(0.0, 280.0, 0.0)), "{:?}", ghost.placement);
+        // Vertex 1 is the base corner: the panel's length runs up, its width across the front and its
+        // thickness towards the maker, so the board's base face is the one at the pointer's depth.
+        assert!(near(ghost.world[0], DVec3::new(0.0, 280.0, 0.0)), "the first corner is the base corner");
+        assert!(near(ghost.world[1], DVec3::new(0.0, 280.0, 720.0)), "the second stands directly above it");
+        assert!(near(ghost.world[3], DVec3::new(600.0, 280.0, 0.0)), "the width runs across the front");
+        assert!(near(ghost.top[0], DVec3::new(0.0, 298.0, 0.0)), "the material runs towards +Y");
+        assert_eq!((ghost.free_low, ghost.free_high), (280.0, 298.0), "one thickness of depth");
+        assert!(ghost.low_face().is_some_and(|face| (face.y - 280.0).abs() < 1e-9), "the fields measure the base face");
+        // The ghost is the plan the command receives, to the micrometre.
+        let stored = project
+            .fill_plan(
+                product,
+                model::FillRequest::new(point, Fill::WidthAndHeight, FillMode::Fit, millimetres(18), None),
+                Sight::none(),
+                None,
+            )
+            .expect("the same plan");
+        assert_eq!(ghost.placement, stored.placement, "the ghost stores the plan's placement");
+        assert_eq!(ghost.nominal_size, stored.nominal_size, "and its size");
+        assert_eq!(ghost.outline, stored.outline, "and its outline");
     }
 
     #[test]

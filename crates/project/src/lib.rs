@@ -105,6 +105,14 @@ pub enum SceneFileError {
         /// The version this build writes.
         supported: u32,
     },
+    /// The document was written by another schema than this build reads.
+    #[error("unsupported schema version {found}; this build supports {supported}")]
+    UnsupportedSchemaVersion {
+        /// The version found in the file, or a word saying it could not be read.
+        found: String,
+        /// The version this build writes.
+        supported: u32,
+    },
 }
 
 /// A loaded scene: the document plus any top-level sections this build does not understand.
@@ -120,7 +128,9 @@ struct Envelope {
     #[serde(default)]
     format: Option<String>,
     format_version: u32,
-    document: Project,
+    /// The document as it stands in the file: read as a value first, so the schema is checked
+    /// before a field of some older layout is reported as a broken one (ADR 0096).
+    document: Value,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
 }
@@ -166,7 +176,19 @@ impl SceneFile {
                 supported: FORMAT_VERSION,
             });
         }
-        Ok(Self { document: envelope.document, extra: envelope.extra })
+        // A document from another build says which build wrote it: the schema number is read
+        // before the tree, so an older layout names its version instead of failing inside the first
+        // field that moved (ADR 0096). The document's own reader refuses the same number, so every
+        // door into a document answers this one sentence; here it also keeps the envelope's own
+        // error, which does not read as broken JSON.
+        let found = envelope.document.get("schema_version").and_then(Value::as_u64);
+        if found != Some(u64::from(Project::CURRENT_SCHEMA_VERSION)) {
+            return Err(SceneFileError::UnsupportedSchemaVersion {
+                found: found.map_or_else(|| "missing".to_owned(), |version| version.to_string()),
+                supported: Project::CURRENT_SCHEMA_VERSION,
+            });
+        }
+        Ok(Self { document: Project::from_value(envelope.document)?, extra: envelope.extra })
     }
 
     /// Reads and parses a scene file from disk.

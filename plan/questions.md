@@ -6,7 +6,6 @@ this file only when a task touches the question.
 - Folder naming, version statuses and the draft-to-production transition in the order registry.
 - What API the material and order programs expose locally (CLI, socket, HTTP), and whether they ship
   with Z3L or stay external.
-- Where the workshop profile lives: project, application settings or the resource system.
 - Whether reference retrieval (catalogues, norms, past jobs) is needed, and in what form.
 - Voice input and output: which platform or service, if any.
 - The orientation widget has no keyboard or menu equivalent; decide whether the six views deserve
@@ -38,7 +37,7 @@ this file only when a task touches the question.
   one module and the UI to one card, at the cost of rewriting every command or keeping the stable ids
   as thin wrappers over the change values. Decide before M8 puts hardware commands on the same pattern.
 - How a workshop-made part is decomposed for production. `10.15` tamburat and `10.16` bent panels
-  (ADR 0104) are classes because the shop assembles them, and `supply = shop` keeps them counted once
+  (ADR 0217) are classes because the shop assembles them, and `supply = shop` keeps them counted once
   and out of the cutting list. Whether their components travel as a recipe on the object — the two
   8 mm skins and the rails, expanded by the exporter — or as ordinary sheet parts in the tree is not
   decided. The class rows do not change either way; the production mechanism does. The owner left it
@@ -53,3 +52,31 @@ this file only when a task touches the question.
   threshold belongs to the workshop standard, the prototype's own parameter or both, and whether its
   children are named left/right or 1..n; and whether a fit-out's minimum width may steer the split.
   The standards' home is the workshop-profile question above.
+- The room and the props around a product — a window, a curtain, a plant, a rug, pillows — are they
+  imported from an asset library, modelled in Z3L, or does a catalogue image keep the furniture on a
+  studio backdrop? The example the owner points at is about half props, and no tracer draws them
+  without geometry.
+- The area pull's target (G4): the Extrude cell arms it on the *selected* drawing, because that is
+  where the cell was pressed. SketchUp's push/pull needs no selection — the pointer names the face of
+  whatever drawing it is over. Reading the pointer's drawing instead is a mode whose target is not the
+  selection, and it changes what the cell means for every other payload; confirm the narrower reading
+  or ask for the pointer-driven one.
+
+- The hanging rail's registry row `20.06` names `10.02` as its host, and `10.02` is not a class of
+  the registry (the cornice row `20.03` names it too), so `node.property.set` refuses to class a
+  rail in a cabinet. Confirm the fix: give `20.06` and `20.03` the cabinet family `10.01` as their
+  host, or add the `10.02` row the registry expects (J9).
+
+- A front's mounting form — overlay, inset, half-overlay — is not document data: the hinge class
+  carries it and the door does not, so the inspector cannot tell a flush overlay door from an inset
+  one and `door_gap` reads every front as an overlay. Confirm whether the mounting form belongs on
+  the door (a reserved property or a class variant) before the rule stops guessing (J9).
+
+- The assistant settings page has no ready-made templates, and the owner asked for some "as in
+  SolidCraft". ADR 0189 says no provider name appears in a type, a match arm or a default, and a
+  preset table is one. Three shapes: (1) amend the record to allow a data-driven preset list in the
+  workspace settings, seeded from a file, with the address still the only wire; (2) offer the
+  addresses already in `assistant.consent` as one-click "use again", which needs no provider name
+  and helps a returning workshop; (3) ship a documented `settings.example.json` with one example and
+  change no code. The session took (2) as the default for now: a first-run beginner test decides
+  whether (1) is needed.

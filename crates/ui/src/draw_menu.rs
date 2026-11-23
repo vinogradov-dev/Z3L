@@ -3,7 +3,7 @@
 //! A polyline keeps its chain, so the right button cannot finish it the way it finishes a fixed
 //! figure. The button opens this menu instead: it chooses whether the next segment is straight or an
 //! arc, the switch that used to sit on Tab before Tab became the point's own key, and it offers the
-//! finish the status bar's *Finish* runs (ADR 0126, 0128).
+//! finish the armed tool's card draws as its check (ADR 0126, 0128, U115).
 //!
 //! It is a surface of its own rather than a row of the node context menu: that list is about a node
 //! under the pointer, and a running draft names no node. The popup, its rectangle and its dismissal
@@ -63,7 +63,7 @@ impl DraftMenu {
     /// Draws the open menu over `viewport` and returns the choice this frame.
     ///
     /// `arc` is the kind the next segment already is, so the menu can name it as the current one
-    /// instead of offering a press that changes nothing; `can_finish` is the status bar's own rule,
+    /// instead of offering a press that changes nothing; `can_finish` is the draft's own rule,
     /// so a finish the command would refuse is drawn refused.
     pub fn show(
         &mut self,

@@ -83,9 +83,15 @@ primitive is described in section 5.
   before the document changes. Extruding a path object converts that node into the body in place and
   keeps its id, name, placement, pivot_local and properties, so the drawing is not left behind as a
   separate object ([0074](../decisions/0074-an-extrusion-owns-the-path-it-grew-from.md)).
-- A contour is a ring of directed **segments**, at least three. A segment is a straight line between
-  two points or a circular arc with a centre, a positive radius, a start angle and a non-zero sweep
-  of at most one turn. Every value is stored in document units: micrometres and millidegrees.
+- A box made without a pointer is the same payload: `object.cuboid.create` builds the base rectangle
+  from three sides and sweeps it, so the node is a constructive body and not a parameter set — the
+  ribbon cell that draws a box is the rectangle gesture, and its word is the label this command
+  carries, so `command_list` names the shape the button prints (X105).
+- A contour is a ring of directed **segments**, at least one: a full circle is one arc and a half
+  circle with its diameter is two ([0221](../decisions/0221-a-ring-is-one-closed-chain-not-three-segments.md)).
+  A segment is a straight line between two points or a circular arc with a centre, a positive
+  radius, a start angle and a non-zero sweep of at most one turn. Every value is stored in document
+  units: micrometres and millidegrees.
 - Every segment carries a stable id, unique inside its ring and never reused. An edit keeps the id of
   every segment it does not touch, so a command names a segment instead of an index; a fresh ring
   numbers its segments from one and keeps a counter for the next id.
@@ -102,8 +108,17 @@ primitive is described in section 5.
 - The same ring may be the stored outline of a contour panel: the panel copies it, anchors its
   minimum corner at the panel zero and derives its nominal size from the bounds (see
   [Panels and edge banding](panels.md)).
-- Later features — a boolean with another object, a chamfer, a fillet — are added to the same list.
-  None of them may reference a face or an edge of the evaluated result
+- A **boolean step** combines the body built so far with the shape a cutter had when the step was
+  applied ([0197](../decisions/0197-a-body-boolean-is-a-step-that-names-its-tool.md)). The step
+  stores the operation and a `BooleanTool` — the cutter's name, its own feature history and its
+  placement in the target's frame — so it is self-contained: a later edit to the source changes
+  nothing, no file can name a deleted node, and nesting is bounded by `MAX_BOOLEAN_DEPTH`.
+- The command spends the cutter's node in the same revision and undo entry, so the result is one
+  body; a cutter **marked as a tool** survives and may be applied again. The mark also lets a tool
+  pass through parts, which is how it reaches the body it cuts: the placement guard and both drags
+  read it and leave a marked body to interpenetrate whatever it stands in.
+- Later features — a chamfer, a fillet — are added to the same list. None of them may reference a
+  face or an edge of the evaluated result
   ([0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md)).
 - The height is positive and capped by the document's size limit. An empty or negative feature list
   is invalid, and a body that stores no path, or names its path twice, is a readable load error.
@@ -118,13 +133,21 @@ primitive is described in section 5.
 
 ## 5. Primitive payload
 
-- `Primitive` is a shape and the parameters that build it, stored as
-  `Geometry::Primitive(Primitive)` (schema 25). It is never a mesh: the mesh is derived on read
-  ([0054](../decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)).
-- The inner tag is `shape`, because the outer payload already carries `kind`. The only variant is
-  `sphere { radius, segments, bands }`. A box and a cylinder are **not** primitives: they are drawn
-  profiles swept on `Z` and stored as a constructive body
+- `Primitive` is a **body**: a `PrimitiveShape` and the boolean steps cut from it, stored as
+  `Geometry::Primitive(Primitive)` (schema 32). It is never a mesh: the mesh is derived on read
+  ([0054](../decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md)). A plain sphere or
+  cone has no step and is drawn from its parameters; a body with a step has no analytic mesh and is
+  built by the geometry kernel, exactly as a drawn body with a step is
+  ([0208](../decisions/0208-a-primitive-is-a-body-a-boolean-cuts.md)).
+- The parameters are tagged `shape`, because the outer payload already carries `kind`. The variants
+  are `sphere { radius, segments, bands }` and `cone { base_radius, top_radius, height, segments }`. A
+  box and a cylinder are **not** primitives: they are drawn profiles swept on `Z` and stored as a
+  constructive body
   ([0138](../decisions/0138-a-solid-body-is-a-drawn-profile-swept-on-z.md)).
+- A primitive is an operand of a body boolean in both directions: a block subtracted from a ball
+  leaves a rectangular notch in it, and a ball subtracted from a board leaves a round hole. The step
+  freezes the other body's shape, never a node, and a primitive's own step list is bounded by
+  `MAX_BOOLEAN_DEPTH` and `MAX_OBJECT_FEATURES`.
 - The parameter set is the shape's own: a sphere has a radius, a side count and its latitude bands.
   There is no generic tessellation field shared by shapes that do not need it.
 - The sphere is centred on its own zero, and its balance is analytic: `vertex_count`, `face_count`
@@ -141,7 +164,9 @@ primitive is described in section 5.
   keeping the id, name, placement, pivot_local and properties. The card shows the fields the shape has,
   in millimetres and whole numbers.
 - Collapsing a primitive bakes the derived mesh and drops the parameters, exactly as a constructive
-  object drops its feature list. A baked mesh and a path cannot be collapsed.
+  object drops its feature list. A primitive that carries a step has no analytic mesh, so its
+  collapse is refused with a sentence until the command path can reach the geometry kernel. A baked
+  mesh and a path cannot be collapsed.
 
 ## 6. Path payload
 
@@ -228,9 +253,9 @@ in one viewport mode. Its state is view state, not document data
   edited segment's id; `split_segment` keeps the first part's id and mints the second part from the
   ring counter. A ring rebuilt this way never reuses an id, so a band or a selection keyed by a
   segment id survives the edit.
-- Each intermediate draft must be a valid ring: closed, at least three segments, non-zero area,
-  inside the coordinate limit and not self-intersecting. A gesture that would break the ring is
-  rejected and leaves the last valid draft in place, so a corner simply stops at the boundary.
+- Each intermediate draft must be a valid ring: closed, non-empty, with a non-zero area, inside the
+  coordinate limit and not self-intersecting. A gesture that would break the ring is rejected and
+  leaves the last valid draft in place, so a corner simply stops at the boundary.
 - **Apply** dispatches exactly one command — `panel.outline.set` for a panel outline,
   `object.contour.replace` for the path inside a constructive body, `object.path.replace` for a path
   and `panel.machining.update` for a cutout ring — and one undo entry is the whole edit. A cutout
@@ -255,18 +280,25 @@ in one viewport mode. Its state is view state, not document data
   reuses the mesh and only changes the world transform. The derived mesh is never written to the file.
 - A derivation input is anything the geometry depends on: a panel's outline, nominal size, machining,
   banding and band order, its resolved thickness and the catalogue-resolved band profiles; an
-  object's whole geometry payload, which for a primitive is its shape and parameter set. A catalogue
+  object's whole geometry payload, which for a primitive is its shape and parameter set, and for a
+  constructive body the whole closure of tool bodies its boolean steps name, each with its placement
+  in the body's own frame. A catalogue
   material change reaches the cache through the resolved thickness and profile, so a material swap
   rebuilds the panels that use it.
-- A primitive is evaluated analytically in `mesh` (`evaluate_primitive`): the parameters
-  are document data, the ring trigonometry runs at the geometry boundary and the result is rounded
-  back to lengths. The viewport and `object.collapse` call that one function.
+- A primitive is evaluated analytically in `param` (`build_primitive_mesh`, called through
+  `mesh::evaluate_primitive`): the parameters are document data, the ring trigonometry runs at the
+  geometry boundary and the result is rounded back to lengths. The viewport and `object.collapse`
+  call that one function. A primitive that carries a step is built by the kernel from a closed
+  triangle surface instead (`mesh::primitive_mesh_with`), and the body the kernel divides stands its
+  sphere rings half a step off the equator, so no ring of vertices lies in the plane a ball is drawn
+  on.
 - Editing the contour, a feature parameter or a primitive parameter bumps the revision once; the next
   frame re-evaluates only the nodes it touched. A pass that visits fewer nodes drops the entries of
   nodes that no longer exist.
 - An evaluation failure — no kernel, a contour the kernel rejects, a boolean that yields no solid —
   keeps the object and its data and reports a diagnostic on the node. It is not a load error and it
-  does not delete anything.
+  does not delete anything, and it never freezes the frame: the node draws nothing, the rest of the
+  scene still draws and still follows the pointer, and the status bar names the node.
 - `object.collapse` refuses to run while the current evaluation fails.
 
 ## 9. Collapse
@@ -306,16 +338,28 @@ in one viewport mode. Its state is view state, not document data
 | `object.primitive.create` | parent, name, primitive kind, size, placement | creates a parametric primitive with the default tessellation, returns its id |
 | `object.primitive.replace` | object, primitive | replaces the parameters in one revision and keeps the node |
 | `object.extrude.create` | parent, name, contour, height, placement | creates a constructive object with one `Extrude`; the contour becomes the body's path |
+| `object.cuboid.create` | parent, name, width, depth, height, placement | creates the same constructive object from a base rectangle it builds itself; the local zero is the centre of the base face, and the word is the ribbon box cell's (`Box`) |
 | `object.path.extrude` | object, height | turns a path node into the body that owns it, in place |
 | `object.extrude.height.set` | object, height | replaces the first extrusion's height and keeps the path |
 | `object.contour.replace` | object, path | replaces the body's path and rebuilds |
 | `object.path.create` | parent, name, path, placement | creates a path object, returns its id |
 | `object.path.replace` | object, path | replaces the drawing and keeps the node |
-| `object.collapse` | object | replaces the payload with the evaluated mesh |
+| `object.boolean.set` | object, operation, tool | appends a boolean step that freezes the tool's shape, then spends the tool's node unless it is marked a tool |
+| `object.tool.set` | object, tool | marks or unmarks a body as a tool: it survives a boolean and may pass through parts |
+| `object.boolean.remove` | object, index | removes one step from the history and keeps the extrusion |
+| `object.collapse` | object | replaces the payload with the evaluated mesh (an analytic extrusion only) |
 | `mesh.vertices.move` | object, list of (index, local position) | moves vertices as one change |
 
 A face move is a `mesh.vertices.move` over the face's vertices; it does not need its own command.
 Every command bumps the revision once and becomes one undo entry.
+
+The Model tab's three boolean cells are one mode, not three buttons: the target is the body
+selected when the cell is pressed, the next picked body is the tool, and the body's own geometry
+fills the session overlay while the person decides (ADR 0093). Enter dispatches
+`object.boolean.set` once and Escape writes nothing, so one cut — the step and the spent cutter
+together — is one undo entry however long it was looked at. The object card lists each step with its
+operation and the cutter's name, its − dispatches `object.boolean.remove`, and the tool mark has its
+box there.
 
 ## 12. Tests
 
@@ -377,7 +421,8 @@ At minimum:
 
 - Arcs in a profile: the kernel profile is a polyline, so an arc is sampled; the document keeps the arc.
 - Holes in a profile.
-- Booleans between two objects, and what the operands look like in the tree.
+- What a boolean result looks like as a *tool*: a cutter may be a primitive or a mesh, not only a
+  constructive body, and today only a body can be one.
 - Fillet and chamfer: they need a face or an edge of the result, so they wait for a naming design.
 - Multi-body objects versus one object per solid.
 - Normals and shading: flat now; smooth shading and hard edges are undecided.

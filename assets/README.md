@@ -20,10 +20,10 @@ assets/icons/<theme>/<name>.svg
 |---|---|---|
 | `contour` | `line`, `line-angle`, `polyline`, `arc`, `arc-centre`, `arc-radius`, `rectangle`, `rectangle-centre`, `rectangle-centre-directed`, `rectangle-edge`, `circle`, `circle-diameter`, `circle-three-points`, `circle-tangent`, `polygon`, `polygon-apothem`, `polygon-edge`, `trim`, `extend`, `offset`, `fillet`, `chamfer`, `break`, `construction-horizontal`, `construction-vertical`, `construction-parallel`, `construction-angle`, `dimension-linear`, `dimension-baseline`, `dimension-chain`, `dimension-angular`, `dimension-radius`, `dimension-diameter`, `measure`, `boolean-union`, `boolean-subtract`, `boolean-intersect`, `close`, `cancel` | The ribbon *Sketch* tab |
 | `primitives` | `cuboid`, `cylinder`, `sphere`, `cone` | The ribbon *Model* tab |
-| `bodies` | `extrude`, `revolve`, `sweep` | The ribbon *Model* tab |
-| `scene` | `product`, `panel`, `post`, `shelf`, `void`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |
-| `view` | `orthographic`, `perspective`, `frame-all`, `maximize`, `restore`, `home`, `grid-snap`, `orbit`, `pan`, `zoom`, `layout`, `shaded`, `shaded-edges`, `wireframe`, `xray`, `translucent`, `sliders`, `shadows`, `axon`, `front`, `left`, `top`, `right`, `bottom` | The ribbon *View* tab, the floating viewport cluster, the header |
-| `actions` | `confirm`, `dismiss`, `cancel`, `undo`, `redo`, `delete`, `add`, `remove`, `duplicate`, `rename`, `copy`, `paste`, `file-new`, `file-open`, `file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `visible`, `hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`, `error`, `info`, `help`, `pin` | Menus, dialogs, strips, the command palette and the shortcut reference |
+| `bodies` | `extrude`, `pull-area`, `revolve`, `sweep` | The ribbon *Model* tab |
+| `scene` | `product`, `panel`, `panel-shape`, `board`, `overlay`, `row`, `fit`, `post`, `shelf`, `wall`, `void`, `assembly`, `camera`, `light` | The ribbon *Furniture* and *Scene* tabs |
+| `view` | `orthographic`, `perspective`, `frame-all`, `maximize`, `restore`, `home`, `grid-snap`, `snap-all`, `snap-vertex`, `snap-intersection`, `snap-midpoint`, `snap-centre`, `snap-perpendicular`, `snap-tangent`, `snap-edge`, `snap-face`, `snap-axis`, `snap-space`, `snap-foot`, `orbit`, `pan`, `zoom`, `layout-single`, `layout-columns`, `layout-rows`, `layout-quad`, `shaded`, `shaded-edges`, `wireframe`, `xray`, `translucent`, `sliders`, `shadows`, `axon`, `front`, `left`, `top`, `right`, `bottom` | The ribbon *View* tab, the floating viewport cluster, the header |
+| `actions` | `confirm`, `dismiss`, `cancel`, `undo`, `redo`, `delete`, `add`, `remove`, `duplicate`, `rename`, `copy`, `paste`, `file-new`, `file-open`, `file-save`, `file-export`, `file-import`, `print`, `settings`, `search`, `command`, `assistant`, `visible`, `hidden`, `lock`, `unlock`, `expand`, `collapse`, `panel-left`, `panel-right`, `warning`, `error`, `info`, `help`, `pin` | Menus, dialogs, strips, the command palette and the shortcut reference |
 | `window` | `minimize`, `maximize`, `restore`, `close` | The window row of the header; drawn only when the system frame is off |
 | `transform` | `object` | The transform band's object-move cell and the node menu's gesture entries |
 
@@ -133,6 +133,6 @@ theme and the file name stay unchanged.
 
 ## Ownership
 
-The icons are drawn for Z3L and carry the project license, MIT OR Apache-2.0. Do not copy an
+The icons are drawn for Z3L and carry the project license, Apache-2.0. Do not copy an
 icon set from another product (`AGENTS.md` §4.6): a third-party icon keeps its license file next to
 the asset and gets a row in `ATTRIBUTION.md` in the same change.

@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use egui::Ui;
-use engine::PrimitiveKind;
+use engine::{ContourOp, PrimitiveKind};
 use model::{ClassCode, FillMode, Id};
 use text::{Lang, Message};
 use units::Length;
@@ -56,7 +56,7 @@ pub mod state;
 pub use self::ready::draft_can_close;
 pub use self::state::Toolbars;
 
-use self::ready::{projection_icon, ready};
+use self::ready::{projection_icon, ready, snap_mode_icon};
 
 /// Height of a new extrusion, in millimetres; also the height the next extrusion starts at.
 pub const DEFAULT_EXTRUDE_HEIGHT_MM: i64 = 100;
@@ -113,12 +113,17 @@ pub enum ToolAction {
         /// Which circle method draws the figure.
         tool: DrawTool,
     },
-    /// Extrudes the selected closed path into a body.
-    ExtrudePath {
-        /// The path object to extrude.
+    /// Turns the selected drawing into bodies: one for a path, one per ring for a contour set.
+    Extrude {
+        /// The drawing object — a closed path or a contour set — that becomes bodies.
         object: Id,
-        /// Height along the path's local Z.
+        /// Height along the drawing's local Z.
         height: Length,
+    },
+    /// Arms the area pull on the selected drawing: the pointer names an area, a click pulls it (G4).
+    AreaPull {
+        /// The contour set whose areas the pointer reads.
+        object: Id,
     },
     /// Creates a camera at the scene root.
     CreateCamera,
@@ -132,8 +137,12 @@ pub enum ToolAction {
     FrameAll,
     /// Switches the viewport between perspective and orthographic.
     ToggleProjection,
-    /// Turns the work-plane grid snap on or off.
-    ToggleGrid,
+    /// Turns one snap kind on or off (U116).
+    ToggleSnap(model::SnapKind),
+    /// Turns every snap kind on, or every kind off (U116).
+    ToggleSnapAll,
+    /// Switches the snap mode between 3D and 2.5D (U119).
+    ToggleSnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     ToggleShadows,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
@@ -141,6 +150,10 @@ pub enum ToolAction {
     /// Arms the niche tool, or disarms it when it already is: the pointer names the empty space
     /// inside the open product and the document is never touched (ADR 0118).
     Void,
+    /// Arms one contour boolean over the selection, or drops it when it is already armed (G3).
+    ContourBoolean(ContourOp),
+    /// Arms one body boolean over the selected body, or drops it when it is already armed (W1).
+    BodyBoolean(ContourOp),
 }
 
 /// Every drawing tool a key starts, in shortcut order: the draw group then the shapes.
@@ -205,6 +218,13 @@ pub enum ToolActivity {
     Measure,
     /// The niche tool is armed and names the empty space under the pointer.
     Void,
+    /// The area pull is armed: the pointer names an area of the selected drawing, and a click pulls
+    /// it into a body of its own (G4).
+    AreaPull,
+    /// A contour boolean is armed and collects the picked rings.
+    ContourBoolean(ContourOp),
+    /// A body boolean is armed and collects the target and its tool.
+    BodyBoolean(ContourOp),
 }
 
 /// The activity whose button is pressed, from what the editor holds.
@@ -218,8 +238,10 @@ pub fn tool_activity(
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
     niche: bool,
+    pull: bool,
+    boolean: Option<(crate::editor::BooleanOperand, ContourOp)>,
 ) -> Option<ToolActivity> {
-    match (drawing, frame, fill, measure, niche) {
+    let drawing = match (drawing, frame, fill, measure, niche) {
         (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
         (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
         (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
@@ -232,7 +254,14 @@ pub fn tool_activity(
         (None, false, None, true, _) => Some(ToolActivity::Measure),
         (None, false, None, false, true) => Some(ToolActivity::Void),
         (None, false, None, false, false) => None,
-    }
+    };
+    // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
+    // a running draft or a fill (G3). The two operand kinds are two cells on two tabs, and the kind
+    // decides which one draws pressed (W1).
+    drawing.or(pull.then_some(ToolActivity::AreaPull)).or(boolean.map(|(kind, op)| match kind {
+        crate::editor::BooleanOperand::Rings => ToolActivity::ContourBoolean(op),
+        crate::editor::BooleanOperand::Bodies => ToolActivity::BodyBoolean(op),
+    }))
 }
 
 /// Whether the button for one tool is the armed one.
@@ -255,6 +284,11 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         }
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
         (Some(ToolActivity::Void), ToolKind::Void) => true,
+        // The pull owns the pointer and the Extrude cell's second method is the one that armed it
+        // (G4).
+        (Some(ToolActivity::AreaPull), ToolKind::AreaPull) => true,
+        (Some(ToolActivity::ContourBoolean(armed)), ToolKind::ContourBoolean(op)) => armed == op,
+        (Some(ToolActivity::BodyBoolean(armed)), ToolKind::BodyBoolean(op)) => armed == op,
         _ => false,
     }
 }
@@ -309,8 +343,10 @@ pub struct RibbonView {
     pub perspective: bool,
     /// The viewport owns its projection; an authored camera pins it.
     pub owns_view: bool,
-    /// The work-plane grid snap is on.
-    pub grid: bool,
+    /// Which snap kinds capture the pointer (U116).
+    pub snaps: model::SnapKinds,
+    /// How a snap reads a corner above the drawing plane (U119).
+    pub snap_mode: model::SnapMode,
     /// The active view draws the ground shadow (U107).
     pub shadows: bool,
 }
@@ -322,8 +358,12 @@ pub enum RibbonViewAction {
     FrameAll,
     /// Switch between perspective and orthographic.
     ToggleProjection,
-    /// Turn the work-plane grid snap on or off.
-    ToggleGrid,
+    /// Turn one snap kind on or off (U116).
+    ToggleSnap(model::SnapKind),
+    /// Turn every snap kind on, or every kind off (U116).
+    ToggleSnapAll,
+    /// Make every snap answer the 2.5D way, or the 3D way (U119).
+    ToggleSnapMode,
     /// Turn the active view's ground shadow on or off (U107).
     ToggleShadows,
 }
@@ -337,7 +377,7 @@ pub struct RibbonOutcome {
     ///
     /// The ribbon reports the *Close* instead of running it, because closing owns the work plane,
     /// the gizmo state and the scene rebuild — all of them the shell's. One close path serves the
-    /// ribbon, the status bar and a click on the first draft point (ADR 0052).
+    /// ribbon's Draft group and a click on the first draft point (ADR 0052).
     pub close_draft: bool,
     /// The view action the ribbon asked for, if any.
     pub view: Option<RibbonViewAction>,
@@ -373,14 +413,24 @@ pub struct RibbonContext {
     pub selected: Option<Id>,
     /// Whether the selection is a path, and whether that path is closed.
     pub selected_path: Option<bool>,
+    /// Whether the selection draws one closed ring a boolean can take: a path object or a body's
+    /// own profile (X98).
+    pub selected_ring: bool,
+    /// Whether the selection is a contour set, whose enclosed areas the Extrude cell pulls (G4).
+    pub selected_drawing: bool,
+    /// Whether the selection is a solid body — a drawn body or a primitive — which is what a body
+    /// boolean edits and what it cuts with (W1).
+    pub selected_body: bool,
     /// The tool that owns the next click.
     pub active: Option<ToolActivity>,
     /// The view is perspective rather than orthographic.
     pub perspective: bool,
     /// Whether the viewport owns its projection; an authored camera pins it.
     pub owns_view: bool,
-    /// Whether the work-plane grid snap is on.
-    pub grid: bool,
+    /// Which snap kinds capture the pointer (U116).
+    pub snaps: model::SnapKinds,
+    /// How a snap reads a corner above the drawing plane (U119).
+    pub snap_mode: model::SnapMode,
     /// Whether the active view draws the ground shadow (U107).
     pub shadows: bool,
     /// A running draft: its tool, how many points it has, and whether it is closed.
@@ -636,7 +686,11 @@ fn show_tool(
     if !tool.has_list() {
         // The projection button draws the mode the view is *in*, so the glyph flips with the camera
         // while the hint names the switch.
-        let icon = if kind == ToolKind::Projection { projection_icon(context.perspective) } else { icon };
+        let icon = match kind {
+            ToolKind::Projection => projection_icon(context.perspective),
+            ToolKind::SnapMode => snap_mode_icon(context.snap_mode),
+            _ => icon,
+        };
         let ready = ready(kind, tool, state, context, lang);
         let response = icons::ribbon_cell(ui, RIBBON_CELL_WIDTH, icon, &ready.hint, ready.enabled, ready.armed);
         if response.clicked()
@@ -722,7 +776,15 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 // because the two fills are two cells whose methods would otherwise read the same.
                 // A body cell's method says what it builds — «Box: draw its base on the work plane»
                 // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
-                Some(ready) if matches!(method.run, Some(ToolKind::Fill { .. } | ToolKind::Body(_))) => {
+                // The two extrude methods name the payload the press takes — «Extrude the selected
+                // path», «Pull an area of the selected drawing» — because the cell's one glyph says
+                // nothing about which drawing it holds (X100).
+                Some(ready)
+                    if matches!(
+                        method.run,
+                        Some(ToolKind::Fill { .. } | ToolKind::Body(_) | ToolKind::Extrude | ToolKind::AreaPull)
+                    ) =>
+                {
                     ready.hint.clone()
                 }
                 // A primitive cell names its shape as well: a sphere and a cone share the sketch's
@@ -805,7 +867,7 @@ mod tests {
 
     use super::*;
     use crate::draw::DEFAULT_POLYGON_SIDES;
-    use crate::toolbars::ready::extrude_hint;
+    use crate::toolbars::ready::{extrude_hint, ready};
     use crate::toolbars::spec::{self, TabSpec, VariantSpec};
 
     /// A context where every live tool can run and the viewport owns its view.
@@ -815,10 +877,14 @@ mod tests {
             product_open: true,
             selected: None,
             selected_path: None,
+            selected_ring: false,
+            selected_drawing: false,
+            selected_body: false,
             active: None,
             perspective: true,
             owns_view: true,
-            grid: true,
+            snaps: model::SnapKinds::ALL,
+            snap_mode: model::SnapMode::default(),
             shadows: true,
             draft: None,
         }
@@ -936,23 +1002,33 @@ mod tests {
                     "By radius  (N)",
                     "Centre and radius  (C)",
                     "From corner  (R)",
+                    // The three boolean cells arm a mode over the selection; their hints are their
+                    // own names, so the row reads which operation the next pick serves (G3).
+                    "Intersect",
                     "Measure  (M)",
                     "No draft is running  (Esc)",
                     "Polyline · RMB line/arc · Alt ignores snaps  (P)",
+                    "Subtract",
                     "Through 3 points  (A)",
                     "Two points  (L)",
+                    "Union",
                 ],
             ),
             (
                 "model",
                 &[
                     "Box: draw its base on the work plane",
+                    // The three body boolean cells arm a mode over the selected body; like the
+                    // contour cells, their hint is their own name (W1).
+                    "Intersect",
                     // A primitive cell names its shape and its pinned method: a sphere and a cone
                     // share the sketch's circle methods, so the method alone would read twice.
                     "Cone: Centre and radius",
                     "Cylinder: draw its base on the work plane",
-                    "Select a closed path first",
+                    "Select a closed path or a drawing first",
                     "Sphere: Centre and radius",
+                    "Subtract",
+                    "Union",
                 ],
             ),
             (
@@ -963,10 +1039,34 @@ mod tests {
                     "Post: Largest rectangle",
                     "Product frame",
                     "Shelf: Largest rectangle",
+                    "Wall: Largest rectangle",
                 ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
-            ("view", &["Frame all  (F)", "Grid snap  (G)", "Shadows  (S)", "Switch the projection  (O)"]),
+            (
+                "view",
+                &[
+                    "All snaps",
+                    "Centre",
+                    // The mode cell's hint is the sentence about the two readings, because one
+                    // glyph cannot carry them (U119).
+                    "How a snap reads a corner above the drawing plane: 2.5D takes its foot on the \
+                     plane, 3D takes the point itself. The cell shows the reading in force; press to \
+                     switch.",
+                    "Corner",
+                    "Crossing",
+                    "Frame all  (F)",
+                    "Grid  (G)",
+                    "Middle",
+                    "On a face",
+                    "On an edge",
+                    "Perpendicular",
+                    "Shadows  (S)",
+                    "Switch the projection  (O)",
+                    "Tangent",
+                    "World axes",
+                ],
+            ),
         ];
         for (id, hints) in expected {
             let mut state = Toolbars::new();
@@ -989,9 +1089,13 @@ mod tests {
             let caption = if caption == "СОЗДАТЬ" { "CREATE" } else { "DRAFT" };
             assert!(texts.iter().any(|text| text == caption), "{caption} names a live group: {texts:?}");
         }
-        for caption in ["MODIFY", "CONSTRUCTION", "DIMENSIONS", "BOOLEANS"] {
+        for caption in ["MODIFY", "CONSTRUCTION", "DIMENSIONS"] {
             assert!(!texts.iter().any(|text| text == caption), "{caption} holds no live tool: {texts:?}");
         }
+        // The sketch tab's three cells combine **drawings** (G3), and since W2 their caption says so:
+        // a body is cut on the Model tab, whose own group keeps the word "Booleans".
+        assert!(texts.iter().any(|text| text == "CONTOURS"), "CONTOURS holds three live tools: {texts:?}");
+        assert!(!texts.iter().any(|text| text == "BOOLEANS"), "the sketch tab cuts no body: {texts:?}");
     }
 
     #[test]
@@ -1216,14 +1320,32 @@ mod tests {
             (None, false, None, true, false, Some(ToolActivity::Measure)),
             (None, false, None, false, true, Some(ToolActivity::Void)),
             (Some((DrawTool::Arc, path)), false, None, false, true, Some(ToolActivity::Draw(DrawTool::Arc))),
+            (None, false, None, false, false, Some(ToolActivity::ContourBoolean(ContourOp::Union))),
+            (None, false, None, false, false, Some(ToolActivity::BodyBoolean(ContourOp::Subtract))),
+            // A boolean owns the picks, so a running draft outranks it: two pressed cells for one
+            // pointer would lie about which tool the next click serves.
+            (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
         ];
         for (drawing, frame, fill, measure, niche, expected) in cases {
+            // A case whose expected activity is a boolean arms one; every other case leaves it off.
+            let boolean = match expected {
+                Some(ToolActivity::ContourBoolean(op)) => Some((crate::editor::BooleanOperand::Rings, op)),
+                Some(ToolActivity::BodyBoolean(op)) => Some((crate::editor::BooleanOperand::Bodies, op)),
+                _ => None,
+            };
             assert_eq!(
-                tool_activity(drawing, frame, fill, measure, niche),
+                tool_activity(drawing, frame, fill, measure, niche, false, boolean),
                 expected,
-                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche}"
+                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche} boolean={boolean:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_armed_area_pull_is_the_pressed_extrude_cell() {
+        let activity = tool_activity(None, false, None, false, false, true, None);
+        assert_eq!(activity, Some(ToolActivity::AreaPull));
+        assert_eq!(tool_activity(None, false, None, false, false, false, None), None, "no pull, no armed cell");
     }
 
     #[test]
@@ -1306,7 +1428,7 @@ mod tests {
         let mut state = Toolbars::new();
         state.set_tab(tab("model"));
         let (_, labels, _) = draw(&mut state, full_context());
-        assert!(labels.iter().any(|label| label.contains("Select a closed path first")));
+        assert!(labels.iter().any(|label| label.contains("Select a closed path or a drawing first")));
         assert_eq!(state.extrude_height(), Length::from_millimetres(100).expect("height"));
     }
 
@@ -1331,13 +1453,78 @@ mod tests {
     }
 
     #[test]
+    fn a_body_enables_the_three_boolean_cells_and_a_path_payload_alone_does_not() {
+        // The context's ring is the profile a body grew from, so the three cells run on a body
+        // exactly as on the drawing it was extruded from (X98); the extrude cell keeps its own rule,
+        // because a body has no path payload to extrude a second time.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("sketch"));
+        let node = Id::new(7).expect("id");
+        let body = RibbonContext { selected: Some(node), selected_ring: true, ..full_context() };
+        let path = RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() };
+        for id in ["sketch.booleans.union", "sketch.booleans.subtract", "sketch.booleans.intersect"] {
+            let cell = tool(id);
+            let kind = cell.run.expect("a boolean cell runs a tool");
+            assert!(ready(kind, cell, &state, body, Lang::En).enabled, "{id} runs on a body's profile");
+            assert!(!ready(kind, cell, &state, path, Lang::En).enabled, "{id} needs a ring, not a path alone");
+        }
+        let extrude = tool("model.create.extrude");
+        let kind = extrude.run.expect("the extrude cell runs a tool");
+        assert!(!ready(kind, extrude, &state, body, Lang::En).enabled, "a body is not a path to extrude");
+        assert!(ready(kind, extrude, &state, path, Lang::En).enabled, "a closed path still extrudes");
+    }
+
+    #[test]
+    fn a_drawing_extrudes_whole_from_the_cell_and_pulls_one_area_from_its_second_method() {
+        // One press turns the whole drawing into bodies — a ring into one, a set into one per ring
+        // (X100) — and the pointer gesture that pulls one area out of a drawing is the same cell's
+        // second method, so a set offers both doors and a closed path offers only the first.
+        let state = Toolbars::new();
+        let node = Id::new(7).expect("id");
+        let cell = tool("model.create.extrude");
+        let kind = cell.run.expect("the extrude cell runs a tool");
+        let area = cell
+            .live_methods()
+            .find(|method| matches!(method.run, Some(ToolKind::AreaPull)))
+            .expect("the cell offers the area pull as a method");
+        let area_kind = area.run.expect("the method runs");
+
+        let drawing = RibbonContext { selected: Some(node), selected_drawing: true, ..full_context() };
+        let whole = ready(kind, cell, &state, drawing, Lang::En);
+        assert!(whole.enabled, "a drawing of several rings extrudes whole");
+        assert!(matches!(whole.action, Some(ToolAction::Extrude { object, .. }) if object == node));
+        assert_eq!(whole.hint, "Extrude the selected drawing");
+
+        let pull = ready(area_kind, cell, &state, drawing, Lang::En);
+        assert!(pull.enabled, "the drawing has areas to name");
+        assert_eq!(pull.action, Some(ToolAction::AreaPull { object: node }));
+        assert!(!pull.armed, "the method is not pressed until it arms the pointer");
+        assert_eq!(pull.hint, "Pull an area of the selected drawing");
+
+        let armed = RibbonContext { active: Some(ToolActivity::AreaPull), ..drawing };
+        assert!(ready(area_kind, cell, &state, armed, Lang::En).armed, "the method draws pressed once armed");
+
+        let path = RibbonContext { selected: Some(node), selected_path: Some(true), ..full_context() };
+        assert!(ready(kind, cell, &state, path, Lang::En).enabled, "a closed path still extrudes");
+        let pull = ready(area_kind, cell, &state, path, Lang::En);
+        assert!(!pull.enabled, "one ring has no areas to choose");
+        assert_eq!(pull.hint, "Select a drawing of several rings first");
+        assert_eq!(pull.action, None);
+    }
+
+    #[test]
     fn the_extrude_hint_names_what_is_missing() {
         let node = Id::new(7).expect("id");
-        assert_eq!(extrude_hint(None, None).text(Lang::En), "Select a closed path first");
-        assert_eq!(extrude_hint(None, Some(true)).text(Lang::En), "Select a closed path first");
-        assert_eq!(extrude_hint(Some(node), None).text(Lang::En), "The selected object is not a path");
-        assert_eq!(extrude_hint(Some(node), Some(false)).text(Lang::En), "The selected path is open; close it first");
-        assert_eq!(extrude_hint(Some(node), Some(true)).text(Lang::En), "Extrude the selected path");
+        let nothing = "Select a closed path or a drawing first";
+        assert_eq!(extrude_hint(None, None, false).text(Lang::En), nothing);
+        assert_eq!(extrude_hint(None, Some(true), false).text(Lang::En), nothing);
+        assert_eq!(extrude_hint(Some(node), None, false).text(Lang::En), "The selected object is not a drawing");
+        assert_eq!(extrude_hint(Some(node), None, true).text(Lang::En), "Extrude the selected drawing");
+        assert_eq!(
+            extrude_hint(Some(node), Some(false), false).text(Lang::En),
+            "The selected path is open; close it first"
+        );
+        assert_eq!(extrude_hint(Some(node), Some(true), false).text(Lang::En), "Extrude the selected path");
     }
 
     #[test]
@@ -1475,7 +1662,7 @@ mod tests {
     fn the_empty_space_tool_arms_a_fill_class_only_inside_an_open_product() {
         let state = Toolbars::new();
         let closed = RibbonContext { product_open: false, ..full_context() };
-        for tool_id in ["furniture.panels.post", "furniture.panels.shelf"] {
+        for tool_id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
             let tool = tool(tool_id);
             let kind = tool.primary().expect("a live tool");
             let cell = ready(kind, tool, &state, closed, Lang::En);
@@ -1497,6 +1684,11 @@ mod tests {
         let shelf = tool("furniture.panels.shelf");
         let cell = ready(shelf.primary().expect("a live tool"), shelf, &state, full_context(), Lang::En);
         assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }));
+
+        let wall = tool("furniture.panels.wall");
+        let cell = ready(wall.primary().expect("a live tool"), wall, &state, full_context(), Lang::En);
+        assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }));
+        assert_eq!(wall.icon, Some(icons::scene::WALL), "the wall draws its own board");
     }
 
     #[test]
@@ -1578,6 +1770,56 @@ mod tests {
         context.shadows = false;
         let off = ready(ToolKind::Shadows, tool("view.display.shadows"), &state, context, Lang::En);
         assert!(!off.armed, "a shadow that is off draws quiet");
+    }
+
+    #[test]
+    fn the_master_switch_reads_the_whole_set_and_asks_for_it() {
+        // U116: one cell turns every snap on or off. It draws pressed only while every kind is on, and
+        // from any other state — a mixed set included — one press turns the set on.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let all = tool("view.snaps.all");
+        let mut context = full_context();
+        context.snaps = model::SnapKinds::ALL;
+        let on = ready(ToolKind::SnapAll, all, &state, context, Lang::En);
+        assert!(on.armed, "every kind on draws pressed");
+        assert_eq!(on.action, Some(ToolAction::ToggleSnapAll), "and the press asks for the set");
+        assert_eq!(on.hint, "All snaps", "the cell names itself");
+
+        let mut mixed = model::SnapKinds::ALL;
+        mixed.vertex = false;
+        context.snaps = mixed;
+        assert!(!ready(ToolKind::SnapAll, all, &state, context, Lang::En).armed, "a mixed set draws quiet");
+
+        context.snaps = model::SnapKinds::none();
+        assert!(!ready(ToolKind::SnapAll, all, &state, context, Lang::En).armed, "a set with nothing on draws quiet");
+
+        // The cell is drawn in the group's first column, before the kinds it switches.
+        let (_, labels, _) = draw(&mut state, full_context());
+        assert!(labels.iter().any(|label| label == "All snaps"), "the cell is drawn: {labels:?}");
+    }
+
+    #[test]
+    fn the_mode_cell_draws_the_reading_in_force_and_asks_for_the_switch() {
+        // U119: one cell names the snap mode. The glyph is the mode in force — the point itself, or
+        // its foot on the plane — and a press asks for the other reading; the hint says what the two
+        // readings are, because a glyph cannot.
+        let mut state = Toolbars::new();
+        state.set_tab(tab("view"));
+        let cell = tool("view.snaps.mode");
+        let mut context = full_context();
+        context.snap_mode = model::SnapMode::Space;
+        let space = ready(ToolKind::SnapMode, cell, &state, context, Lang::En);
+        assert_eq!(space.action, Some(ToolAction::ToggleSnapMode), "the press asks for the other reading");
+        assert!(!space.armed, "a mode is not a switch that is on or off");
+        assert!(space.enabled, "a viewport that owns its view always has a snap mode");
+        assert_eq!(space.hint, Message::SnapModeHint.text(Lang::En), "the hint names both readings");
+        assert_eq!(ready::snap_mode_icon(context.snap_mode), icons::view::SNAP_SPACE, "3D draws the point itself");
+
+        context.snap_mode = model::SnapMode::Foot;
+        assert_eq!(ready::snap_mode_icon(context.snap_mode), icons::view::SNAP_FOOT, "2.5D draws its foot");
+        let (_, labels, _) = draw(&mut state, context);
+        assert!(labels.iter().any(|label| label == Message::SnapModeHint.text(Lang::En)), "the cell is drawn");
     }
 
     #[test]
@@ -1825,7 +2067,7 @@ mod tests {
     fn the_fill_methods_read_as_two_builds_of_one_panel() {
         // The Shape row used to be a blank line named like a second panel. It now carries its own
         // glyph beside the fit row, and the list is one flat list of the two builds (ADR 0110, U84).
-        for id in ["furniture.panels.post", "furniture.panels.shelf"] {
+        for id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
             let tool = tool(id);
             let methods = tool.methods().collect::<Vec<_>>();
             assert_eq!(methods.len(), 2, "{id} has one cell with two builds");
@@ -1862,6 +2104,33 @@ mod tests {
                 "`{gone}` is gone: the method it promised is now a cell"
             );
         }
+    }
+
+    #[test]
+    fn the_wall_cell_runs_the_two_builds_of_the_back_panel() {
+        // N28: the wall is the third fill pair, so its cell runs the same two builds over the class
+        // that carries `WidthAndHeight` — and asks nothing about overlay or inset (ADR 0200).
+        let wall = tool("furniture.panels.wall");
+        assert_eq!(wall.label.text(Lang::Ru), "Стенка", "the workshop's word for the board");
+        assert!(wall.icon.is_some_and(Icon::is_drawn), "the cell carries artwork");
+        let methods = wall.methods().collect::<Vec<_>>();
+        assert_eq!(
+            methods.iter().map(|method| method.run).collect::<Vec<_>>(),
+            vec![
+                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
+                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+            ],
+            "one cell, the fit and the shape of the same class"
+        );
+        let mut state = Toolbars::new();
+        state.set_tab(tab("furniture"));
+        let (actions, labels) = click_cell(&mut state, wall, main_point());
+        assert_eq!(actions, vec![ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }]);
+        assert!(labels.iter().any(|label| label == "Wall: Largest rectangle"), "the hint names the tool: {labels:?}");
+        assert!(
+            !labels.iter().any(|label| label.contains("Overlay") || label.contains("Inset")),
+            "the tool asks nothing about mounting: {labels:?}"
+        );
     }
 
     #[test]

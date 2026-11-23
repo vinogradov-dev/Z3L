@@ -37,6 +37,7 @@ mod panel;
 mod panel_features;
 mod placement;
 mod primitive;
+mod profile;
 mod project;
 mod properties;
 mod query;
@@ -63,7 +64,10 @@ pub use ids::{ContourSegmentId, EdgeId, Id, ItemId, ItemIdError, MachiningId, Re
 pub use light::{LightError, LightKind, LightNode};
 pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshError};
 pub use node::Node;
-pub use object::{Constructive, ConstructiveError, Extrude, Feature, Geometry, MAX_OBJECT_FEATURES, Object};
+pub use object::{
+    AreaError, Boolean, BooleanError, BooleanOp, BooleanTool, Constructive, ConstructiveError, Contours, ContoursError,
+    Extrude, Feature, Geometry, MAX_BOOLEAN_DEPTH, MAX_CONTOURS, MAX_OBJECT_FEATURES, MAX_TOOL_NAME, Object, ToolBody,
+};
 pub use panel::{
     BakedOutline, BandingSpec, ContourPath, CoreViolation, CornerBanding, Cutout, CutoutDepth, CutoutShape,
     DerivedHoles, Drilling, EdgeBanding, EdgeRef, EntryFace, FaceSide, Hole, HoleDiagnostic, HoleError,
@@ -76,12 +80,15 @@ pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
     Cone, DEFAULT_BANDS, DEFAULT_SEGMENTS, MAX_BANDS, MAX_PRIMITIVE_SIZE, MAX_SEGMENTS, MIN_BANDS, MIN_PRIMITIVE_SIZE,
-    MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, Sphere,
+    MIN_SEGMENTS, Primitive, PrimitiveError, PrimitiveKind, PrimitiveShape, Sphere,
 };
+pub use profile::{Sheet, WorkshopProfile};
 pub use project::{
     Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,
     Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError, Resting,
-    RotateLimit, RotateRule, Sight, SnapEnd, SnapSettings, SnapSurface, Stop, SurfaceKind, free_axis,
+    RotateLimit, RotateRule, SNAP_GRID_MM, SceneMark, Sight, SnapAnswer, SnapAxis, SnapEnd, SnapKind, SnapKinds,
+    SnapMode, SnapPlane, SnapRequest, SnapSettings, SnapSurface, SnapTarget, Stop, SurfaceKind, free_axis,
+    round_free_coordinate, snap_axis, snap_grid,
 };
 pub use properties::{
     Properties, PropertyChange, PropertyError, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID,

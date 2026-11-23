@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use model::{Container, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind};
-use project::{FORMAT, MAX_SCENE_BYTES, SceneFile, SceneFileError};
+use model::{
+    Container, CutoutDepth, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
+};
+use project::{FORMAT, FORMAT_VERSION, MAX_SCENE_BYTES, SceneFile, SceneFileError};
 use units::{Degrees, Length};
 
 const GOLDEN: &str = include_str!("golden/scene.z3l");
@@ -47,6 +49,11 @@ fn id(value: u64) -> Id {
     Id::new(value).expect("a non-zero id")
 }
 
+/// A scene text whose document is the body given, so a test names nothing but the body.
+fn envelope_with(body: String) -> String {
+    format!("{{\"format\": \"{FORMAT}\", \"format_version\": {FORMAT_VERSION}, \"document\": {body}}}\n")
+}
+
 #[test]
 fn the_golden_file_loads_at_the_current_schema_and_round_trips() {
     let scene = SceneFile::parse(GOLDEN).expect("the golden loads");
@@ -70,6 +77,12 @@ fn the_golden_file_carries_every_node_kind() {
 
     let panel = document.panel(id(2)).expect("the shelf loads");
     assert_eq!(panel.machining().len(), 1, "the shelf carries one machining record");
+    let cutout = panel.machining().first().and_then(|record| record.cutout()).expect("the shelf's cutout");
+    assert_eq!(
+        cutout.depth(),
+        CutoutDepth::Blind { depth: Length::from_millimetres(8).expect("a depth") },
+        "the golden keeps a blind cutout, which the split rule never touches"
+    );
     assert_eq!(panel.edge_banding().len(), 1, "the shelf carries one banding strip");
     assert_eq!(panel.bevels().len(), 1, "the shelf carries one end bevel");
     assert_eq!(
@@ -88,6 +101,11 @@ fn the_golden_file_carries_every_node_kind() {
     let path = sketch.geometry().as_path().expect("a path payload");
     assert_eq!(path.entries().len(), 1, "the chain keeps its segment");
     assert!(!path.is_closed(), "the drawn chain is open");
+
+    let union = document.object(id(10)).expect("the contour set loads");
+    let contours = union.geometry().as_contours().expect("a contour-set payload");
+    assert_eq!(contours.len(), 2, "the drawing keeps both rings");
+    assert!(union.is_tool(), "the flag of an object travels in the file");
 
     let ball = document.object(id(5)).expect("the primitive loads");
     assert!(ball.geometry().as_primitive().is_some(), "a primitive stores its parameters");
@@ -136,6 +154,38 @@ fn a_newer_format_version_is_a_readable_error() {
     assert_ne!(text, GOLDEN);
     let error = SceneFile::parse(&text).expect_err("a newer envelope must be rejected");
     assert!(matches!(error, SceneFileError::UnsupportedFormatVersion { found: 2, .. }), "error was {error}");
+}
+
+#[test]
+fn a_document_from_another_build_names_its_schema_before_its_fields() {
+    // A file from an older layout fails inside the first field that moved, unless the schema is
+    // read first: "invalid type: integer, expected a struct" says nothing a person can act on, and
+    // the version is the one fact that does (ADR 0096).
+    let current = Project::CURRENT_SCHEMA_VERSION;
+    let older = GOLDEN
+        .replacen(&format!("\"schema_version\": {current}"), &format!("\"schema_version\": {}", current - 1), 1)
+        .replacen("\"tool\": {", "\"tool\": 7, \"old\": {", 1);
+    let error = SceneFile::parse(&older).expect_err("another schema is refused");
+    assert!(matches!(error, SceneFileError::UnsupportedSchemaVersion { .. }), "error was {error}");
+    assert!(error.to_string().contains(&(current - 1).to_string()), "the error names the version found");
+}
+
+#[test]
+fn an_empty_document_body_answers_with_its_schema_and_never_with_a_field() {
+    // A body from another layout may name a field this build never had, so the number is the only
+    // answer a person can act on; it is read before the tree is parsed at all (ADR 0096).
+    let older = envelope_with(format!("{{\"schema_version\": {}}}", Project::CURRENT_SCHEMA_VERSION - 1));
+    let error = SceneFile::parse(&older).expect_err("another schema is refused");
+    assert!(matches!(error, SceneFileError::UnsupportedSchemaVersion { .. }), "error was {error}");
+    assert!(error.to_string().contains(&(Project::CURRENT_SCHEMA_VERSION - 1).to_string()));
+    assert!(!error.to_string().contains("missing field"), "the tree is not read: {error}");
+
+    // The same empty body at the current number is a different answer: the layout is genuinely
+    // broken, and the field that is missing is the one a person has to add.
+    let current = envelope_with(format!("{{\"schema_version\": {}}}", Project::CURRENT_SCHEMA_VERSION));
+    let error = SceneFile::parse(&current).expect_err("the body is empty");
+    assert!(matches!(error, SceneFileError::Json(_)), "error was {error}");
+    assert!(error.to_string().contains("missing field"), "error was {error}");
 }
 
 #[test]

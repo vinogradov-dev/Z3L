@@ -1017,7 +1017,7 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     let height = Length::from_millimetres(18).expect("height");
     let children_before = session.project().root().children().len();
 
-    editor.extrude_path(&mut session, path, height, text::Lang::En).expect("extrude the path");
+    editor.extrude(&mut session, path, height, text::Lang::En).expect("extrude the path");
     assert_eq!(editor.selected_node(), Some(path), "the node becomes the body in place");
     let object = session.project().object(path).expect("object");
     assert_eq!(object.name(), "Drawing", "the node keeps its name");
@@ -1028,10 +1028,52 @@ fn the_extrude_action_turns_a_closed_path_into_the_body_that_owns_it() {
     assert!(session.project().object_path(path).is_err(), "the drawing is the body now");
     let revision = session.project().revision();
     assert!(
-        editor.extrude_path(&mut session, path, height, text::Lang::En).is_err(),
+        editor.extrude(&mut session, path, height, text::Lang::En).is_err(),
         "a body is not extruded a second time"
     );
     assert_eq!(session.project().revision(), revision, "the refused extrusion changes nothing");
+}
+
+#[test]
+fn the_extrude_action_turns_a_drawing_of_two_rings_into_two_bodies_in_one_entry() {
+    // The Extrude cell is one press for the whole drawing: a set of two pieces becomes two bodies,
+    // the node the maker selected keeps the first of them, and the sibling lands beside it — one
+    // undo entry for the pair (X100).
+    let mut project = sample_project();
+    let root = project.root().id();
+    let left = Path::rectangle([millimetres(0), millimetres(0)], [millimetres(40), millimetres(20)]).expect("ring");
+    let right = Path::rectangle([millimetres(60), millimetres(0)], [millimetres(100), millimetres(20)]).expect("ring");
+    let set = model::Contours::new(vec![left, right]).expect("a drawing of two rings");
+    let drawing = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a set");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(drawing));
+    let height = Length::from_millimetres(18).expect("height");
+
+    editor.extrude(&mut session, drawing, height, text::Lang::En).expect("extrude the drawing");
+
+    assert_eq!(editor.selected_node(), Some(drawing), "the selection stays on the node it was on");
+    let body = session
+        .project()
+        .object(drawing)
+        .and_then(|object| object.geometry().as_constructive())
+        .expect("the first ring is a body");
+    assert_eq!(body.height(), Some(height));
+    let bodies = session
+        .project()
+        .root()
+        .children()
+        .iter()
+        .filter_map(|child| child.as_object())
+        .filter(|object| object.geometry().as_constructive().is_some())
+        .count();
+    assert_eq!(bodies, 2, "one body per ring");
+    session.undo().expect("one entry takes both bodies back");
+    assert_eq!(
+        session.project().object_contours(drawing).map(model::Contours::len),
+        Ok(2),
+        "the drawing is back, whole"
+    );
 }
 
 #[test]
@@ -1041,7 +1083,7 @@ fn a_pulled_height_becomes_the_next_extrusions_default() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(100).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(100).expect("height"), text::Lang::En)
         .expect("extrude the path");
     assert_eq!(
         editor.extrude_height(),
@@ -1068,7 +1110,7 @@ fn one_undo_restores_the_drawing_a_body_came_from() {
     let mut editor = Editor::new();
     editor.select_node(Some(path));
     editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect("extrude the path");
 
     undo(&mut session, &mut editor);
@@ -1084,7 +1126,7 @@ fn an_open_path_is_refused_with_a_readable_reason() {
     let mut editor = Editor::new();
     let revision = session.project().revision();
     let error = editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
+        .extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
         .expect_err("an open chain is no ring");
     assert!(error.contains("open path"), "the message names the problem: {error}");
     assert_eq!(session.project().revision(), revision, "a refused extrusion changes nothing");
@@ -1106,9 +1148,7 @@ fn a_body_keeps_the_paths_placement_and_frame() {
     let params =
         crate::command::json(&engine::NodePlacementSet { node: path, placement, unmeasured: false }).expect("params");
     session.dispatch(engine::node_cmds::NODE_PLACEMENT_SET_ID, &params).expect("move the drawing");
-    editor
-        .extrude_path(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En)
-        .expect("extrude");
+    editor.extrude(&mut session, path, Length::from_millimetres(18).expect("height"), text::Lang::En).expect("extrude");
     let body = editor.selected_node().expect("the body");
     assert_eq!(session.project().node(body).expect("body node").placement(), placement);
 }
@@ -1714,7 +1754,13 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     let mut session = Session::with_directory(project, sample_catalog());
     let mut editor = Editor::new();
     let ctx = egui::Context::default();
-    let view = RibbonView { perspective: true, owns_view: true, grid: true, shadows: true };
+    let view = RibbonView {
+        perspective: true,
+        owns_view: true,
+        snaps: model::SnapKinds::ALL,
+        snap_mode: model::SnapMode::default(),
+        shadows: true,
+    };
 
     let mut fill = None;
     let idle = ctx.run_ui(Default::default(), |ui| {
@@ -1753,7 +1799,7 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
 #[test]
 fn the_ribbon_returns_the_view_action_it_was_asked_for() {
     // The ribbon draws the view buttons but never moves the camera: the action comes back and
-    // the shell performs it with the same method the status bar calls.
+    // the shell performs it with the same method the view cluster calls.
     let mut editor = Editor::new();
     let view = spec::tab("view").expect("the map declares the view tab");
     editor.set_ribbon_tab(view);
@@ -2066,11 +2112,21 @@ fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
         "a shelf takes the niche's width and depth in the mode it was asked for"
     );
 
-    let back: ClassCode = "30.12.00".parse().expect("a back panel");
-    let refusal =
-        editor.arm_fill(&session, back, FillMode::Fit, crate::Lang::En).expect_err("a back panel does not fill a void");
+    editor.arm_fill(&session, ClassCode::BACK_PANEL, FillMode::Fit, crate::Lang::En).expect("a wall fills a void");
+    assert_eq!(
+        editor.fill_arm(),
+        Some(FillArm { class: ClassCode::BACK_PANEL, fill: model::Fill::WidthAndHeight, mode: FillMode::Fit }),
+        "a wall takes the niche's width and height, so the back panel row fills a void (ADR 0200)"
+    );
+
+    // A class without the trait still has no axis pair to take: a drawer box part is machined, not
+    // cut to a void.
+    let drawer: ClassCode = "10.13".parse().expect("a drawer box part");
+    let refusal = editor
+        .arm_fill(&session, drawer, FillMode::Fit, crate::Lang::En)
+        .expect_err("a drawer box part does not fill a void");
     assert!(refusal.contains(text::Message::FillNeedsFillTrait.text(crate::Lang::En)), "{refusal}");
-    assert_eq!(editor.fill_arm().map(|arm| arm.class), Some(ClassCode::HORIZONTAL_PANEL), "a refusal keeps the arm");
+    assert_eq!(editor.fill_arm().map(|arm| arm.class), Some(ClassCode::BACK_PANEL), "a refusal keeps the arm");
 }
 
 #[test]
@@ -2453,4 +2509,380 @@ fn a_band_adds_and_removes_a_whole_set_rather_than_toggling_members() {
     let away = SelectionBand::new(egui::pos2(5.0, 5.0), egui::pos2(15.0, 15.0));
     editor.select_band(&session, view, away, Pick::Replace);
     assert!(editor.selected_nodes().is_empty(), "a band over nothing clears the selection");
+}
+
+/// A project whose root holds one closed rectangle ring per tuple, as path objects.
+fn ring_project(rects: &[(i64, i64, i64, i64)]) -> (Project, Vec<Id>) {
+    let mut project = sample_project();
+    let root = project.root().id();
+    let mut ids = Vec::with_capacity(rects.len());
+    for (index, (x0, y0, x1, y1)) in rects.iter().enumerate() {
+        let path = Path::rectangle([millimetres(*x0), millimetres(*y0)], [millimetres(*x1), millimetres(*y1)])
+            .expect("a rectangle ring");
+        let id = project
+            .add_object(root, format!("Ring {index}"), Placement::IDENTITY, Geometry::Path(path))
+            .expect("a path object");
+        ids.push(id);
+    }
+    (project, ids)
+}
+
+#[test]
+fn a_contour_boolean_arms_on_a_ring_and_previews_the_picks() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(ids[0]));
+
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()), "a selected ring arms the mode");
+    assert_eq!(editor.boolean_arm().map(BooleanArm::op), Some(engine::ContourOp::Union));
+    assert!(!editor.boolean_arm().is_some_and(BooleanArm::is_ready), "one ring is not a boolean yet");
+
+    // The picks are the selection, so a Shift-click adds an operand and the result appears in place
+    // of the base ring without touching the document.
+    let revision = session.project().revision();
+    editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(editor.update_boolean(&mut session), "the picks changed, so the preview rebuilds");
+    assert!(editor.boolean_arm().is_some_and(BooleanArm::is_ready));
+    assert_eq!(editor.boolean_arm().map(|arm| arm.operands().len()), Some(1));
+    assert_eq!(session.project().revision(), revision, "a preview is not an edit");
+    assert!(session.preview().geometry(ids[0]).is_some(), "the base ring draws the result instead");
+    assert!(!editor.update_boolean(&mut session), "the same picks at the same revision rebuild nothing");
+}
+
+#[test]
+fn a_contour_boolean_commits_one_object_and_one_undo_entry() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()));
+    assert!(editor.update_boolean(&mut session));
+
+    let created = editor.commit_boolean(&mut session, crate::Lang::En).expect("the result is stored");
+
+    assert!(editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert!(session.preview().is_empty(), "the overlay goes with the mode");
+    let project = session.project();
+    assert_eq!(project.object(created).map(|object| object.name()), Some("Union 1"));
+    assert!(project.object(ids[0]).is_none() && project.object(ids[1]).is_none(), "the sources are consumed");
+    assert_eq!(editor.selected_nodes(), &[created], "the result is selected");
+    session.undo().expect("one undo entry");
+    assert!(session.project().object(created).is_none());
+    assert!(session.project().object(ids[0]).is_some(), "undo puts both sources back");
+    assert!(!session.can_undo(), "the whole operation was one entry");
+}
+
+#[test]
+fn the_contour_boolean_arms_on_a_drawn_ring_and_a_body_belongs_to_the_model_tab() {
+    // W2, ADR 0194 revised: a contour boolean combines drawings. A body is a solid and is cut on the
+    // Model tab; arming the ring mode on one turned it into a drawing and consumed it, which is what
+    // the owner met when a subtraction left a contour instead of a body.
+    let (mut project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut body_project = project.clone();
+    for id in &ids {
+        body_project.extrude_object_path(*id, millimetres(18)).expect("the ring becomes a body");
+    }
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    editor.select_node(Some(sphere));
+    assert!(!editor.arm_boolean(engine::ContourOp::Union, session.project()), "a primitive draws no ring");
+    editor.select_node(Some(ids[0]));
+    assert!(editor.arm_boolean(engine::ContourOp::Union, session.project()), "a drawn ring arms the mode");
+    editor.cancel_boolean(&mut session);
+
+    // The same two rings, extruded into bodies, arm the Model tab's mode instead.
+    let mut body_session = Session::with_directory(body_project, sample_catalog());
+    let mut body_editor = Editor::new();
+    body_editor.select_nodes(vec![ids[0], ids[1]]);
+    assert!(
+        !body_editor.arm_boolean(engine::ContourOp::Union, body_session.project()),
+        "a body is not a drawing to combine"
+    );
+    assert!(
+        body_editor.arm_body_boolean(engine::ContourOp::Union, body_session.project()),
+        "and the body mode takes it"
+    );
+    body_editor.cancel_boolean(&mut body_session);
+}
+
+/// A slab 100 x 100 x 18 at the origin and a cutter 50 x 50 x 200 that passes through it, both
+/// constructive, so a difference leaves one body with a square hole and a union leaves one solid.
+fn body_pair() -> (model::Project, model::Id, model::Id) {
+    use model::{Constructive, Container, Path, Project};
+
+    let slab = Constructive::extrude(
+        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(100), millimetres(100)]).expect("a slab"),
+        millimetres(18),
+    )
+    .expect("a slab");
+    let cutter = Constructive::extrude(
+        Path::rectangle([Length::ZERO, Length::ZERO], [millimetres(50), millimetres(50)]).expect("a cutter"),
+        millimetres(200),
+    )
+    .expect("a cutter");
+    let cutter_at =
+        Placement::new(geom::DVec3::new(25.0, 25.0, -10.0), geom::DQuat::IDENTITY).expect("a cutter placement");
+    let slab_id = model::Id::new(3).expect("id");
+    let cutter_id = model::Id::new(4).expect("id");
+    let root = Container::new(
+        model::Id::new(1).expect("id"),
+        "Root",
+        Placement::IDENTITY,
+        vec![
+            model::Object::new(slab_id, "Slab", Placement::IDENTITY, Geometry::Constructive(slab)).into(),
+            model::Object::new(cutter_id, "Cutter", cutter_at, Geometry::Constructive(cutter)).into(),
+        ],
+    );
+    (Project::new(root).expect("a project"), slab_id, cutter_id)
+}
+
+#[test]
+fn a_body_boolean_arms_on_one_body_and_previews_without_a_revision() {
+    let (project, slab, cutter) = body_pair();
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(slab));
+
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()), "a body arms the mode");
+    let revision = session.project().revision();
+    assert!(!editor.update_boolean(&mut session), "nothing was picked beside the target yet");
+    assert!(!editor.boolean_arm().is_some_and(BooleanArm::is_ready), "one body waits for its tool");
+
+    // The tool is the second picked body, exactly as the selection habit works elsewhere; the last
+    // selected node is the primary, so the target is named last here.
+    editor.select_nodes(vec![cutter, slab]);
+    assert!(editor.update_boolean(&mut session), "the second body completes the pair");
+    let arm = editor.boolean_arm().expect("the mode is armed");
+    assert!(arm.is_ready(), "the cut is on screen: {:?}", arm.refusal());
+    assert_eq!(arm.kind(), crate::editor::BooleanOperand::Bodies);
+    assert_eq!(arm.operands(), &[cutter]);
+    assert_eq!(session.preview().len(), 1, "the overlay holds the target's new body");
+    assert_eq!(session.project().revision(), revision, "a preview writes no revision");
+    assert_eq!(
+        session
+            .project()
+            .object(slab)
+            .expect("the slab")
+            .geometry()
+            .as_constructive()
+            .expect("a body")
+            .booleans()
+            .count(),
+        0,
+        "the document keeps its history until the check"
+    );
+}
+
+#[test]
+fn a_body_boolean_commit_is_one_undo_entry_and_spends_the_cutter() {
+    let (project, slab, cutter) = body_pair();
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_nodes(vec![cutter, slab]);
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()));
+    assert!(editor.update_boolean(&mut session));
+
+    let edited = editor.commit_boolean(&mut session, crate::Lang::En).expect("the step is stored");
+
+    assert_eq!(edited, slab, "the target keeps its id and its name");
+    assert!(editor.boolean_arm().is_none(), "the mode leaves with its command");
+    assert!(session.preview().is_empty(), "the overlay goes with the mode");
+    let project = session.project();
+    assert_eq!(project.revision().get(), 1, "one command, one revision");
+    let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    assert_eq!(body.booleans().count(), 1);
+    let step = body.booleans().next().expect("a step");
+    assert_eq!(step.tool().name(), "Cutter", "the step froze the cutter's shape and name");
+    assert!(project.object(cutter).is_none(), "the cutter is spent, so one body is left");
+
+    session.undo().expect("one undo entry");
+    assert!(!session.can_undo(), "the whole operation was one entry");
+    let body = session.project().object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    assert_eq!(body.booleans().count(), 0, "undo takes the step back");
+    assert!(session.project().object(cutter).is_some(), "and brings the cutter back");
+}
+
+#[test]
+fn a_body_boolean_cell_arms_the_mode_and_a_second_press_drops_it() {
+    let (project, slab, _cutter) = body_pair();
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    let revision = session.project().revision();
+
+    // No body selected: the cell runs nothing and arms nothing.
+    assert!(
+        editor
+            .apply_ribbon_actions(
+                &mut session,
+                vec![ToolAction::BodyBoolean(engine::ContourOp::Union)],
+                crate::Lang::En
+            )
+            .is_err(),
+        "a cell without a target refuses in words"
+    );
+    assert!(editor.boolean_arm().is_none());
+
+    editor.select_node(Some(slab));
+    editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::BodyBoolean(engine::ContourOp::Union)], crate::Lang::En)
+        .expect("the cell arms the mode");
+    assert!(editor.boolean_arm().is_some_and(|arm| arm.op() == engine::ContourOp::Union));
+    assert_eq!(session.project().revision(), revision, "arming writes nothing");
+
+    editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::BodyBoolean(engine::ContourOp::Union)], crate::Lang::En)
+        .expect("a second press runs");
+    assert!(editor.boolean_arm().is_none(), "a second press on the same operation drops the mode");
+    assert_eq!(session.project().revision(), revision, "the cell wrote nothing either way");
+}
+
+#[test]
+fn the_three_model_boolean_cells_arm_on_a_drawn_body_and_on_a_primitive() {
+    let (mut project, slab, _cutter) = body_pair();
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a sphere");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+
+    for (target, what) in [(slab, "a drawn body"), (sphere, "a primitive")] {
+        for op in [engine::ContourOp::Union, engine::ContourOp::Subtract, engine::ContourOp::Intersect] {
+            let mut editor = Editor::new();
+            editor.select_node(Some(target));
+            assert!(editor.arm_body_boolean(op, session.project()), "the {op:?} cell arms on {what}");
+            assert_eq!(editor.boolean_arm().map(|arm| arm.base()), Some(target), "the target is the pressed body");
+            editor.cancel_boolean(&mut session);
+        }
+    }
+
+    // A node that is not a solid at all arms nothing: a drawn ring is a sketch, not a body.
+    let mut editor = Editor::new();
+    editor.select_node(Some(session.project().root().id()));
+    assert!(!editor.arm_body_boolean(engine::ContourOp::Union, session.project()), "a container is not a body");
+}
+
+#[test]
+fn a_ball_is_the_target_of_a_body_boolean_and_keeps_its_radius() {
+    // The owner's gesture: select the ball, press *Subtract*, pick the block, Enter. The ball is a
+    // solid, so the step lands on it and its radius is still editable afterwards.
+    let (mut project, slab, cutter) = body_pair();
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(20), 16, 8).expect("a ball");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    editor.select_nodes(vec![slab, sphere]);
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()), "a primitive is a target");
+    assert_eq!(editor.boolean_arm().map(|arm| arm.base()), Some(sphere), "the primary pick is the target");
+
+    let revision = session.project().revision();
+    editor.select_nodes(vec![slab, sphere]);
+    assert!(editor.update_boolean(&mut session), "the block completes the pair");
+    let arm = editor.boolean_arm().expect("the mode is armed");
+    assert!(arm.is_ready(), "the notch is on screen: {:?}", arm.refusal());
+    assert_eq!(arm.operands(), &[slab]);
+    assert_eq!(session.preview().len(), 1, "the overlay holds the ball with its notch");
+    assert_eq!(session.project().revision(), revision, "a preview writes nothing");
+
+    let edited = editor.commit_boolean(&mut session, crate::Lang::En).expect("the step is stored");
+    assert_eq!(edited, sphere, "the ball keeps its id");
+    let project = session.project();
+    let body = project.object(sphere).expect("the ball").geometry().as_primitive().expect("a primitive");
+    assert_eq!(body.steps().len(), 1, "the ball carries the step");
+    assert_eq!(body.base().kind(), model::PrimitiveKind::Sphere, "and its parameters are still there");
+    assert!(project.object(slab).is_none(), "the block is spent, so one body is left");
+    assert!(project.object(cutter).is_some(), "the other body is untouched");
+}
+
+#[test]
+fn a_primitive_cuts_a_block_as_its_tool() {
+    let (project, slab, _cutter) = body_pair();
+    let mut project = project;
+    let root = project.root().id();
+    let ball = model::Primitive::sphere(millimetres(10), 16, 8).expect("a ball");
+    let sphere = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(ball)).expect("a ball");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+
+    editor.select_nodes(vec![sphere, slab]);
+    assert!(editor.arm_body_boolean(engine::ContourOp::Subtract, session.project()), "a drawn body is the target");
+    assert!(editor.update_boolean(&mut session), "the ball completes the pair");
+    assert!(editor.boolean_arm().is_some_and(BooleanArm::is_ready), "the cut is on screen");
+    editor.commit_boolean(&mut session, crate::Lang::En).expect("the step is stored");
+
+    let project = session.project();
+    let body = project.object(slab).expect("the slab").geometry().as_constructive().expect("a body");
+    let step = body.booleans().next().expect("one step");
+    assert!(matches!(step.tool().body(), model::ToolBody::Primitive(_)), "the step froze the ball");
+    assert!(project.object(sphere).is_none(), "the ball is spent");
+}
+
+#[test]
+fn a_boolean_cell_without_a_ring_arms_nothing_and_a_second_press_drops_it() {
+    let (project, ids) = ring_project(&[(0, 0, 100, 50), (50, 25, 150, 75)]);
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    // A panel is a node but not a drawn ring, so the cell refuses before a mode starts.
+    let panel = session.project().root().children().first().map(|node| node.id()).expect("the shelf");
+    editor.select_node(Some(panel));
+    assert!(!editor.arm_boolean(engine::ContourOp::Union, session.project()));
+    assert!(editor.boolean_arm().is_none());
+
+    editor.select_node(Some(ids[0]));
+    assert!(editor.arm_boolean(engine::ContourOp::Subtract, session.project()));
+    let revision = session.project().revision();
+    let actions = editor
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::ContourBoolean(engine::ContourOp::Subtract)],
+            crate::Lang::En,
+        )
+        .expect("a cell click runs");
+    assert!(editor.boolean_arm().is_none(), "a second press on the same operation drops the mode");
+    assert_eq!(session.project().revision(), revision, "the cell wrote nothing");
+    assert!(!actions.started_drawing, "arming a boolean starts no draft");
+}
+
+#[test]
+fn the_extrude_cell_arms_the_area_pull_on_a_drawing() {
+    // A drawing of several rings has no one profile to sweep, so the cell arms the pointer instead
+    // of extruding a selection (G4). The popup, the palette and the cell read one row, so the door
+    // is the same wherever it is pressed.
+    let mut project = sample_project();
+    let root = project.root().id();
+    let set = model::Contours::new(vec![
+        Path::rectangle([millimetres(0), millimetres(0)], [millimetres(100), millimetres(50)]).expect("a ring"),
+        Path::rectangle([millimetres(20), millimetres(10)], [millimetres(60), millimetres(30)]).expect("a ring"),
+    ])
+    .expect("a contour set");
+    let drawing = project.add_object(root, "Union", Placement::IDENTITY, Geometry::Contours(set)).expect("a drawing");
+    let mut session = Session::with_directory(project, sample_catalog());
+    let mut editor = Editor::new();
+    editor.select_node(Some(drawing));
+
+    // The cell is live and hands the editor the drawing; the drawing is pullable, so the arm is set.
+    editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::AreaPull { object: drawing }], crate::Lang::En)
+        .expect("the cell arms the pull");
+    assert_eq!(editor.area_pull(), Some(drawing), "the pointer reads the selected drawing");
+
+    let revision = session.project().revision();
+    assert!(editor.area_measure(session.project(), [millimetres(40), millimetres(20)]), "the opening is measured");
+    assert_eq!(editor.area_pick(), Some((drawing, [millimetres(40), millimetres(20)])));
+    assert_eq!(editor.area_refusal(), None);
+    assert_eq!(session.project().revision(), revision, "the hover writes nothing");
+
+    assert!(editor.area_measure(session.project(), [millimetres(5), millimetres(5)]));
+    assert_eq!(editor.area_refusal(), Some(text::Message::AreaHole), "the frame's area has a hole");
+    assert!(editor.area_pick().is_none() || editor.area().region().is_none());
+
+    // Another tool takes the pointer and drops the measured face with it.
+    editor.arm_void();
+    assert_eq!(editor.area_pull(), None);
+    assert!(editor.area().region().is_none());
 }

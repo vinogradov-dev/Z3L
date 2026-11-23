@@ -688,10 +688,75 @@ pub fn helper(ui: &egui::Ui) -> Color32 {
 /// The pair is a function of the scene's constant, not of the palette, because the selected
 /// furniture is drawn by the renderer, and a band in a themed ink would not match it (ADR 0111).
 pub fn selection_band() -> (Color32, Color32) {
-    let ink = scene::SELECTION_LINE_COLOR;
-    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-    let (red, green, blue) = (channel(ink[0]), channel(ink[1]), channel(ink[2]));
-    (Color32::from_rgb(red, green, blue), Color32::from_rgba_unmultiplied(red, green, blue, BAND_FILL_ALPHA))
+    let ink = selection_ink();
+    (ink, Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), BAND_FILL_ALPHA))
+}
+
+/// The ink of a picked shape: the renderer's selection cyan, read as chrome ink.
+///
+/// The renderer draws a picked chain and tints a picked body with it, so the chrome half of the
+/// same pick — the band dragging over the model, the outline widened over a chain — repeats this
+/// value instead of choosing one (ADR 0111, 0137).
+pub fn selection_ink() -> Color32 {
+    scene_ink(scene::SELECTION_LINE_COLOR)
+}
+
+/// The ink of the base an armed boolean is born in: the frame the result replaces.
+///
+/// A boolean is armed on a base and takes every other picked shape as an operand, and the base is
+/// usually dropped from the selection by the click that picks the operand — so the two roles cannot
+/// both be drawn in the selection cyan (X99). The base takes the frame's own
+/// [`SceneColors::boolean_base`], which the chrome repeats here for the scene tree's row, exactly
+/// as [`selection_ink`] repeats the cyan; the hue is the one no role claims (cyan is a pick, amber
+/// is a guide and the unselected path, red is a refusal, the grid axes are red and green).
+///
+/// [`BOOLEAN_BASE_CONTRAST`] is the floor it keeps on both workspaces, and it stays
+/// [`ACCENT_HUE_DISTANCE`] away from the selection, the guide and the grip inks (ADR 0219).
+pub fn boolean_base(ui: &egui::Ui) -> Color32 {
+    let colors = scene_colors(ui.ctx().theme());
+    scene_ink(colors.boolean_base)
+}
+
+/// The smallest contrast [`boolean_base`] may have against the workspace it is drawn on.
+///
+/// The 3:1 a meaningful graphic gets (WCAG 2.2 1.4.11): the base ring is the operand the result
+/// replaces, so a base the person cannot see is the bug this ink exists to fix. Unlike
+/// [`original`], this ink is a selection role rather than context, so it takes the full floor.
+pub const BOOLEAN_BASE_CONTRAST: f32 = 3.0;
+
+/// The ink of the shape an edit started from: the quiet half of a working copy's pair.
+///
+/// An edit over the model draws the shape it started from behind the shape it is making, and the
+/// two must not come out as one colour (X97). This is the quiet half: the dim text ink folded
+/// [`ORIGINAL_FADE`] percent into the workspace, so it is quieter than any text the window draws,
+/// has no hue of its own and never competes with the working copy. [`ORIGINAL_CONTRAST`] is the
+/// end that bounds it — it has to read on the light workspace, which is the aperture the pair is
+/// measured through — and the rest of the separation is the caller's: this ink is drawn thin and
+/// dashed, so the pair differs in weight and rhythm as well.
+pub fn original(ui: &egui::Ui) -> Color32 {
+    mix(text_dim(ui), workspace(ui.visuals().dark_mode), ORIGINAL_FADE)
+}
+
+/// The ink of a working copy: the loud half of the pair, the action accent lifted off the board.
+///
+/// It is the accent because the tool that armed the edit wears it, so the ribbon cell, the tool
+/// card and the shape being changed are one colour. A chrome ink is measured on a panel, and this
+/// one lies on a board of any colour, so it takes the lift [`helper`] takes: [`WORKING_LIFT`]
+/// percent away from the workspace makes it read over a bright board and a dark one. It can still
+/// land on a material of its own value, which is why the caller cases it in [`casing`].
+pub fn working_copy(ui: &egui::Ui) -> Color32 {
+    lifted(accent(ui), WORKING_LIFT, ui.visuals().dark_mode)
+}
+
+/// The casing under a loud overlay ink: the workspace's own colour.
+///
+/// A line drawn over the model can land on the colour it was lifted away from — a copper stroke on
+/// a beech face is nearly one colour with the wood — so the caller draws this wider than the ink
+/// and under it. The casing is the surface behind the model, so whichever of the ink and the
+/// casing a material does not match is the one the eye finds; that is the rule the work cursor's
+/// two-tone outline follows (ADR 0121, 0123).
+pub fn casing(ui: &egui::Ui) -> Color32 {
+    workspace(ui.visuals().dark_mode)
 }
 
 /// How far [`helper`] is lifted away from the warning amber, in percent.
@@ -701,6 +766,34 @@ pub fn selection_band() -> (Color32, Color32) {
 /// keeps the warm hue that says the program drew it.
 const HELPER_LIFT: u32 = 25;
 
+/// How far [`working_copy`] is lifted away from the workspace, in percent.
+///
+/// A quarter, the same lift a guide takes: enough that the accent has a value of its own over the
+/// board, and little enough that it is still the accent of the tool that armed the edit.
+const WORKING_LIFT: u32 = 25;
+
+/// How far [`original`] is folded into the workspace, in percent.
+///
+/// The quiet end of the pair. Farther from the workspace and the shape the edit started from
+/// competes with the working copy; closer and it disappears on paper, which is the variant that
+/// bounds it: at a third of the way in it still reads at 2.35:1 on the light workspace and 3.1:1
+/// on slate (`plan/notes/X97.md`).
+const ORIGINAL_FADE: u32 = 35;
+
+/// The smallest contrast [`original`] may have with the workspace it is drawn on.
+///
+/// Under 3:1, because the shape an edit started from is context and not an action, and over 2:1,
+/// because a context the person cannot see is a shape the edit silently replaced (WCAG 2.2 1.4.11
+/// is the floor a meaningful graphic gets; this one is deliberately below it, X97).
+pub const ORIGINAL_CONTRAST: f32 = 2.2;
+
+/// The smallest relative-luminance distance the two inks of a working copy keep from each other.
+///
+/// Colour alone carries the roles apart — the quiet one is a neutral, the loud one is the accent —
+/// and a value distance is the floor under that: an ink that is dimmer and an ink that is brighter
+/// never read as one line, whatever the palette does with the hues.
+pub const ORIGINAL_VALUE_GAP: f32 = 0.15;
+
 /// `warn` lifted [`HELPER_LIFT`] percent away from the surface, which is the guide ink.
 ///
 /// The lift follows the variant rather than the preset — white on a dark palette, black on a light
@@ -708,7 +801,34 @@ const HELPER_LIFT: u32 = 25;
 /// presets and the scene can carry it as a constant (`SceneColors::helper`). A test pins the
 /// contrast on the surface, the panel and the workspace of every variant.
 fn helper_ink(warn: Color32, dark: bool) -> Color32 {
-    mix(warn, if dark { Color32::WHITE } else { Color32::BLACK }, HELPER_LIFT)
+    lifted(warn, HELPER_LIFT, dark)
+}
+
+/// `ink` moved `percent` away from the surface it lies on: toward white on a dark variant and
+/// toward black on a light one, the direction [`Palette::readable`] pushes an accent.
+///
+/// A chrome ink is measured against a panel it always sits on; an ink drawn over the model lies on
+/// a board of any colour, so it is pushed off the workspace before it is used over one (ADR 0121).
+fn lifted(ink: Color32, percent: u32, dark: bool) -> Color32 {
+    mix(ink, if dark { Color32::WHITE } else { Color32::BLACK }, percent)
+}
+
+/// The workspace behind the scene of one variant, as an eight-bit ink.
+///
+/// An overlay lies on the board, not on a panel, so its inks are mixed against this value instead
+/// of against the palette's surface (ADR 0111, 0121).
+fn workspace(dark: bool) -> Color32 {
+    scene_ink(if dark { SceneColors::DARK } else { SceneColors::LIGHT }.background)
+}
+
+/// A scene colour as the eight-bit ink the chrome compares it with, and as the overlay draws it.
+///
+/// A frame carries its non-material colours as gamma-space floats; the chrome paints eight-bit
+/// `egui` ink, and the two must be one colour. The inverse of this conversion is
+/// [`SceneColors`]'s own literals, written as eight-bit steps divided by 255 for the same reason.
+pub fn scene_ink(color: [f32; 4]) -> Color32 {
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgb(channel(color[0]), channel(color[1]), channel(color[2]))
 }
 
 /// Applies the dark Z3L visuals and spacing to `style`.
@@ -1045,10 +1165,136 @@ mod tests {
         ink
     }
 
-    /// An eight-bit colour as the scene stores it, so the two sides of one ink can be compared.
-    fn ink_of(color: [f32; 4]) -> Color32 {
-        let channel = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
-        Color32::from_rgb(channel(color[0]), channel(color[1]), channel(color[2]))
+    /// The inks of a working copy, read through the accessors of one frame of `preset` in one
+    /// variant: the shape the edit started from, the working copy, the grip ink and the casing.
+    fn overlay_inks_of(preset: ThemePreset, dark: bool) -> (Color32, Color32, Color32, Color32) {
+        let ctx = egui::Context::default();
+        let preference = if dark { egui::ThemePreference::Dark } else { egui::ThemePreference::Light };
+        install_with(&ctx, preference, preset, None);
+        let mut inks = (Color32::TRANSPARENT, Color32::TRANSPARENT, Color32::TRANSPARENT, Color32::TRANSPARENT);
+        let output = ctx.run_ui(Default::default(), |ui| inks = (original(ui), working_copy(ui), text(ui), casing(ui)));
+        output.drop_without_applying_deltas();
+        inks
+    }
+
+    #[test]
+    fn the_base_ink_reads_on_every_workspace_and_is_never_the_selection() {
+        // X99: the ink that says "this is the frame the result is born in" has to be found on both
+        // workspaces and never read as the cyan a picked shape is drawn in, as the amber a guide
+        // is, or as the path ink — so the value is measured, not chosen, for every preset.
+        for preset in ThemePreset::ALL {
+            for dark in [true, false] {
+                let name = format!("{preset:?} {}", if dark { "dark" } else { "light" });
+                let palette = preset.palette(dark);
+                let colors = if dark { SceneColors::DARK } else { SceneColors::LIGHT };
+                let ink = base_ink_of(preset, dark);
+                assert_eq!(ink, scene_ink(colors.boolean_base), "{name}: the accessor draws the frame's own ink");
+
+                // The base ring lies on the workspace, and the tree row prints its name on a panel.
+                for (fill, what, least) in [
+                    (scene_ink(colors.background), "the workspace", BOOLEAN_BASE_CONTRAST),
+                    (palette.panel, "a panel", 4.5),
+                    (palette.surface, "the header", 4.5),
+                ] {
+                    let ratio = contrast_ratio(ink, fill);
+                    assert!(ratio >= least, "{name}: the base ink is {ratio:.2}:1 on {what}, under {least}:1");
+                }
+
+                // One role, one ink: apart from the selection, the guide ink and the two materials
+                // the selected rings are drawn over.
+                for (other, what) in [
+                    (selection_ink(), "the selection ink"),
+                    (scene_ink(colors.helper), "the guide ink"),
+                    (scene_ink(colors.line_ink), "the unselected path ink"),
+                    (scene_ink([0.62, 0.42, 0.22, 1.0]), "the beech face"),
+                ] {
+                    let distance = delta_e(ink, other);
+                    assert!(
+                        distance >= ACCENT_HUE_DISTANCE,
+                        "{name}: the base ink is {distance:.0} from {what}, under {ACCENT_HUE_DISTANCE}"
+                    );
+                }
+                // It is an accent of its own rather than a neutral or a grey.
+                assert!(spread(ink) >= 90, "{name}: the base ink has to read as a colour the program chose");
+            }
+        }
+    }
+
+    /// The base ink of one frame of `preset` in one variant, read through the accessor.
+    fn base_ink_of(preset: ThemePreset, dark: bool) -> Color32 {
+        let ctx = egui::Context::default();
+        let preference = if dark { egui::ThemePreference::Dark } else { egui::ThemePreference::Light };
+        install_with(&ctx, preference, preset, None);
+        let mut ink = Color32::TRANSPARENT;
+        let output = ctx.run_ui(Default::default(), |ui| ink = boolean_base(ui));
+        output.drop_without_applying_deltas();
+        ink
+    }
+
+    #[test]
+    fn a_working_copy_is_two_inks_on_every_palette() {
+        // X97: the shape an edit started from and the working copy were a near-white grey and a
+        // pale blue — two high values a hue apart, so the change could not be read at a glance.
+        // The pair is now one rule: a quiet neutral folded into the workspace and a loud accent
+        // lifted off it, with weight and dash carrying the rest.
+        for preset in ThemePreset::ALL {
+            for dark in [true, false] {
+                let name = format!("{preset:?} {}", if dark { "dark" } else { "light" });
+                let (quiet, loud, grip, casing) = overlay_inks_of(preset, dark);
+                let colors = if dark { SceneColors::DARK } else { SceneColors::LIGHT };
+                let board = scene_ink(colors.background);
+
+                // The two ends of the rule: the quiet one has to read on the workspace without
+                // competing with it, and the loud one keeps the accent's own floor.
+                let dim = contrast_ratio(quiet, board);
+                assert!(
+                    dim >= ORIGINAL_CONTRAST,
+                    "{name}: the shape an edit started from is {dim:.2}:1 on its workspace, under \
+                     {ORIGINAL_CONTRAST}:1"
+                );
+                let bright = contrast_ratio(loud, board);
+                assert!(
+                    bright >= ACCENT_CONTRAST,
+                    "{name}: the working copy is {bright:.2}:1 on its workspace, under {ACCENT_CONTRAST}:1"
+                );
+                assert!(bright > dim, "{name}: the working copy has to be the loud one");
+
+                // The pair is two inks and not one, in value and in colour.
+                let gap = (relative_luminance(quiet) - relative_luminance(loud)).abs();
+                assert!(
+                    gap >= ORIGINAL_VALUE_GAP,
+                    "{name}: the pair is {gap:.2} apart in value, under {ORIGINAL_VALUE_GAP}"
+                );
+                let distance = delta_e(quiet, loud);
+                assert!(
+                    distance >= ACCENT_HUE_DISTANCE,
+                    "{name}: the pair is {distance:.0} apart, under {ACCENT_HUE_DISTANCE}"
+                );
+                // The quiet one has no tint of its own: a quarter of the colour the loud one
+                // carries is the whole of it, so the roles are not two shades of one hue.
+                assert!(
+                    spread(quiet) * 4 < spread(loud),
+                    "{name}: the shape an edit started from has to read as a neutral, not as a tint"
+                );
+
+                // Apart from the handle the pointer takes and from the renderer's selection ink.
+                for (other, what) in
+                    [(grip, "the grip ink"), (scene_ink(scene::SELECTION_LINE_COLOR), "the selection ink")]
+                {
+                    for (ink, which) in [(quiet, "the shape an edit started from"), (loud, "the working copy")] {
+                        let distance = delta_e(ink, other);
+                        assert!(
+                            distance >= ACCENT_HUE_DISTANCE,
+                            "{name}: {which} is {distance:.0} from {what}, under {ACCENT_HUE_DISTANCE}"
+                        );
+                    }
+                }
+
+                // The casing is the surface behind the model, so a material that matches the ink
+                // is bounded by the other half of the pair (ADR 0121, 0123).
+                assert_eq!(casing, board, "{name}: the casing is the workspace's own ink");
+            }
+        }
     }
 
     #[test]
@@ -1060,12 +1306,12 @@ mod tests {
                 let ink = palette.helper();
                 let colors = if dark { SceneColors::DARK } else { SceneColors::LIGHT };
                 assert_eq!(ink, helper_ink_of(preset, dark), "{name}: the accessor draws the ink the ramp derives");
-                assert_eq!(ink, ink_of(colors.helper), "{name}: the scene carries the same ink (ADR 0111)");
+                assert_eq!(ink, scene_ink(colors.helper), "{name}: the scene carries the same ink (ADR 0111)");
                 // One ink that reads on the chrome and on the workspace, at the weight of a guide.
                 for (fill, what) in [
                     (palette.surface, "the header"),
                     (palette.panel, "a panel"),
-                    (ink_of(colors.background), "the workspace"),
+                    (scene_ink(colors.background), "the workspace"),
                 ] {
                     let ratio = contrast_ratio(ink, fill);
                     assert!(ratio >= 3.0, "{name}: the guide ink is {ratio:.2}:1 on {what}, under 3:1");
@@ -1075,7 +1321,7 @@ mod tests {
                     (palette.accent, "the action accent"),
                     (palette.accent_fill, "the filled accent"),
                     (palette.danger, "the danger ink"),
-                    (ink_of(scene::SELECTION_LINE_COLOR), "the selection ink"),
+                    (scene_ink(scene::SELECTION_LINE_COLOR), "the selection ink"),
                 ] {
                     assert_ne!(ink, other, "{name}: a guide is never {what}");
                 }
@@ -1097,7 +1343,7 @@ mod tests {
                 for (fill, what) in [
                     (palette.surface, "the header"),
                     (palette.panel, "a panel"),
-                    (ink_of(colors.background), "the workspace"),
+                    (scene_ink(colors.background), "the workspace"),
                 ] {
                     // Exactly one stroke has to read: the dark one on a light board, the light one
                     // on a dark board, and either on a midtone (ADR 0121, 0127).

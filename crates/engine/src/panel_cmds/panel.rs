@@ -20,6 +20,7 @@ use model::{
     ClassCode, Contour, EdgeBevel, EdgeRef, Id, ItemId, Level, Operation, Panel, PanelNominalSize, PanelOutline,
     Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use units::{Degrees, Length};
@@ -36,14 +37,19 @@ pub const CREATE_ID: &str = "panel.create";
 pub const CREATE_LABEL: Message = Message::CmdCreatePanel;
 
 /// Parameters for `panel.create`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelCreate {
     /// Id of the container that receives the panel.
     pub parent: Id,
     /// User-visible panel name; it must contain a non-whitespace character.
     pub name: String,
-    /// Panel nominal length and width.
+    /// Panel nominal length and width, the two sides the stance measures.
+    ///
+    /// The third side is the board's thickness, which the material's record carries: a panel's
+    /// `length` runs along the stance's length axis, its `width` along the stance's width axis, and
+    /// the thickness runs along the stance's thickness axis — the direction face `A` points. The
+    /// guide's `stances` table is that frame written out for `shelf`, `post` and `wall`.
     pub nominal_size: PanelNominalSize,
     /// Panel-body material from the session catalogue.
     pub material: ItemId,
@@ -120,16 +126,9 @@ fn invalid_default(message: &str) -> CommandError {
 }
 
 /// The `panel.create` command.
-pub(crate) const CREATE: CommandSpec = CommandSpec::new(CREATE_ID, CREATE_LABEL, create_enabled, create_run)
-    .creating(Creation::new(Level::Part, created_parent));
-
-/// The parent a creating command's parameters name, or `None` when the parameters do not parse.
-///
-/// A malformed request is left to the command's own parser, which reports it as invalid parameters;
-/// the guard only speaks about a request that already names a container (ADR 0098).
-fn created_parent(params: &Value) -> Option<Id> {
-    PanelCreate::parse(params).ok().map(|params| params.parent)
-}
+pub(crate) const CREATE: CommandSpec =
+    CommandSpec::new::<PanelCreate>(CREATE_ID, CREATE_LABEL, create_enabled, create_run)
+        .creating(Creation::new(Level::Part));
 
 /// Stable id of the contour-panel creation command.
 pub const CONTOUR_CREATE_ID: &str = "panel.contour.create";
@@ -141,7 +140,7 @@ pub const CONTOUR_CREATE_LABEL: Message = Message::CmdCreateContourPanel;
 ///
 /// `source` is a constructive object in the scene: the new panel takes that object's contour ring
 /// as its outline. The command always creates a panel; an existing panel never changes variant.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelContourCreate {
     /// Id of the container that receives the panel.
@@ -177,14 +176,13 @@ impl PanelContourCreate {
 }
 
 /// The `panel.contour.create` command.
-pub(crate) const CONTOUR_CREATE: CommandSpec =
-    CommandSpec::new(CONTOUR_CREATE_ID, CONTOUR_CREATE_LABEL, contour_create_enabled, contour_create_run)
-        .creating(Creation::new(Level::Part, contour_created_parent));
-
-/// The parent a contour-panel request names, or `None` when the parameters do not parse.
-fn contour_created_parent(params: &Value) -> Option<Id> {
-    PanelContourCreate::parse(params).ok().map(|params| params.parent)
-}
+pub(crate) const CONTOUR_CREATE: CommandSpec = CommandSpec::new::<PanelContourCreate>(
+    CONTOUR_CREATE_ID,
+    CONTOUR_CREATE_LABEL,
+    contour_create_enabled,
+    contour_create_run,
+)
+.creating(Creation::new(Level::Part));
 
 fn contour_create_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelContourCreate::parse(params) else {
@@ -232,7 +230,7 @@ pub const BEVEL_SET_LABEL: Message = Message::CmdSetBevel;
 /// outline on face `B` is untouched, so the nominal size stays the stock size. The command follows
 /// the class's contour trait, because a beveled end is an outline edit, and the card's shape section
 /// is gated by the same trait.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelBevelSet {
     /// Id of the panel whose end is beveled.
@@ -257,7 +255,7 @@ impl PanelBevelSet {
 
 /// The `panel.bevel.set` command.
 pub(crate) const BEVEL_SET: CommandSpec =
-    CommandSpec::new(BEVEL_SET_ID, BEVEL_SET_LABEL, bevel_set_enabled, bevel_set_run);
+    CommandSpec::new::<PanelBevelSet>(BEVEL_SET_ID, BEVEL_SET_LABEL, bevel_set_enabled, bevel_set_run);
 
 fn bevel_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelBevelSet::parse(params) else {
@@ -290,7 +288,7 @@ pub const BEVEL_CLEAR_ID: &str = "panel.bevel.clear";
 pub const BEVEL_CLEAR_LABEL: Message = Message::CmdClearBevel;
 
 /// Parameters for `panel.bevel.clear`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelBevelClear {
     /// Id of the panel whose end bevel is removed.
@@ -308,7 +306,7 @@ impl PanelBevelClear {
 
 /// The `panel.bevel.clear` command.
 pub(crate) const BEVEL_CLEAR: CommandSpec =
-    CommandSpec::new(BEVEL_CLEAR_ID, BEVEL_CLEAR_LABEL, bevel_clear_enabled, bevel_clear_run);
+    CommandSpec::new::<PanelBevelClear>(BEVEL_CLEAR_ID, BEVEL_CLEAR_LABEL, bevel_clear_enabled, bevel_clear_run);
 
 fn bevel_clear_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelBevelClear::parse(params) else {
@@ -357,7 +355,7 @@ pub const OUTLINE_SET_LABEL: Message = Message::CmdSetPanelOutline;
 ///
 /// The ring is in the panel-local plane and may sit anywhere; the command anchors it at the
 /// panel-local zero and moves the panel frame with it, so the world-space shape stays fixed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelOutlineSet {
     /// Id of the contour panel whose outline changes.
@@ -375,7 +373,7 @@ impl PanelOutlineSet {
 
 /// The `panel.outline.set` command.
 pub(crate) const OUTLINE_SET: CommandSpec =
-    CommandSpec::new(OUTLINE_SET_ID, OUTLINE_SET_LABEL, outline_set_enabled, outline_set_run);
+    CommandSpec::new::<PanelOutlineSet>(OUTLINE_SET_ID, OUTLINE_SET_LABEL, outline_set_enabled, outline_set_run);
 
 fn outline_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelOutlineSet::parse(params) else {
@@ -408,7 +406,7 @@ pub const OUTLINE_CONTOUR_LABEL: Message = Message::CmdBakePanelOutline;
 /// The command bakes a rectangle outline into the ring it draws, in one revision and one undo
 /// entry, so *Edit contour* can reach a panel that is not a ring yet. Corner and bow parameters are
 /// replaced by their curve segments; undo restores them (ADR 0061).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelOutlineToContour {
     /// Id of the rectangle panel whose outline is baked.
@@ -423,8 +421,12 @@ impl PanelOutlineToContour {
 }
 
 /// The `panel.outline.to_contour` command.
-pub(crate) const OUTLINE_CONTOUR: CommandSpec =
-    CommandSpec::new(OUTLINE_CONTOUR_ID, OUTLINE_CONTOUR_LABEL, outline_contour_enabled, outline_contour_run);
+pub(crate) const OUTLINE_CONTOUR: CommandSpec = CommandSpec::new::<PanelOutlineToContour>(
+    OUTLINE_CONTOUR_ID,
+    OUTLINE_CONTOUR_LABEL,
+    outline_contour_enabled,
+    outline_contour_run,
+);
 
 fn outline_contour_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelOutlineToContour::parse(params) else {
@@ -463,6 +465,20 @@ fn create_run(
     _contact: &dyn Contact,
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelCreate::parse(params)?;
+    let id = create_panel(project, catalog, params)?;
+    Ok(CommandOutcome::created(id))
+}
+
+/// Writes one panel from a typed request, and answers the id of the node it made.
+///
+/// This is the one creation path: `panel.create` parses its parameters into [`PanelCreate`] and a
+/// command that plans a part — a fill of a measured niche — builds the same value and writes it
+/// here, so the two cannot store a board differently.
+pub(super) fn create_panel(
+    project: &mut Project,
+    catalog: &Directory,
+    params: PanelCreate,
+) -> Result<Id, CommandError> {
     params.validate_name()?;
     let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
     let thickness = material.thickness;
@@ -525,7 +541,7 @@ fn create_run(
     if let Some(class) = params.class {
         project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class))?;
     }
-    Ok(CommandOutcome::created(id))
+    Ok(id)
 }
 
 /// Stable id of the panel rename command.
@@ -535,7 +551,7 @@ pub const RENAME_ID: &str = "panel.rename";
 pub const RENAME_LABEL: Message = Message::CmdRenamePanel;
 
 /// Parameters for `panel.rename`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelRename {
     /// Id of the panel to rename.
@@ -562,7 +578,8 @@ impl PanelRename {
 }
 
 /// The `panel.rename` command.
-pub(crate) const RENAME: CommandSpec = CommandSpec::new(RENAME_ID, RENAME_LABEL, rename_enabled, rename_run);
+pub(crate) const RENAME: CommandSpec =
+    CommandSpec::new::<PanelRename>(RENAME_ID, RENAME_LABEL, rename_enabled, rename_run);
 
 fn rename_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelRename::parse(params) else {
@@ -590,7 +607,7 @@ pub const RESIZE_ID: &str = "panel.resize";
 pub const RESIZE_LABEL: Message = Message::CmdResizePanel;
 
 /// Parameters for `panel.resize`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelResize {
     /// Id of the panel to resize.
@@ -607,7 +624,8 @@ impl PanelResize {
 }
 
 /// The `panel.resize` command.
-pub(crate) const RESIZE: CommandSpec = CommandSpec::new(RESIZE_ID, RESIZE_LABEL, resize_enabled, resize_run);
+pub(crate) const RESIZE: CommandSpec =
+    CommandSpec::new::<PanelResize>(RESIZE_ID, RESIZE_LABEL, resize_enabled, resize_run);
 
 fn resize_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelResize::parse(params) else {
@@ -664,7 +682,7 @@ pub const MATERIAL_SET_ID: &str = "panel.material.set";
 pub const MATERIAL_SET_LABEL: Message = Message::CmdSetPanelMaterial;
 
 /// Parameters for `panel.material.set`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PanelMaterialSet {
     /// Id of the panel whose material changes.
@@ -682,7 +700,7 @@ impl PanelMaterialSet {
 
 /// The `panel.material.set` command.
 pub(crate) const MATERIAL_SET: CommandSpec =
-    CommandSpec::new(MATERIAL_SET_ID, MATERIAL_SET_LABEL, material_set_enabled, material_set_run);
+    CommandSpec::new::<PanelMaterialSet>(MATERIAL_SET_ID, MATERIAL_SET_LABEL, material_set_enabled, material_set_run);
 
 fn material_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = PanelMaterialSet::parse(params) else {
