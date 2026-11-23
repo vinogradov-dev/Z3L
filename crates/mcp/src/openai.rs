@@ -162,6 +162,10 @@ pub struct OpenAi {
     endpoint: Endpoint,
     /// The settings folder the key's second home sits in, when the workspace has one.
     folder: Option<PathBuf>,
+    /// The extra request headers the workspace names, sent with every completion. Empty in the
+    /// ordinary case; a gateway that routes on a session header is the reason the list exists, and
+    /// no provider name is in this crate (ADR 0189).
+    headers: Vec<(String, String)>,
     // Never printed: `ureq::Agent` has no useful `Debug` and a test that names the backend should
     // read the endpoint's own shape.
     agent: ureq::Agent,
@@ -183,9 +187,23 @@ impl OpenAi {
     /// request thread with the `rustls` feature off. `native-tls` is the provider this workspace
     /// compiles (ADR 0189).
     pub fn new(endpoint: Endpoint, folder: Option<PathBuf>) -> Self {
+        Self::with_headers(endpoint, folder, Vec::new())
+    }
+
+    /// The same backend with the workspace's extra headers attached to every completion.
+    ///
+    /// The names and values are validated by the settings page (a header a server accepts, and not
+    /// `Authorization`, which belongs to the key's homes); the client only puts them on the wire.
+    pub fn with_headers(endpoint: Endpoint, folder: Option<PathBuf>, headers: Vec<(String, String)>) -> Self {
         let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
-        let config = ureq::Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).tls_config(tls).build();
-        Self { endpoint, folder, agent: ureq::Agent::new_with_config(config), answer: None }
+        // The status is read by [`complete`] so the provider's own sentence reaches the panel; the
+        // default would turn a 400 into a bare `StatusCode` with the body discarded.
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(REQUEST_TIMEOUT))
+            .http_status_as_error(false)
+            .tls_config(tls)
+            .build();
+        Self { endpoint, folder, headers, agent: ureq::Agent::new_with_config(config), answer: None }
     }
 
     /// The endpoint this backend asks, for the shell's consent and the panel's words.
@@ -208,11 +226,12 @@ impl ChatBackend for OpenAi {
         let body = request_body(&self.endpoint, transcript);
         let agent = self.agent.clone();
         let endpoint = self.endpoint.clone();
+        let headers = self.headers.clone();
         let (sender, answer) = mpsc::channel();
         let spawned = std::thread::Builder::new().name("agent-request".to_owned()).spawn(move || {
             // A send fails only when the turn dropped the request it replaces; the answer is then
             // nobody's, which is exactly what the person's stop asked for.
-            let _ = sender.send(complete(&agent, &endpoint, &key, &body));
+            let _ = sender.send(complete(&agent, &endpoint, &key, &body, &headers));
         });
         self.answer = Some(match spawned {
             Ok(_) => answer,
@@ -357,14 +376,26 @@ fn system_message() -> String {
 }
 
 /// One completion, on the thread [`OpenAi::ask`] started.
-fn complete(agent: &ureq::Agent, endpoint: &Endpoint, key: &str, body: &Value) -> Result<Reply, BackendError> {
-    let response = agent
+fn complete(
+    agent: &ureq::Agent,
+    endpoint: &Endpoint,
+    key: &str,
+    body: &Value,
+    headers: &[(String, String)],
+) -> Result<Reply, BackendError> {
+    let mut request = agent
         .post(endpoint.chat_url())
         .header("Authorization", format!("Bearer {}", key.trim()))
-        .header("Accept", "application/json")
-        .send_json(body)
-        .map_err(|error| refusal(endpoint, &error))?;
-    let mut response = response;
+        .header("Accept", "application/json");
+    for (name, value) in headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+    let mut response = request.send_json(body).map_err(|error| refusal(endpoint, &error))?;
+    if !response.status().is_success() {
+        let code = response.status().as_u16();
+        let body = response.body_mut().with_config().limit(MAX_ERROR_BYTES).read_to_string().unwrap_or_default();
+        return Err(status_refusal(endpoint, code, &body));
+    }
     let value: Value = response
         .body_mut()
         .read_json()
@@ -372,10 +403,44 @@ fn complete(agent: &ureq::Agent, endpoint: &Endpoint, key: &str, body: &Value) -
     reply_from(&value)
 }
 
+/// How much of a provider's refusal is read before the sentence is built.
+const MAX_ERROR_BYTES: u64 = 4096;
+
+/// How many characters of the provider's message a refusal carries, so a page never floods the chat.
+const MAX_ERROR_CHARS: usize = 300;
+
+/// A status the endpoint answered: the code and, when the body carries one, the provider's sentence.
+fn status_refusal(endpoint: &Endpoint, code: u16, body: &str) -> BackendError {
+    let sentence = match provider_message(body) {
+        Some(message) => format!("`{}` answered HTTP {code}: {message}", endpoint.base_url()),
+        None => format!("`{}` answered HTTP {code}", endpoint.base_url()),
+    };
+    BackendError::new(sentence)
+}
+
+/// The provider's own sentence from an error body: OpenAI's `error.message`, a bare `message`, or
+/// nothing. Whitespace is folded and the text is capped, so a refusal stays one readable line.
+fn provider_message(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let message = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .or_else(|| value.get("message"))
+        .and_then(Value::as_str)?
+        .trim();
+    if message.is_empty() {
+        return None;
+    }
+    let folded = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    Some(folded.chars().take(MAX_ERROR_CHARS).collect())
+}
+
 /// Why a request failed, in one sentence that names the endpoint and never the key.
+///
+/// A status is not routed here: [`complete`] reads its body first, because the code alone was the
+/// reason a gateway's `MissingSessionID` stayed invisible (J23).
 fn refusal(endpoint: &Endpoint, error: &ureq::Error) -> BackendError {
     let sentence = match error {
-        ureq::Error::StatusCode(code) => format!("`{}` answered HTTP {code}", endpoint.base_url()),
         ureq::Error::Timeout(_) => {
             format!("`{}` did not answer within {} seconds", endpoint.base_url(), REQUEST_TIMEOUT.as_secs())
         }
@@ -590,6 +655,17 @@ mod tests {
         assert_eq!(second_requests.recv_timeout(Duration::from_secs(5)).expect("the second stub")["model"], "model-b");
     }
 
+    /// Waits for the worker's answer, the way a frame reads it across several frames.
+    fn wait(backend: &mut OpenAi) -> Option<Result<Reply, BackendError>> {
+        for _ in 0..500 {
+            if let Some(answer) = backend.take() {
+                return Some(answer);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        None
+    }
+
     /// One frame of a turn, which is all a backend needs to have started its request.
     fn drive_half(backend: &mut dyn ChatBackend, session: &mut Session) {
         let scope = session.edit_scope();
@@ -601,6 +677,49 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         turn.advance(backend, &mut conversation, Lang::En, &mut dispatch);
         session.end_edit();
+    }
+
+    #[test]
+    fn extra_headers_travel_on_every_request() {
+        // J23: a gateway may route on a header the OpenAI wire does not name. It is data from the
+        // settings, so the client sends it and no provider name enters this crate (ADR 0189).
+        let (mut session, panel) = fixture();
+        let (url, requests) = testkit::stub_endpoint_request(testkit::batch_answer(panel, "Left"));
+        let headers = vec![("x-opencode-session".to_owned(), "ses_1".to_owned())];
+        let mut backend =
+            OpenAi::with_headers(Endpoint::new(url, "stub-model"), Some(keyed("openai-headers")), headers);
+
+        let _ = drive(&mut backend, &mut session);
+
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert!(
+            request.headers.iter().any(|(name, value)| name == "x-opencode-session" && value == "ses_1"),
+            "the header reached the wire: {:?}",
+            request.headers
+        );
+    }
+
+    #[test]
+    fn a_status_refusal_carries_the_providers_own_sentence() {
+        // The owner's go gateway answered 400 `MissingSessionID`; the panel read only "HTTP 400"
+        // because the body was discarded. The refusal now carries the provider's sentence, capped,
+        // and still never the key.
+        let body = r#"{"type":"error","error":{"type":"MissingSessionID","message":"Request is missing x-opencode-session and cannot be routed efficiently."}}"#;
+        let (url, _requests) = testkit::stub_endpoint_status(400, body);
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-refusal")));
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "hello");
+
+        backend.ask(&conversation);
+        let error = wait(&mut backend).expect("the turn answers").expect_err("HTTP 400 is a refusal");
+
+        assert!(error.sentence().contains("HTTP 400"), "{}", error.sentence());
+        assert!(
+            error.sentence().contains("x-opencode-session"),
+            "the provider's own words reach the panel: {}",
+            error.sentence()
+        );
+        assert!(!error.sentence().contains(KEY_TEXT), "the refusal never names the key");
     }
 
     #[test]

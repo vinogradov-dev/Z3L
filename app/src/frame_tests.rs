@@ -7096,6 +7096,42 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
 }
 
 #[test]
+fn typed_extra_headers_reach_the_request() {
+    // J23: the settings field is the only way a gateway's routing header reaches the wire, so the
+    // whole path — the page's parser, the shell and the backend — is proved with a stub that keeps
+    // the headers it read.
+    let (mut harness, panel) = chat_fixture("frame-chat-headers");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let (url, requests) = testkit::stub_endpoint_request(testkit::batch_answer(panel, "Left"));
+    let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
+    write_agent_key(&folder);
+    harness.app.settings.assistant.endpoint = url.clone();
+    harness.app.settings.assistant.model = "stub-model".to_owned();
+    harness.app.settings.assistant.headers = "x-opencode-session: ses_1".to_owned();
+    harness.app.settings.assistant.remember_consent(&url);
+    harness.settle();
+
+    harness.app.chat.input = "rename the side".to_owned();
+    harness.settle();
+    let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(send, egui::PointerButton::Primary);
+    for _ in 0..400 {
+        harness.frame();
+        if !harness.app.chat.is_busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the stub was asked");
+    assert!(
+        request.headers.iter().any(|(name, value)| name == "x-opencode-session" && value == "ses_1"),
+        "the header reached the wire: {:?}",
+        request.headers
+    );
+}
+
+#[test]
 fn a_message_to_a_typed_but_unusable_address_answers_the_clause_and_sends_nothing() {
     // J22: a URL pasted into the URL that was already in the field is not an endpoint. The panel
     // names the clause instead of saying "no model", and no backend is installed to ask anything.
@@ -7112,7 +7148,8 @@ fn a_message_to_a_typed_but_unusable_address_answers_the_clause_and_sends_nothin
     let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
     harness.click(send, egui::PointerButton::Primary);
     harness.frame();
-    let sentence = Message::AssistantEndpointInvalid.with(Lang::En, [Message::AssistantEndpointDoubled.text(Lang::En)]);
+    let clause = harness.app.settings.assistant.problem().expect("the address is still wrong").sentence(Lang::En);
+    let sentence = Message::AssistantProblemFix.with(Lang::En, [clause]);
     assert!(harness.drew(&sentence), "the panel names the doubled address");
 }
 

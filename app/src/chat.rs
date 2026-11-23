@@ -27,6 +27,7 @@ use eframe::egui::{self, Context, Id, RichText, Ui};
 use engine::{AgentMode, BatchOptions, BatchStep, EditScope, Finding, Session};
 use mcp::{ChatBackend, Conversation, Speaker, Turn};
 use text::{Lang, Message};
+use ui::settings::AssistantProblem;
 use ui::theme;
 
 /// The width and height the panel opens at, in points.
@@ -83,12 +84,15 @@ pub(crate) struct Chat {
     agent: Option<mcp::Program>,
     /// The endpoint this panel installed, so a frame can tell a change from the same one.
     model: Option<mcp::Endpoint>,
+    /// The extra request headers the backend sends, so a change rebuilds it.
+    headers: Vec<(String, String)>,
     /// The endpoint a person has to agree to before the message they typed may leave the machine.
     consent: Option<String>,
     /// Whether the workspace names an agent process the window offers no channel to.
     blocked: bool,
-    /// The clause that stops the workspace's address from being used, when the page named one.
-    problem: Option<Message>,
+    /// The clause that stops the workspace's model configuration from being used, when the page
+    /// named one.
+    problem: Option<AssistantProblem>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
     /// The rules' findings for the revision the panel last read.
@@ -118,6 +122,7 @@ impl Chat {
             consent: None,
             blocked: false,
             problem: None,
+            headers: Vec::new(),
             checklist: Vec::new(),
             findings: Vec::new(),
             findings_revision: None,
@@ -171,30 +176,39 @@ impl Chat {
     /// [`Self::apply_agent`] leaves it.
     ///
     /// A turn in flight belongs to the backend that is running it, so the settings take effect when
-    /// the message is finished. The key is not read here: it is the backend's to find when a message
+    /// the message is finished. The extra headers are the settings' `Name: value` lines, already
+    /// validated by the page; a change to them rebuilds the backend so the next message carries the
+    /// new set. The key is not read here: it is the backend's to find when a message
     /// is sent, so no frame touches the file and a key written while the window runs is picked up by
     /// the next message (ADR 0189).
-    pub(crate) fn apply_model(&mut self, wanted: Option<mcp::Endpoint>, key_folder: Option<std::path::PathBuf>) {
+    pub(crate) fn apply_model(
+        &mut self,
+        wanted: Option<mcp::Endpoint>,
+        key_folder: Option<std::path::PathBuf>,
+        headers: Vec<(String, String)>,
+    ) {
         let same = match (&self.model, &wanted) {
-            (Some(current), Some(next)) => current == next,
+            (Some(current), Some(next)) => current == next && self.headers == headers,
+            // A backend this shell did not create is left alone, headers or no headers.
             (None, None) => true,
             _ => false,
         };
         if same || self.turn.is_some() {
             return;
         }
-        self.backend = wanted
-            .clone()
-            .map(|endpoint| Box::new(mcp::OpenAi::new(endpoint, key_folder.clone())) as Box<dyn ChatBackend>);
+        self.backend = wanted.clone().map(|endpoint| {
+            Box::new(mcp::OpenAi::with_headers(endpoint, key_folder.clone(), headers.clone())) as Box<dyn ChatBackend>
+        });
         self.model = wanted;
+        self.headers = headers;
     }
 
-    /// Names the reason the workspace's address cannot be used, or clears it.
+    /// Names the reason the workspace's model configuration cannot be used, or clears it.
     ///
     /// The settings page owns the rule and the shell reads it every frame, because the panel is what
-    /// a person sees next: a message sent to a typed-but-unusable address answers the clause that is
-    /// wrong instead of the generic "no model" sentence.
-    pub(crate) fn apply_problem(&mut self, problem: Option<Message>) {
+    /// a person sees next: a message sent to a typed-but-unusable address or header answers the
+    /// clause that is wrong instead of the generic "no model" sentence.
+    pub(crate) fn apply_problem(&mut self, problem: Option<AssistantProblem>) {
         self.problem = problem;
     }
 
@@ -292,7 +306,7 @@ impl Chat {
         self.conversation.push(Speaker::Person, text);
         if self.backend.is_none() {
             let sentence = match self.problem {
-                Some(problem) => Message::AssistantEndpointInvalid.with(lang, [problem.text(lang)]),
+                Some(problem) => Message::AssistantProblemFix.with(lang, [problem.sentence(lang)]),
                 None => Message::AssistantNotConfigured.text(lang).to_owned(),
             };
             self.conversation.push(Speaker::Note, sentence);
@@ -388,7 +402,7 @@ impl Chat {
             let (words, ink) = if self.blocked {
                 (Message::AssistantNoChannel.text(lang).to_owned(), theme::warn(ui))
             } else if let Some(problem) = self.problem {
-                (Message::AssistantEndpointInvalid.with(lang, [problem.text(lang)]), theme::warn(ui))
+                (Message::AssistantProblemFix.with(lang, [problem.sentence(lang)]), theme::warn(ui))
             } else {
                 (Message::AssistantNotConfigured.text(lang).to_owned(), theme::warn(ui))
             };

@@ -55,18 +55,60 @@ pub fn scratch_dir(name: &str) -> PathBuf {
 /// returned string is the base URL a client is pointed at (`http://127.0.0.1:<port>/v1`).
 #[allow(clippy::expect_used)]
 pub fn stub_endpoint(answer: Value) -> (String, Receiver<Value>) {
+    let (url, requests) = stub_seen(200, answer.to_string());
+    let (sender, bodies) = mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(request) = requests.recv() {
+            if sender.send(request.body).is_err() {
+                break;
+            }
+        }
+    });
+    (url, bodies)
+}
+
+/// The same stub, but the test reads the whole request: its body and the headers the client sent.
+///
+/// The headers are part of the wire a gateway may require (a routing or session header), so a test
+/// proves they travel instead of trusting the builder that set them.
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint_request(answer: Value) -> (String, Receiver<Request>) {
+    stub_seen(200, answer.to_string())
+}
+
+/// The same stub, answering one request with `status` and `body` in place of a completion.
+///
+/// It is how a refusal from a provider is proved: `complete` must carry the provider's own sentence
+/// into the panel instead of losing it with the status code.
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint_status(status: u16, body: impl Into<String>) -> (String, Receiver<Request>) {
+    stub_seen(status, body.into())
+}
+
+/// What the stub read from one request: the JSON body and every header, names lowercased.
+#[derive(Debug)]
+pub struct Request {
+    /// The JSON body the client sent.
+    pub body: Value,
+    /// The headers in the order the client sent them, each name lowercased.
+    pub headers: Vec<(String, String)>,
+}
+
+/// One loopback listener that answers the first request with `status` and `answer` and breaks.
+#[allow(clippy::expect_used)]
+fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
     let port = listener.local_addr().expect("the test reads the port it took").port();
     let (sender, requests) = mpsc::channel();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
-            let Some(body) = read_request(&mut stream) else { continue };
-            let _ = sender.send(body);
-            let text = answer.to_string();
+            let Some(request) = read_request(&mut stream) else { continue };
+            let _ = sender.send(request);
+            let reason = if status == 200 { "OK" } else { "Error" };
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
-                text.len()
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                answer.len()
             );
             let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
             break;
@@ -75,8 +117,8 @@ pub fn stub_endpoint(answer: Value) -> (String, Receiver<Value>) {
     (format!("http://127.0.0.1:{port}/v1"), requests)
 }
 
-/// The JSON body of one HTTP request, read off the socket by its own `Content-Length`.
-fn read_request(stream: &mut TcpStream) -> Option<Value> {
+/// One HTTP request, read off the socket by its own `Content-Length`.
+fn read_request(stream: &mut TcpStream) -> Option<Request> {
     let mut raw = Vec::new();
     let mut buffer = [0u8; 4096];
     loop {
@@ -86,14 +128,28 @@ fn read_request(stream: &mut TcpStream) -> Option<Value> {
         }
         raw.extend_from_slice(&buffer[..read]);
         let head_end = raw.windows(4).position(|window| window == b"\r\n\r\n")? + 4;
-        let head = String::from_utf8_lossy(&raw[..head_end]).to_ascii_lowercase();
+        let head = String::from_utf8_lossy(&raw[..head_end - 4]).into_owned();
         let length: usize = head
             .lines()
-            .find_map(|line| line.strip_prefix("content-length:"))
-            .and_then(|value| value.trim().parse().ok())
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then_some(value.trim())
+                    .and_then(|value| value.parse().ok())
+            })
             .unwrap_or(0);
         if raw.len() >= head_end + length {
-            return serde_json::from_slice(&raw[head_end..head_end + length]).ok();
+            let body = serde_json::from_slice(&raw[head_end..head_end + length]).ok()?;
+            let headers = head
+                .lines()
+                .skip(1)
+                .filter_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+                })
+                .collect();
+            return Some(Request { body, headers });
         }
     }
 }
