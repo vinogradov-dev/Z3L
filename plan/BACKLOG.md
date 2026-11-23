@@ -598,21 +598,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
    `cargo xtask ci` is green.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
-- `[ ]` **J14** the OpenAI-compatible backend, its consent screen and the key's two homes
-  Why: ADR 0189 names the wire and the key, and J7 ships only the scripted backend: no HTTP
-   client, no consent screen and no key handling exist, so a person cannot talk to a real model
-   yet.
-  Shape: The OpenAI-compatible client behind ChatBackend in `crates/mcp` (`ureq` plus the OS
-   TLS, one counted `openssl-sys` exception proven by a test over the resolved graph), a worker
-   thread so no frame waits, the consent card naming what leaves the machine and remembered per
-   endpoint, `Z3L_AGENT_KEY` then `agent-key` at `0600` and never `settings.json`, and the
-   endpoint and model as settings data with no provider name in code.
-  Done: A test with a local stub server runs a turn end to end and asserts one undo entry and
-   that changing `base_url` and `model` alone reaches the stub; the key is found in the
-   environment and in the file, and a log line, an error sentence and `settings.json` never
-   carry it; the first request of an endpoint asks for consent once and a cleared consent asks
-   again; `xtask layers` passes with the vendored-feature test green.
-  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs`
 - `[ ]` **J15** command_list answers in short rows, and a schema only for the id that was asked
   Why: Measured 2026-11-21: one `command_list` answer is 40 151 tokens, because every command
    carries its full JSON Schema with its doc comments inline. A reader that cannot hold the
@@ -692,6 +677,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J14** the OpenAI-compatible backend, its consent screen and the key's two homes
+  Why: ADR 0189 names the wire and the key, and J7 ships only the scripted backend: no HTTP
+   client, no consent screen and no key handling exist, so a person cannot talk to a real model
+   yet.
+  Shape: The OpenAI-compatible client behind ChatBackend in `crates/mcp` (`ureq` plus the OS
+   TLS, one counted `openssl-sys` exception proven by a test over the resolved graph), a worker
+   thread so no frame waits, the consent card naming what leaves the machine and remembered per
+   endpoint, `Z3L_AGENT_KEY` then `agent-key` at `0600` and never `settings.json`, and the
+   endpoint and model as settings data with no provider name in code.
+  Done: A test with a local stub server runs a turn end to end and asserts one undo entry and
+   that changing `base_url` and `model` alone reaches the stub; the key is found in the
+   environment and in the file, and a log line, an error sentence and `settings.json` never
+   carry it; the first request of an endpoint asks for consent once and a cleared consent asks
+   again; `xtask layers` passes with the vendored-feature test green.
+  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs` — `6ca82fe`
 
 - `[x]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
   Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
