@@ -693,8 +693,92 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
+- `[ ]` **J24** each tab has its own assistant conversation, backend and undo space
+  Why: The owner asked that every tab have its own agent and its own space. The document and
+   session are already per tab, but `Chat` is one field on the shell, so the conversation,
+   backend and turn are shared by every tab. Switching tabs keeps the same conversation and can
+   steal the turn.
+  Shape: Move the chat into the tab payload (or a tab wrapper): each tab owns its conversation,
+   backend, turn, edit scope and session id. The settings, consent list and panel position stay
+   workspace-level; the panel draws the active tab. A background turn pauses (its request stays
+   in flight) until its tab is active, so switching never loses an answer; the shell applies
+   settings to every tab.
+  Done: Two tabs hold two conversations and two backends; a message sent in one is not in the
+   other; switching tabs neither drops nor mixes the turn; the panel draws the active tab;
+   settings changes reach every tab; the existing chat tests are updated; `cargo xtask ci` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,app/src/tabs.rs,app/src/frame_tests.rs`
+- `[ ]` **J25** the program knows its providers and lists their models instead of asking the person for a header
+  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
+   preset fills the address, a Go endpoint routes by model family, and the model list comes
+   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
+   product surface instead of a free-text endpoint.
+  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
+   address) with base URLs and the Go protocol table by model family; a model list from `GET
+   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
+   provider names are data and one wire still serves the ordinary case; the protocol matrix is
+   derived from the model name, not a second adapter per provider.
+  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
+   model reaches its family's wire; the person never types a header; the key is not in
+   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
+- `[ ]` **J26** a simple request feels long because nothing says what the agent is doing
+  Why: The owner says a simple request takes long and the panel does not say what the agent is
+   doing. The OpenAI backend waits for one whole completion, the panel shows one static
+   "working" line, and the only feedback is the final answer.
+  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
+   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
+   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
+   shows the work instead of a spinner.
+  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
+   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
+   the progress line; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs`
 
 ## Done
+
+- `[x]` **X125** the model asks for an id and units the window already knows, and the person gets questions instead of a cube
+  Why: The model asked the owner for the root id, for the side order and about micrometres
+   before it would create a cube. The request held the static guide and no live scene, and the
+   prompt told it to ask. `object.cuboid.create` already takes the root as parent and one
+   command creates the box, so the missing fact was the id, not a command.
+  Shape: `engine::scene_brief` reads the root id, the open product and a bounded node list; the
+   shell sets it on the conversation before each message and the OpenAI request appends it to
+   the system message. The prompt states the house convention: millimetres in width × depth ×
+   height, convert to micrometres silently, a free body belongs under the root, act on the
+   numbers and ask only what neither the brief nor the convention answers.
+  Done: The system message carries the live root id and the conventions; a frame test sees them
+   in the stub request; a message can create a cuboid under the root without asking; the
+   engineer test names the root and the open product; `cargo xtask ci` is green.
+  `files: crates/engine/src/guide.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,app/src/chat.rs` — `7f95005`
+
+- `[x]` **X124** a gateway that routes on a header makes the person configure the provider
+  Why: The go gateway answered 400 MissingSessionID while the same curl worked: it routes on
+   `x-opencode-session`, and the app asked the person to configure that header in Settings. A
+   provider quirk is the program's knowledge, not a user field; the owner met the raw field and
+   asked for it to disappear.
+  Shape: Remove the extra-headers field and its settings schema. Recognise an OpenCode Go
+   address by name and path, keep one stable id per chat and send it as `x-opencode-session`;
+   another endpoint is sent no such header. The refusal already carries the provider's
+   sentence, so a new quirk that the program does not know is readable. Provider presets and a
+   model picker stay for the next task.
+  Done: No settings field asks for headers; a Go endpoint receives the chat's stable session
+   header; a plain endpoint receives none; the key is never sent as a header; `cargo xtask ci`
+   is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs` — `7f95005`
+
+- `[x]` **X123** the Delete key does nothing while the assistant panel is open
+  Why: The owner could not delete an object with Delete after a chat. The shell counted
+   `chat.open` as a modal, and the modal gate skips every shortcut, so Delete, Save and Undo
+   did nothing while the assistant panel was open. A frame test with the panel open and one
+   tree row selected reproduces it.
+  Shape: The panel is a window, not a modal: it keeps Escape and the tool keys for
+   `handle_keys`, but the shell shortcuts (Delete, Save, Undo, tab keys) run whenever no text
+   field has focus. A focused chat input still owns its keys.
+  Done: Delete removes a selected node while the assistant panel is open; the existing one-node
+   and multi-selection Delete tests still pass; a regressed panel cannot silence the shell
+   keys; `cargo xtask ci` is green.
+  `files: app/src/main.rs,app/src/frame_tests.rs` — `7f95005`
 
 - `[x]` **J23** a gateway that routes on a header answers 400, because the client sends none and drops the provider's reason
   Why: The owner's go endpoint answered 400 in the panel while the same curl worked: the curl

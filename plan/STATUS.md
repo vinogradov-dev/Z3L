@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=680c6bf updated=2026-11-23
+STATE: milestone=M7 phase=T task=- state=idle base=7f95005 updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -55,7 +55,7 @@ settings.
 
 ## Next
 
-Nothing is scheduled: U123 heads `## Next`; J16 is the agent stream's next; P28 is a plan defect.
+Nothing is scheduled: 30 open tasks wait in `## Next`.
 
 ## Index
 
