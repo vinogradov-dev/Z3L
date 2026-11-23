@@ -38,6 +38,7 @@
     clippy::unreachable
 )]
 
+pub mod acp;
 pub mod channel;
 pub mod chat;
 pub mod inspect;
@@ -52,6 +53,7 @@ use model::Project;
 use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub use acp::{Acp, PROTOCOL_VERSION, Program, Scripted as ScriptedProcess, Spawner, Started};
 pub use channel::{Answering, BridgeError, Call, Channel, ChannelError, Mailbox, Pending, Wake, bridge, queued};
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
