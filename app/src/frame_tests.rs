@@ -6582,7 +6582,7 @@ fn a_channel_call_is_answered_at_the_frame_boundary() {
     // answer is the registry's own listing and the window's own report, and the window is exactly
     // the one the test is looking at (ADR 0187, ADR 0188).
     let mut harness = Harness::new("frame-channel");
-    let (listed, listed_answer) = mcp::queued(mcp::Call::List);
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
     let (inspected, inspected_answer) = mcp::queued(mcp::Call::Inspect);
     harness.app.queued.push(listed);
     harness.app.queued.push(inspected);
@@ -6611,7 +6611,7 @@ fn a_picture_asked_of_a_window_with_no_device_is_a_refusal_and_the_other_calls_a
     // scene depends on.
     let mut harness = Harness::new("frame-channel-preview");
     let (previewed, preview_answer) = mcp::queued(mcp::Call::Preview(mcp::PreviewRequest::default()));
-    let (listed, listed_answer) = mcp::queued(mcp::Call::List);
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
     harness.app.queued.push(previewed);
     harness.app.queued.push(listed);
     harness.frame();
@@ -6680,7 +6680,7 @@ fn a_call_waits_for_the_gesture_and_then_lands_with_the_ids_it_created() {
     harness.app.pending_question =
         Some(PendingQuestion { gesture: Gesture::Quit, question: Confirm::quit(1, Lang::En) });
     let (dispatched, answered) = mcp::queued(mcp::Call::Dispatch(shelf_request(product)));
-    let (listed, listing_answer) = mcp::queued(mcp::Call::List);
+    let (listed, listing_answer) = mcp::queued(mcp::Call::List(mcp::CommandListRequest::default()));
     harness.app.queued.push(dispatched);
     harness.app.queued.push(listed);
     harness.frame();

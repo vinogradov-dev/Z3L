@@ -67,7 +67,7 @@ fn session() -> Session {
 /// Answers one call the way the window's frame boundary does.
 fn answer(session: &mut Session, call: &Call) -> Answer {
     match call {
-        Call::List => Answer::ok(listing(session)),
+        Call::List(request) => listing(session, request.command.as_deref()),
         Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None, scope: None }),
         Call::Ask(query) => mcp::asking(session, *query),
         Call::Undo => mcp::undo(session),

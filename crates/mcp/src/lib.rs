@@ -61,7 +61,9 @@ pub use inspect::{Tab, Window};
 pub use openai::{Endpoint, KEY_ENV, KEY_FILE, OpenAi, key};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
 pub use report::PLAN_NOTE;
-pub use server::{CommandServer, Door, asking, dispatch, findings, listing, preview, serve_session, undo};
+pub use server::{
+    CommandServer, Door, LIST_BUDGET_BYTES, asking, dispatch, findings, listing, preview, serve_session, undo,
+};
 pub use tools::{
     Answer, BatchRequest, CommandListRequest, FindingsRequest, InspectRequest, PreviewRequest, RunRequest, StepRequest,
     TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, TOOL_UNDO, UndoRequest,

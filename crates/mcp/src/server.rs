@@ -40,8 +40,10 @@ use crate::tools::{
 /// the alternative — a model guessing the parameter shape — is what the schemas exist to prevent.
 const INSTRUCTIONS: &str = "\
 These tools drive Z3L, a cabinet-furniture editor. Call `command_list` first: it names every \
-command this build can dispatch, the JSON Schema of the parameters each one takes, and the \
-commands that cannot run in this session with the sentence that says why. Dispatch a change with \
+command this build can dispatch in one short row — the id, the label, the world it serves and what \
+it creates — and it carries the guide to the program's own vocabulary. Name one command with \
+`command` to read the JSON Schema of its parameters, which is what a run parses: one id at a time, \
+so the list stays small. Dispatch a change with \
 `command_run` or, for several changes that must land together, `command_batch` — the whole batch is \
 one undo entry, and by default a refusal takes back every step before it. A step names what it \
 creates with `as` and a later step refers to that name as `{\"$ref\": \"<name>\"}`, so a part and \
@@ -104,13 +106,14 @@ impl CommandServer {
         Self { session, sink, previewer }
     }
 
-    /// The `command_list` answer: every command, what it takes, and whether it can run here.
-    pub fn list(&self) -> Answer {
+    /// The `command_list` answer: every command in short rows, or the schema of the one that was
+    /// asked.
+    pub fn list(&self, request: &CommandListRequest) -> Answer {
         let session = match self.session.lock() {
             Ok(session) => session,
             Err(_) => return Answer::refused(BUSY),
         };
-        Answer::ok(listing(&session))
+        listing(&session, request.command.as_deref())
     }
 
     /// The `command_run` and `command_batch` answer: the report of one batch, and the write.
@@ -145,8 +148,8 @@ impl CommandServer {
     fn call(&self, name: &str, arguments: Option<Map<String, Value>>) -> Result<Answer, ErrorData> {
         match name {
             TOOL_LIST => {
-                let _: CommandListRequest = parse(TOOL_LIST, arguments).map_err(tool_error)?;
-                Ok(self.list())
+                let request = parse::<CommandListRequest>(TOOL_LIST, arguments).map_err(tool_error)?;
+                Ok(self.list(&request))
             }
             TOOL_RUN => {
                 let request = parse::<RunRequest>(TOOL_RUN, arguments).map_err(tool_error)?;
@@ -250,22 +253,68 @@ impl fmt::Debug for Door<'_> {
     }
 }
 
-/// The `command_list` answer: every command this build dispatches, what it takes, which world it
-/// serves, whether it can run in `session` — and the domain guide, so the first call a client makes
-/// teaches it the program and not only the ids.
+/// The `command_list` answer: every command this build dispatches in one short row, the domain
+/// guide a caller reads once — or, when one id was named, that command's parameter schema instead.
+///
+/// The short list is the whole registry in about 80 bytes a command; the schemas are what a
+/// thirty-nine thousand token answer was made of, and a caller that cannot hold an answer slices it
+/// and reads the slice as a fact (J15). So the schema travels only for the id that was asked, and
+/// it is the same value `command_run` parses, read from the same [`engine::CommandSpec`].
+///
+/// The answer carries no verdict per command: a command writes wherever its parameters are valid, so
+/// a discovery surface that said "no" would refuse a request the dispatch accepts (ADR 0226). What
+/// a session cannot do here is the session's own answer, and a plan-mode session says it once in
+/// `mode_note` with the sentence a batch is refused with.
 ///
 /// It is a free function because two doors ask it — the headless server and the attached window —
 /// and a second copy of the projection is the second registry ADR 0185 forbids.
-pub fn listing(session: &Session) -> Value {
+pub fn listing(session: &Session, command: Option<&str>) -> Answer {
+    let mut body = Map::new();
+    body.insert("revision".to_owned(), json!(session.project().revision().get()));
+    body.insert("open_product".to_owned(), json!(session.active_product().map(|id| id.get())));
+    body.insert("mode".to_owned(), json!(session.agent_mode().word()));
+    if session.agent_mode() == AgentMode::Plan {
+        // The mode is the person's, and only a plan needs the sentence: a build answer carries the
+        // revision a caller acts on (ADR 0190).
+        body.insert("mode_note".to_owned(), json!(report::PLAN_NOTE));
+    }
     let registry = CommandRegistry::new();
-    let commands: Vec<Value> = registry.specs().iter().map(|spec| command_row(session, *spec)).collect();
-    json!({
-        "revision": session.project().revision().get(),
-        "open_product": session.active_product().map(|id| id.get()),
-        "mode": session.agent_mode().word(),
-        "domain": engine::guide(),
-        "commands": commands,
-    })
+    let rows: Vec<Value> = match command {
+        Some(id) => match registry.get(id) {
+            Some(spec) => vec![command_row(*spec, true)],
+            None => return Answer::refused(unknown_command(id)),
+        },
+        None => {
+            body.insert("domain".to_owned(), engine::guide());
+            body.insert("schema_note".to_owned(), json!(SCHEMA_NOTE));
+            registry.specs().iter().map(|spec| command_row(*spec, false)).collect()
+        }
+    };
+    body.insert("commands".to_owned(), Value::Array(rows));
+    Answer::ok(Value::Object(body))
+}
+
+/// The byte budget of the short `command_list` answer: every row, the domain guide and the envelope.
+///
+/// Measured 2026-11-21: one answer was 189 989 bytes, about 40 151 tokens, because every command
+/// carried its full schema with its doc comments inline (J15). The short rows are 4 816 bytes for
+/// sixty-six commands, the guide is 18 062 and the envelope under 200, so the answer sits at 23 KB
+/// and the budget leaves room for about a hundred and thirty more commands before it is spent. The
+/// number is a promise to a caller whose context is the cost, which is why the schema is read one id
+/// at a time.
+pub const LIST_BUDGET_BYTES: usize = 32 * 1024;
+
+/// The sentence the short list carries in place of the schemas: where one of them is read.
+const SCHEMA_NOTE: &str = "Each row names the id, the English label, the world the command serves \
+     and what it creates. Call `command_list` with `command` set to one id to read the JSON Schema \
+     of that command's parameters: the schema `command_run` parses, one id at a time.";
+
+/// The refusal an id this build does not dispatch answers with: the engine's own words and the ids
+/// that exist, because a caller that asked for one is about to ask for another.
+fn unknown_command(id: &str) -> String {
+    let registry = CommandRegistry::new();
+    let ids: Vec<&str> = registry.specs().iter().map(|spec| spec.id()).collect();
+    format!("unknown command `{id}`: this build dispatches {} commands — {}", ids.len(), ids.join(", "))
 }
 
 /// The `command_run` and `command_batch` answer: the report of one batch, and what the file holds.
@@ -458,23 +507,26 @@ const NO_DEVICE: &str = "this process has no device to draw with, so `render_pre
 /// sentence exists so the client hears about it instead of a hung connection.
 const BUSY: &str = "the session is unavailable: a previous call left it in a broken state";
 
-/// One row of `command_list`: the id, the label, what it creates and the schema of its parameters.
+/// One row of `command_list`: the id, the label, the world it serves and what it creates — and, for
+/// the one id that was asked, the schema of its parameters.
 ///
 /// There is no `enabled` column: a command writes wherever its own parameters are valid, and the
 /// open product is the *interface's* condition, not the command's — a discovery surface that asked
 /// it would tell a caller "no" about a request the dispatch accepts (ADR 0226). What the parameters
 /// decide is left to `command_run`, whose refusal is the command's own sentence.
-fn command_row(_session: &Session, spec: engine::CommandSpec) -> Value {
+fn command_row(spec: engine::CommandSpec, schema: bool) -> Value {
     let mut row = json!({
         "id": spec.id(),
         "label": spec.label().text(Lang::En),
-        "params": spec.params_schema(),
         "family": engine::Family::of(spec.id()).map(engine::Family::word),
     });
-    if let Some(object) = row.as_object_mut()
-        && let Some(word) = spec.creation_word()
-    {
-        object.insert("creates".to_owned(), json!(word));
+    if let Some(object) = row.as_object_mut() {
+        if let Some(word) = spec.creation_word() {
+            object.insert("creates".to_owned(), json!(word));
+        }
+        if schema {
+            object.insert("params".to_owned(), spec.params_schema());
+        }
     }
     row
 }

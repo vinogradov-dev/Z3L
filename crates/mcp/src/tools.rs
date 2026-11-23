@@ -7,11 +7,12 @@
 //! from `text::Message`, and a sentence a client reads on the wire is the wire's own vocabulary, as
 //! `CommandError`'s display already is.
 //!
-//! The tools are coarse and few on purpose. `command_list` is the discovery surface, `command_run`
-//! is one step, `command_batch` is a list of steps that lands in one undo entry, `undo` takes one
-//! entry back, `query` is the read model, `inspect` is the mistakes the rules prove and
-//! `render_preview` is the scene as one picture. Two tools per command id would be a hundred names
-//! for no gain.
+//! The tools are coarse and few on purpose. `command_list` is the discovery surface — the ids in
+//! short rows, and one command's parameter schema for the id that is named, because sixty-six
+//! schemas inline is more than a caller's context holds (J15) — `command_run` is one step,
+//! `command_batch` is a list of steps that lands in one undo entry, `undo` takes one entry back,
+//! `query` is the read model, `inspect` is the mistakes the rules prove and `render_preview` is the
+//! scene as one picture. Two tools per command id would be a hundred names for no gain.
 
 use std::sync::Arc;
 
@@ -88,13 +89,21 @@ pub struct FindingsRequest {}
 #[serde(deny_unknown_fields)]
 pub struct UndoRequest {}
 
-/// The arguments of `command_list`: none.
+/// The arguments of `command_list`: nothing, or the one command whose schema the answer carries.
 ///
 /// An empty object rather than no arguments at all, so a client that sends `{}` and one that sends
 /// nothing are the same call, and a misspelt key is refused instead of ignored.
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CommandListRequest {}
+pub struct CommandListRequest {
+    /// The one command id whose parameter schema the answer carries, instead of the domain guide.
+    ///
+    /// The short rows are the whole registry, which is the answer a caller reads once; a schema is
+    /// read one id at a time, because sixty-six of them at once is an answer no context holds (J15).
+    /// An id this build does not dispatch is refused with the ids that exist.
+    #[serde(default)]
+    pub command: Option<String>,
+}
 
 /// The arguments of `command_run`: one command, with the parameters its schema describes.
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -299,14 +308,16 @@ pub fn headless_definitions() -> Vec<Tool> {
     vec![
         Tool::new(
             TOOL_LIST,
-            "List every command this build can dispatch: the stable id, the English label, the world \
-             it serves (`furniture`, `geometry`, `tree`, `scene`), what it creates, the JSON Schema of \
-             the parameters it takes, and whether the command can run in this session — with the \
-             sentence that says why not when it cannot. The same answer carries `domain`: the guide a \
-             caller reads before it composes anything, with the two worlds of the program, the order of \
-             a build from scratch, the shapes a product frame takes, the stances of a panel, the \
-             semantic classes with the words a person types for them, the units and the sides. Call \
-             this first: the ids, the schemas and the domain come from here.",
+            "List every command this build can dispatch: one short row per command with the stable id, \
+             the English label, the world it serves (`furniture`, `geometry`, `tree`, `scene`) and what \
+             it creates. The same answer carries `domain`: the guide a caller reads before it composes \
+             anything, with the two worlds of the program, the order of a build from scratch, the \
+             shapes a product frame takes, the stances of a panel, the semantic classes with the words \
+             a person types for them, the units and the sides. Call this first: the ids and the domain \
+             come from here. Name one command with `command` to read the JSON Schema of its \
+             parameters instead — the schema `command_run` parses, one id at a time, so the list stays \
+             inside a caller's context. An id this build does not dispatch is refused with the ids that \
+             exist.",
             object_schema::<CommandListRequest>(),
         ),
         Tool::new(

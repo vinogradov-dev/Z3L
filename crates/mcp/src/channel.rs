@@ -101,8 +101,8 @@ fn silent() -> Answer {
 /// One request the host answers, at a frame boundary.
 #[derive(Clone, Debug)]
 pub enum Call {
-    /// `command_list`: every command this build dispatches.
-    List,
+    /// `command_list`: every command this build dispatches, or the schema of the one that was asked.
+    List(CommandListRequest),
     /// `command_run` and `command_batch`: one batch of steps, exactly what `Session::batch` takes.
     Dispatch(BatchRequest),
     /// `query`: one question the read model already answers.
@@ -121,7 +121,7 @@ impl Call {
     /// The word a log line names this call by: what a caller asked for, in the protocol's own words.
     pub const fn word(&self) -> &'static str {
         match self {
-            Self::List => "listing",
+            Self::List(_) => "listing",
             Self::Dispatch(_) => "batch",
             Self::Ask(_) => "query",
             Self::Undo => "undo",
@@ -749,7 +749,8 @@ impl AttachedServer {
 const INSTRUCTIONS: &str = "\
 These tools drive a running Z3L window: the document a person is looking at, not a file. Call \
 `ui_inspect` first to learn which scenes are open, which one is in front and what is selected; \
-`command_list` names every command this build dispatches with the JSON Schema of its parameters; \
+`command_list` names every command this build dispatches and answers the JSON Schema of the one \
+whose id you name; \
 `query` reads the scene and never writes; `render_preview` answers the picture the window draws. A change lands at the next frame of the window, so it is \
 one undo entry the person can take back.";
 
@@ -792,8 +793,8 @@ impl ServerHandler for AttachedServer {
 fn intent(name: &str, arguments: Option<Map<String, Value>>) -> Result<Call, ErrorData> {
     let call = match name {
         TOOL_LIST => {
-            let _: CommandListRequest = parse(TOOL_LIST, arguments).map_err(tool_error)?;
-            Call::List
+            let request = parse::<CommandListRequest>(TOOL_LIST, arguments).map_err(tool_error)?;
+            Call::List(request)
         }
         TOOL_RUN => {
             let request = parse::<RunRequest>(TOOL_RUN, arguments).map_err(tool_error)?;
@@ -899,7 +900,8 @@ mod tests {
             }) as Wake
         };
 
-        let _answered = mailbox.post(Call::List).expect("the mailbox holds its own queue");
+        let _answered =
+            mailbox.post(Call::List(CommandListRequest::default())).expect("the mailbox holds its own queue");
         assert_eq!(rung.load(Ordering::SeqCst), 0, "a call before the host watches has nobody to ring");
         mailbox.watch(counting(&rung));
         assert_eq!(rung.load(Ordering::SeqCst), 1, "the host is woken for the call it slept through");

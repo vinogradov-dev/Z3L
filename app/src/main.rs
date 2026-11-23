@@ -902,7 +902,7 @@ impl App {
     /// here by a frame that has the window to itself (ADR 0187, ADR 0223).
     fn answer_channel(&mut self, call: &mcp::Call) -> mcp::Answer {
         match call {
-            mcp::Call::List => mcp::Answer::ok(mcp::listing(&self.tabs.active().session)),
+            mcp::Call::List(request) => mcp::listing(&self.tabs.active().session, request.command.as_deref()),
             mcp::Call::Ask(query) => mcp::asking(&self.tabs.active().session, *query),
             // Undoing is the person's own Ctrl+Z, performed by the tab whose history holds the entry
             // a caller is taking back; the session's dirty marker follows it, so the tab row says the

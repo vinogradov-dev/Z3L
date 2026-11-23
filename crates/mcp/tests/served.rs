@@ -146,7 +146,8 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
     assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_UNDO, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
 
-    // `command_list` names every command with the schema of its parameters.
+    // `command_list` names every command in one short row, and answers the schema of the one id a
+    // caller asks for (J15).
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
     let listed = body(&listed);
     assert_eq!(listed["open_product"], json!(product.get()), "the session says which product is open");
@@ -155,7 +156,17 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     let create = commands.iter().find(|row| row["id"] == "panel.create").expect("panel.create is listed");
     assert_eq!(create["creates"], json!("part"), "a part is what the command builds");
     assert!(create.get("enabled").is_none(), "a command writes where its parameters name, so no session column");
-    assert_eq!(create["params"]["additionalProperties"], json!(false), "the schema is the parser's");
+    assert!(create.get("params").is_none(), "the row is short: a schema is asked for by id");
+    let schema = client
+        .call_tool(CallToolRequestParams::new(TOOL_LIST).with_arguments(arguments(json!({"command": "panel.create"}))))
+        .await
+        .expect("the schema answers");
+    let schema = body(&schema);
+    assert_eq!(
+        schema["commands"][0]["params"]["additionalProperties"],
+        json!(false),
+        "the schema is the parser's: {schema}"
+    );
 
     // Two steps in one call: one undo entry, one write.
     let steps = json!({"steps": [
@@ -751,9 +762,18 @@ async fn a_caller_that_reads_only_the_surface_puts_the_shelves_where_the_person_
     assert!(rule.contains("+X") && rule.contains("+Y"), "the frame says which axis the person's left is: {rule}");
 
     // The schema of the command says what the numbers mean, so the caller sends micrometres for the
-    // size and millimetres for the placement's translation.
-    let commands = listed["commands"].as_array().expect("one row per command");
-    let create = commands.iter().find(|row| row["id"] == "panel.create").expect("panel.create is listed");
+    // size and millimetres for the placement's translation. The list is short, so the schema is
+    // asked for by id — the second call a caller makes (J15).
+    let asked = body(
+        &client
+            .call_tool(
+                CallToolRequestParams::new(TOOL_LIST).with_arguments(arguments(json!({"command": "panel.create"}))),
+            )
+            .await
+            .expect("the schema answers"),
+    );
+    let create = &asked["commands"][0];
+    assert_eq!(create["id"], json!("panel.create"), "the schema is the one id that was asked for");
     // A field that names a struct is read through its definition, where the units of its own
     // numbers are written.
     let nominal = &create["params"]["$defs"]["PanelNominalSize"]["properties"];
@@ -804,7 +824,17 @@ async fn a_caller_that_reads_only_the_surface_puts_the_shelves_where_the_person_
     // «Справа штанга»: the -X face of the piece, which is the origin the box answer reports. No
     // command creates a fitting, so the rod is the body the guide says to build instead — and its
     // schema states where a body's own zero is.
-    let cuboid = commands.iter().find(|row| row["id"] == "object.cuboid.create").expect("the body is listed");
+    let body_asked = body(
+        &client
+            .call_tool(
+                CallToolRequestParams::new(TOOL_LIST)
+                    .with_arguments(arguments(json!({"command": "object.cuboid.create"}))),
+            )
+            .await
+            .expect("the body's schema answers"),
+    );
+    let cuboid = &body_asked["commands"][0];
+    assert_eq!(cuboid["id"], json!("object.cuboid.create"), "the schema is the one id that was asked for");
     let anchor = cuboid["params"]["description"].as_str().unwrap_or_default();
     let deep = (depth_mm - ROD_UM[1] as f64 / 1_000.0) / 2.0;
     steps.push(json!({
