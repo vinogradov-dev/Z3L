@@ -1114,6 +1114,45 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_stop_in_the_middle_of_a_stream_keeps_what_was_already_said() {
+        // J26: a streamed answer is read as it arrives, so the person's stop lands between two pieces
+        // and not inside one: the words already drawn stay, the request is cancelled, and the turn
+        // says it was stopped instead of pretending the answer finished.
+        let (mut session, _panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Streaming {
+            pieces: std::collections::VecDeque::from(vec![
+                Reply::saying_so_far("Renaming"),
+                Reply::saying_so_far("Renaming the side"),
+                Reply::saying("Renaming the side now."),
+            ]),
+            cancelled: false,
+        };
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 2);
+        assert!(turn.is_asking(), "a piece left the request in flight");
+        turn.stop();
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+
+        assert!(turn.is_done(), "the stop ends the turn at the next piece boundary");
+        assert!(backend.cancelled, "and reaches the backend that is writing the answer");
+        let drawn: Vec<&str> = conversation
+            .lines()
+            .iter()
+            .filter(|line| line.speaker == Speaker::Agent)
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(drawn, vec!["Renaming"], "what was said before the stop stays, and nothing more");
+        assert_eq!(
+            conversation.lines().last().map(|line| line.text.as_str()),
+            Some(Message::AssistantStoppedLine.text(Lang::En))
+        );
+    }
+
+    #[test]
     fn the_turn_names_the_step_it_last_dispatched() {
         // J26: the panel says what the agent is doing, and the turn is the only place that knows: a
         // read is named by its tool and a batch by the last command it dispatched.
