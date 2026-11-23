@@ -104,20 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
-  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
-   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
-   and there is no card, no record and no path from one to the other, so every build starts
-   from the same defaults.
-  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
-   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
-   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
-   card that names a material the catalogue does not hold is a readable refusal.
-  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
-   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
-   refused with the material named; the document carries the card reference, not the card.
-  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
-
 ## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
@@ -275,6 +261,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
 
 ## Next
+- `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
+  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
+   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
+   and there is no card, no record and no path from one to the other, so every build starts
+   from the same defaults.
+  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
+   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
+   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
+   card that names a material the catalogue does not hold is a readable refusal.
+  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
+   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
+   refused with the material named; the document carries the card reference, not the card.
+  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
+
 - `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
   Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
    dissolve targets and the card, and no task may cite a decision that does not exist. Four
