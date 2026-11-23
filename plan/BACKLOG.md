@@ -696,6 +696,23 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **J23** a gateway that routes on a header answers 400, because the client sends none and drops the provider's reason
+  Why: The owner's go endpoint answered 400 in the panel while the same curl worked: the curl
+   sent `x-opencode-session`, the app sent no such header. Measured against the endpoint with a
+   fake key: without the header it answers 400 `MissingSessionID`; with it, 401 `Invalid
+   credential`. The panel showed only "answered HTTP 400" because the body was discarded, so
+   the reason was invisible. The wire has no way to add a header.
+  Shape: The Assistant settings gain an optional `Name: value` per-line header field, sent on
+   every completion; `Authorization` is refused because the key keeps its two homes. The field
+   is data, so no provider name enters the code (ADR 0189). A non-2xx status is read before it
+   becomes a sentence: the provider's `error.message`, folded and capped, reaches the panel;
+   the key never does. The testkit stub keeps the headers it read and can answer a status, so
+   both promises have a test.
+  Done: A typed header reaches the request through the page, the shell and the backend; a 400
+   shows the provider's own sentence in the panel; `Authorization` is refused; the key is never
+   in a refusal; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs,crates/testkit/src/lib.rs` — `680c6bf`
+
 - `[x]` **J22** an address that cannot be sent to is named before a message leaves, and the assistant page leads with it
   Why: The owner pasted a URL into the address that was already in Settings and the only answer
    was the endpoint's 404; the field accepted it and the panel said "no model" or sent it.
