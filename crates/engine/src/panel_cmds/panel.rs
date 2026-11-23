@@ -44,7 +44,12 @@ pub struct PanelCreate {
     pub parent: Id,
     /// User-visible panel name; it must contain a non-whitespace character.
     pub name: String,
-    /// Panel nominal length and width.
+    /// Panel nominal length and width, the two sides the stance measures.
+    ///
+    /// The third side is the board's thickness, which the material's record carries: a panel's
+    /// `length` runs along the stance's length axis, its `width` along the stance's width axis, and
+    /// the thickness runs along the stance's thickness axis — the direction face `A` points. The
+    /// guide's `stances` table is that frame written out for `shelf`, `post` and `wall`.
     pub nominal_size: PanelNominalSize,
     /// Panel-body material from the session catalogue.
     pub material: ItemId,

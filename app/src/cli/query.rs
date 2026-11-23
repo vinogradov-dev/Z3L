@@ -160,6 +160,7 @@ fn query_of(args: &QueryArgs, project: &Project) -> Result<Query, CliError> {
         Ask::Question("parts") => Ok(Query::Parts),
         Ask::Question("diagnostics") => Ok(Query::Diagnostics),
         Ask::Question("niche") => Ok(Query::Niche { at: point_of(args, project)? }),
+        Ask::Question("materials") => Ok(Query::Materials),
         Ask::Question(other) => Err(CliError::Usage(format!("`{other}` is not a question this door reads"))),
     }
 }

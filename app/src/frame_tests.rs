@@ -7291,6 +7291,34 @@ fn the_panel_in_plan_mode_draws_the_plan_and_writes_nothing() {
 }
 
 #[test]
+fn a_running_turn_draws_stop_where_send_was() {
+    // The panel took the shell's gesture for the turn's own state, so a working turn drew Send
+    // and the person could not stop the agent from the panel at all. The button follows the turn,
+    // and the gesture only postpones the next message.
+    let (mut harness, panel) = chat_fixture("frame-chat-stop-button");
+    harness.app.chat.open = true;
+    harness.app.chat.backend =
+        Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
+
+    harness.settle();
+    assert!(!harness.app.chat.is_busy(), "no turn has started");
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "an idle panel offers Send: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantStop.text(Lang::En)), "and draws no Stop");
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    // The frames before the answer lands draw the panel beside the turn it started.
+    let mut stopped = false;
+    for _ in 0..2 {
+        harness.frame();
+        if harness.drew(Message::AssistantStop.text(Lang::En)) {
+            assert!(!harness.drew(Message::AssistantSend.text(Lang::En)), "Stop replaces Send, never beside it");
+            stopped = true;
+        }
+    }
+    assert!(stopped, "Stop is drawn while the turn runs: {:?}", harness.drawn);
+}
+
+#[test]
 fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
     // The stop is between calls (ADR 0187): the second answer is never asked for, so the document
     // holds the first answer and one undo entry — never a batch cut in half.

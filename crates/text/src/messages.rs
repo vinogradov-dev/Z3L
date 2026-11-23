@@ -1522,6 +1522,10 @@ messages! {
         "The turn reached its call limit and stopped; the conversation is what it left.",
         "Ход достиг предела вызовов и остановился; в разговоре то, что он успел."
     ],
+    AssistantRepeatedLine = [
+        "The same steps already ran in this turn; nothing was dispatched a second time.",
+        "Эти же шаги уже выполнились в этом ходе; второй раз ничего не отправлено."
+    ],
     ShortcutProjection = ["Perspective / orthographic", "Перспектива / ортогональ"],
     ShortcutGrid = ["Toggle the drawing grid", "Переключить сетку рисования"],
     ShortcutCancel = ["Cancel the current tool", "Отменить текущий инструмент"],

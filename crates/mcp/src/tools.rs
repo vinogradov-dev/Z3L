@@ -112,7 +112,11 @@ pub struct RunRequest {
     /// The stable command id, as `command_list` prints it.
     pub command: String,
     /// The parameters the command takes; an empty object when the command takes none.
-    #[serde(default = "empty_params")]
+    ///
+    /// A client that serialises the object into a string is read the same way ([`params_of`]): a
+    /// model writing JSON by hand nests one string too deep, and refusing that would be a refusal
+    /// about the envelope instead of about the command.
+    #[serde(default = "empty_params", deserialize_with = "params_of")]
     pub params: Value,
     /// The product the command works in; the open one when it is absent.
     ///
@@ -194,7 +198,9 @@ pub struct StepRequest {
     /// The stable command id.
     pub command: String,
     /// The parameters the command takes; an empty object when it takes none.
-    #[serde(default = "empty_params")]
+    ///
+    /// The string form is read too, for the reason [`params_of`] gives.
+    #[serde(default = "empty_params", deserialize_with = "params_of")]
     pub params: Value,
     /// The name this step gives the node it creates, so a later step of the same batch can refer to
     /// it as `{"$ref": "<name>"}` in place of an id it cannot know yet.
@@ -226,6 +232,21 @@ impl StepRequest {
 /// reads a missing `params` the same way).
 fn empty_params() -> Value {
     Value::Object(JsonObject::new())
+}
+
+/// The parameters a step carries, whether the wire sent the object or its JSON inside a string.
+///
+/// A model writing arguments by hand and a client that serialises every nested value produce
+/// `"{\"node\": 2}"` where the schema says object, and the command's own parser then answers
+/// "invalid type: string …, expected struct …" — a sentence about the envelope that names nothing
+/// the caller got wrong about the command (X129). The string is parsed here; one that is not JSON
+/// stays the string it was, so the command still names exactly what it received.
+fn params_of<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Value, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value {
+        Value::String(text) => serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        other => other,
+    })
 }
 
 /// The default of a switch that is on, spelled out because `Default` is not `true`.
@@ -365,8 +386,10 @@ pub fn headless_definitions() -> Vec<Tool> {
         Tool::new(
             TOOL_QUERY,
             "Ask the scene one question and write nothing: `tree`, `box`, `bounds`, `parts`, \
-             `diagnostics` or `niche`. The answer is the report the command line prints, so a caller \
-             and the window cannot disagree about the document.",
+             `diagnostics`, `niche`, or `materials` — the records the workshop's catalogue carries, \
+             with the id a command names a board or a band by, its thickness, the sheet it is bought \
+             in and the width a band covers. The answer is the report the command line prints, so a \
+             caller and the window cannot disagree about the document.",
             object_schema::<Query>(),
         ),
         Tool::new(
@@ -500,6 +523,39 @@ mod tests {
             vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_UNDO, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW, TOOL_INSPECT],
             "an attached channel adds the window's own report to the same tools"
         );
+    }
+
+    #[test]
+    fn params_sent_as_json_inside_a_string_are_read_as_the_object_they_encode() {
+        // A model writing arguments by hand nests one string too deep: `"{\"node\": 2}"` where the
+        // schema says object. The data is right and only the envelope is wrong, so the string is
+        // parsed here instead of reaching the command as a string it cannot read (X129).
+        let arguments = serde_json::from_value::<JsonObject>(json!({
+            "steps": [{
+                "command": "node.rename",
+                "params": "{\"node\": 2, \"name\": \"Left\"}",
+            }],
+        }))
+        .expect("an arguments object");
+        let batch: BatchRequest = parse(TOOL_BATCH, Some(arguments)).expect("a string params parses");
+        assert_eq!(batch.steps[0].params, json!({"node": 2, "name": "Left"}));
+
+        let arguments = serde_json::from_value::<JsonObject>(json!({
+            "command": "node.rename",
+            "params": "{\"node\": 2, \"name\": \"Left\"}",
+        }))
+        .expect("an arguments object");
+        let run: RunRequest = parse(TOOL_RUN, Some(arguments)).expect("a run reads the same way");
+        assert_eq!(run.params, json!({"node": 2, "name": "Left"}));
+
+        // A string that is not JSON is left alone, so the command's own sentence names it.
+        let arguments = serde_json::from_value::<JsonObject>(json!({
+            "command": "node.rename",
+            "params": "not json",
+        }))
+        .expect("an arguments object");
+        let run: RunRequest = parse(TOOL_RUN, Some(arguments)).expect("the envelope still parses");
+        assert_eq!(run.params, json!("not json"));
     }
 
     #[test]

@@ -64,7 +64,8 @@ usage: z3l                 open the editor
        z3l mcp bridge    carry this process's standard streams into the open window's channel
        z3l inspect <scene.z3l> [--product <node>]
        z3l query --resources
-       z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
+       z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche|materials [--id <node>]
+                    [--at <x,y,z>]
        z3l query <scene.z3l> z3l://scene/tree|box|parts|diagnostics
 
 export writes an order package from a saved scene without opening a window:

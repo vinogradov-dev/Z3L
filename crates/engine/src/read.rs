@@ -74,6 +74,14 @@ pub enum Query {
     Parts,
     /// Every panel problem the catalogue resolves, with a stable code.
     Diagnostics,
+    /// Every record the workshop's catalogue carries, with the numbers a command needs to name it.
+    ///
+    /// A panel is made from a board and its edges from a band, and both are named by an `ItemId`:
+    /// an id alone is half of what a caller needs, because the thickness a sheet comes in, the size
+    /// it is bought in and the width a band adds are the record's, not the command's. The answer is
+    /// the snapshot this session holds and never a file read, so a caller reads the catalogue the
+    /// document was built against (ADR 0148).
+    Materials,
     /// The empty space around a point, as the fill tool measures it.
     ///
     /// The point is world millimetres and comes from the caller, so a question about a node's own
@@ -86,7 +94,7 @@ pub enum Query {
 
 impl Query {
     /// Every question's name, in the order a refusal and a help text list them.
-    pub const NAMES: [&'static str; 6] = ["tree", "box", "bounds", "parts", "diagnostics", "niche"];
+    pub const NAMES: [&'static str; 7] = ["tree", "box", "bounds", "parts", "diagnostics", "niche", "materials"];
 
     /// The question's own name, as the JSON tag and the command line spell it.
     pub const fn name(self) -> &'static str {
@@ -97,6 +105,7 @@ impl Query {
             Self::Parts => "parts",
             Self::Diagnostics => "diagnostics",
             Self::Niche { .. } => "niche",
+            Self::Materials => "materials",
         }
     }
 }
@@ -142,7 +151,54 @@ pub(crate) fn answer(session: &Session, query: Query) -> Result<Value, QueryErro
         Query::Parts => parts(project, session),
         Query::Diagnostics => Ok(diagnostics(session)),
         Query::Niche { at } => niche(session, at),
+        Query::Materials => Ok(materials(session)),
     }
+}
+
+/// The workshop's catalogue: one row per record, with the numbers a command needs.
+///
+/// A board answers its thickness and the sheet it is bought in, a band its thickness and the width
+/// it covers on an edge, and every row answers the id a command passes and the kind it belongs to.
+/// The rows are the session's snapshot in the catalogue's own order, so two reads of one session
+/// answer the same list.
+fn materials(session: &Session) -> Value {
+    let directory = session.directory();
+    let rows: Vec<Value> = directory
+        .items()
+        .map(|item| {
+            let id = item.id();
+            let mut row = json!({
+                "id": id.to_string(),
+                "name": item.name(),
+                "kind": item.kind().to_string(),
+            });
+            if let Some(board) = directory.board(id) {
+                insert(&mut row, "thickness_um", json!(board.thickness.micrometres()));
+                if let Some(sheet) = board.sheet {
+                    insert(
+                        &mut row,
+                        "sheet",
+                        json!({
+                            "length_um": sheet.length.micrometres(),
+                            "width_um": sheet.width.micrometres(),
+                        }),
+                    );
+                }
+            }
+            if let Some(band) = directory.banding(id) {
+                insert(
+                    &mut row,
+                    "band",
+                    json!({
+                        "thickness_um": band.thickness.micrometres(),
+                        "width_um": band.width.micrometres(),
+                    }),
+                );
+            }
+            row
+        })
+        .collect();
+    json!({ "materials": rows })
 }
 
 /// The node tree: the root with its subtree, or one node with its own.
@@ -625,6 +681,31 @@ mod tests {
     }
 
     #[test]
+    fn the_catalogue_answers_the_numbers_a_command_cannot_guess() {
+        // A panel names its board and its band by an id, and the numbers a caller needs to choose one
+        // — the thickness a sheet comes in, the size it is bought in, the width a band covers — are
+        // the record's. A model with no file system reads them here or guesses them (X131).
+        let session = session();
+        let before = session.project().revision();
+        let answer = session.read(Query::Materials).expect("the catalogue is answered");
+        let rows = answer["materials"].as_array().expect("one row per record");
+        assert_eq!(rows.len(), 2, "the sample carries one board and one band: {answer}");
+
+        let board = rows.iter().find(|row| row.get("sheet").is_some()).expect("the board answers its sheet");
+        assert!(board["id"].as_str().is_some_and(|id| id.contains('-')), "the id a command takes: {board}");
+        assert!(board["name"].as_str().is_some_and(|name| !name.is_empty()));
+        assert_eq!(board["thickness_um"], json!(testkit::sample_panel_thickness().micrometres()));
+        assert_eq!(board["sheet"]["length_um"], json!(2_800_000), "the sheet it is bought in: {board}");
+
+        let band = rows.iter().find(|row| row.get("band").is_some()).expect("a band answers its own numbers");
+        assert_eq!(band["band"]["thickness_um"], json!(2_000));
+        assert_eq!(band["band"]["width_um"], json!(22_000));
+
+        // A read writes nothing, as every other question promises.
+        assert_eq!(session.project().revision(), before);
+    }
+
+    #[test]
     fn every_question_has_one_name_and_the_wire_form_speaks_it() {
         // The name is the id of a question on every door, so the list a refusal prints and the tag
         // the JSON form carries come from the same six variants.
@@ -635,6 +716,7 @@ mod tests {
             Query::Parts,
             Query::Diagnostics,
             Query::Niche { at: [0.0; 3] },
+            Query::Materials,
         ];
         let names: Vec<&str> = questions.iter().map(|query| query.name()).collect();
         assert_eq!(names, Query::NAMES, "the list is the enum's own names, in the same order");
