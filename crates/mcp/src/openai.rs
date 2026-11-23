@@ -26,29 +26,20 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use engine::{BatchStep, CommandRegistry};
+use engine::{BatchStep, CommandRegistry, Query};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use text::Lang;
 
-use crate::chat::{BackendError, ChatBackend, Conversation, Reply, Speaker};
-use crate::tools::{StepRequest, TOOL_BATCH};
+use crate::chat::{BATCH_TOOL, BackendError, CHECKLIST_TOOL, ChatBackend, Conversation, Reply, ToolCall};
+use crate::tools::{CommandListRequest, FindingsRequest, StepRequest, TOOL_FINDINGS, TOOL_LIST, TOOL_QUERY};
 
 /// The environment variable a key is read from first.
 pub const KEY_ENV: &str = "Z3L_AGENT_KEY";
 
 /// The file a key is read from second, in the folder the settings file lives in.
 pub const KEY_FILE: &str = "agent-key";
-
-/// The tool a model calls to make one batch of changes.
-///
-/// It is [`TOOL_BATCH`]'s id on purpose: one act has one name on both doors, and only its arguments
-/// differ (see [`BatchCall`]).
-pub const BATCH_TOOL: &str = TOOL_BATCH;
-
-/// The tool a model calls to publish the steps it is working through.
-pub const CHECKLIST_TOOL: &str = "todo_write";
 
 /// How long one request may take before the turn is told the endpoint stopped answering.
 ///
@@ -304,7 +295,7 @@ fn request_body(endpoint: &Endpoint, transcript: &Conversation) -> Value {
         system.push_str(transcript.brief().trim());
     }
     let mut messages = vec![json!({ "role": "system", "content": system })];
-    messages.extend(transcript.lines().iter().map(line_message));
+    messages.extend(transcript.messages().iter().cloned());
     json!({
         "model": endpoint.model(),
         "messages": messages,
@@ -313,24 +304,13 @@ fn request_body(endpoint: &Endpoint, transcript: &Conversation) -> Value {
     })
 }
 
-/// One line of the conversation as the wire's message with the same content.
+/// The tools a model may call, with the schema each one's own argument type publishes.
 ///
-/// The two speakers that are the program's own reports travel as `user` turns that say so, because
-/// the wire has three roles and the reports are neither the person nor the model speaking.
-fn line_message(line: &crate::chat::Line) -> Value {
-    let role = match line.speaker {
-        Speaker::Agent => "assistant",
-        Speaker::Person | Speaker::Tool | Speaker::Note => "user",
-    };
-    let content = match line.speaker {
-        Speaker::Person | Speaker::Agent => line.text.clone(),
-        Speaker::Tool => format!("The program reports a tool call: {}", line.text),
-        Speaker::Note => format!("The program reports: {}", line.text),
-    };
-    json!({ "role": role, "content": content })
-}
-
-/// The two tools a model may call, with the schema each one's own argument type publishes.
+/// Five and not two: a write and a checklist, and the three reads the tool server already publishes
+/// — `command_list`, `query` and `inspect`. The reads are the same functions a foreign client calls,
+/// so a model in the panel and a model over MCP read one answer (ADR 0185). Without them a model can
+/// only guess a command's parameter names, and every guess that is wrong costs a whole batch and a
+/// request (J14 measured the guess; X130 measured the cost).
 fn tools() -> Value {
     json!([
         {
@@ -354,6 +334,44 @@ fn tools() -> Value {
                                 plan instead of guessing it. It changes no document: the list is chat \
                                 state and is never undone.",
                 "parameters": schema::<ChecklistCall>(),
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": TOOL_LIST,
+                "description": "Read what this build can dispatch: every command id with its English \
+                                label and the world it serves, plus the domain guide. Name one command \
+                                with `command` to read the JSON Schema of its parameters — the field \
+                                names, the unit of each and what the command refuses. Call it before \
+                                you send a command whose parameters you have not read in this \
+                                conversation: a step whose parameters do not match is refused and \
+                                takes the whole batch back.",
+                "parameters": schema::<CommandListRequest>(),
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": TOOL_QUERY,
+                "description": "Ask the open document a question and write nothing: the node tree, \
+                                one node's box or measured bounds, the parts table, the panel \
+                                diagnostics, the niche around a point, or `materials` — the records \
+                                the workshop's catalogue carries, with the id a board or a band is \
+                                named by and its thickness. Call it to see what a batch left before \
+                                you say what it did, and to name a material a command needs.",
+                "parameters": schema::<Query>(),
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": TOOL_FINDINGS,
+                "description": "Read the mistakes the rules can prove, in severity order: a part \
+                                outside the product envelope, two bodies in the same place, a shelf \
+                                that does not fit, a part that leaves its sheet. Call it after a \
+                                build and before you speak.",
+                "parameters": schema::<FindingsRequest>(),
             }
         },
     ])
@@ -381,6 +399,14 @@ fn system_message() -> String {
          Answer the person in their language, in a few sentences. When they ask for a change, call \
          `{BATCH_TOOL}` once with every step of the answer: one call is one undo entry, and a refusal \
          takes the whole call back. Use `{CHECKLIST_TOOL}` to say which steps you are working through.\n\n\
+         Read before you write. A command's fields and units are in its schema and nowhere else: before \
+         a step whose parameters you have not read in this conversation, call `{TOOL_LIST}` with that \
+         command id and read it. `{TOOL_QUERY}` answers what the document holds — the tree, a node's \
+         box or measured bounds, the parts table, the diagnostics, and the workshop's catalogue of \
+         materials, which is the only place a board's id and thickness come from — and \
+         `{TOOL_FINDINGS}` answers the mistakes the rules can prove. Call both after a batch and before you say what it did. A \
+         refusal is an answer you can act on: its sentence names the field or the unit, so fix that and \
+         call again in the same turn instead of asking the person.\n\n\
          The scene brief below is live and authoritative: it names the root container, the open product \
          and the nodes with their ids. Never ask the person for an id, a unit or a side order that the \
          brief or the house convention answers. A free body belongs under the root and needs no product. \
@@ -528,39 +554,59 @@ fn words(content: Option<&Value>) -> String {
     }
 }
 
-/// One tool call, added to `reply`: a batch's steps or the checklist, and nothing else.
+/// One tool call, added to `reply`: the call itself, and what the turn reads out of it.
+///
+/// Every call is kept whole, because it is what the history is sent back with. A batch is also read
+/// into steps and a checklist into items; a read is not parsed here at all — the door that answers
+/// it parses the call, so its refusal is in the model's history instead of in the turn's end. An
+/// argument list that cannot be read becomes a fault on the call, which the turn answers the same
+/// way: a model that mistyped one key is told which key, in the same turn.
 fn read_call(call: &Value, reply: &mut Reply) -> Result<(), BackendError> {
     let function = call
         .get("function")
         .ok_or_else(|| BackendError::new("the endpoint sent a tool call with no function: nothing to dispatch"))?;
-    let name = function.get("name").and_then(Value::as_str).unwrap_or_default();
-    let arguments = match function.get("arguments") {
+    let name = function.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let id = call.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("call-{name}"));
+    let (arguments, unreadable) = match function.get("arguments") {
         // The wire sends the arguments as a JSON string; a gateway that sends the object itself is
         // read the same way rather than refused.
-        Some(Value::String(text)) => serde_json::from_str::<Value>(text).map_err(|error| {
-            BackendError::new(format!("`{name}` was called with arguments that are not JSON: {error}"))
-        })?,
-        Some(value) => value.clone(),
-        None => json!({}),
+        Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
+            Ok(value) => (value, None),
+            Err(error) => (json!({}), Some(format!("`{name}` was called with arguments that are not JSON: {error}"))),
+        },
+        Some(value) => (value.clone(), None),
+        None => (json!({}), None),
     };
-    match name {
-        BATCH_TOOL => {
-            let call: BatchCall = serde_json::from_value(arguments).map_err(|error| {
-                BackendError::new(format!("`{name}` was called with arguments it does not take: {error}"))
-            })?;
-            reply.calls.extend(call.steps.into_iter().map(step_of));
-        }
-        CHECKLIST_TOOL => {
-            let call: ChecklistCall = serde_json::from_value(arguments).map_err(|error| {
-                BackendError::new(format!("`{name}` was called with arguments it does not take: {error}"))
-            })?;
-            reply.checklist.extend(call.items);
-        }
-        other => {
-            return Err(BackendError::new(format!(
-                "the endpoint called `{other}`, which the assistant does not offer: it knows `{BATCH_TOOL}` and \
-                 `{CHECKLIST_TOOL}`"
-            )));
+    let reading = |sentence: String| ToolCall::new(id.clone(), name.clone(), arguments.clone()).faulted(sentence);
+    let mut recorded = ToolCall::new(id.clone(), name.clone(), arguments.clone());
+    match name.as_str() {
+        BATCH_TOOL => match unreadable {
+            Some(sentence) => reply.tool_calls.push(reading(sentence)),
+            None => match serde_json::from_value::<BatchCall>(arguments.clone()) {
+                Ok(call) => {
+                    reply.calls.extend(call.steps.into_iter().map(step_of));
+                    reply.tool_calls.push(recorded);
+                }
+                Err(error) => reply
+                    .tool_calls
+                    .push(reading(format!("`{name}` was called with arguments it does not take: {error}"))),
+            },
+        },
+        CHECKLIST_TOOL => match unreadable {
+            Some(sentence) => reply.tool_calls.push(reading(sentence)),
+            None => match serde_json::from_value::<ChecklistCall>(arguments.clone()) {
+                Ok(call) => {
+                    reply.checklist.extend(call.items);
+                    reply.tool_calls.push(recorded);
+                }
+                Err(error) => reply
+                    .tool_calls
+                    .push(reading(format!("`{name}` was called with arguments it does not take: {error}"))),
+            },
+        },
+        _ => {
+            recorded.fault = unreadable;
+            reply.tool_calls.push(recorded);
         }
     }
     Ok(())
@@ -577,17 +623,21 @@ fn step_of(step: StepRequest) -> BatchStep {
 /// An answer shaped the way the wire carries it, for the tests that never start a request.
 #[cfg(test)]
 impl Reply {
-    /// This reply as one completion's answer body.
+    /// This reply as one completion's answer body: its words and every call it made.
     fn into_wire(self) -> serde_json::Value {
         let calls: Vec<Value> = self
-            .calls
+            .tool_calls
             .iter()
-            .map(|step| {
-                let arguments = json!({ "steps": [{ "command": step.command(), "params": step.params() }] });
-                json!({ "function": { "name": BATCH_TOOL, "arguments": arguments.to_string() } })
+            .map(|call| {
+                json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": { "name": call.name, "arguments": call.arguments.to_string() },
+                })
             })
             .collect();
-        json!({ "choices": [{ "message": { "content": self.text, "tool_calls": calls } }] })
+        let content = if self.text.trim().is_empty() { Value::Null } else { Value::String(self.text) };
+        json!({ "choices": [{ "message": { "content": content, "tool_calls": calls } }] })
     }
 }
 
@@ -598,13 +648,13 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
-    use engine::{BatchOptions, Session};
+    use engine::Session;
     use model::Id;
     use serde_json::json;
 
     use super::*;
-    use crate::chat::Turn;
     use crate::chat::tests::session as fixture;
+    use crate::chat::{Speaker, Turn};
 
     /// Drives one turn to its end, sleeping between frames so the worker can answer.
     ///
@@ -616,9 +666,9 @@ mod tests {
         conversation.push(Speaker::Person, "rename the side");
         let mut turn = Turn::new();
         let deadline = Instant::now() + Duration::from_secs(10);
-        let mut dispatch = |steps: &[BatchStep]| session.agent_batch_in(scope, steps, BatchOptions::ALL_OR_NOTHING);
+        let mut door = crate::reads::MessageDoor::new(session, scope);
         while !turn.is_done() && Instant::now() < deadline {
-            turn.advance(backend, &mut conversation, Lang::En, &mut dispatch);
+            turn.advance(backend, &mut conversation, Lang::En, &mut door);
             std::thread::sleep(Duration::from_millis(2));
         }
         session.end_edit();
@@ -665,7 +715,15 @@ mod tests {
             request["messages"][0]["role"], "system",
             "the guide reaches the model before its first call: {request}"
         );
-        assert!(request["tools"].as_array().is_some_and(|tools| tools.len() == 2), "two tools are offered");
+        let offered: Vec<&str> = request["tools"]
+            .as_array()
+            .map(|tools| tools.iter().filter_map(|tool| tool["function"]["name"].as_str()).collect::<Vec<&str>>())
+            .unwrap_or_default();
+        assert_eq!(
+            offered,
+            vec![BATCH_TOOL, CHECKLIST_TOOL, TOOL_LIST, TOOL_QUERY, TOOL_FINDINGS],
+            "one write, one checklist and the three reads the tool server publishes"
+        );
         assert_eq!(name(&session, panel).as_deref(), Some("Left"), "the answer landed");
         session.undo().expect("the whole answer is one entry");
         assert_eq!(name(&session, panel).as_deref(), Some("Side"), "one undo takes the answer back");
@@ -717,10 +775,10 @@ mod tests {
         let mut conversation = Conversation::new();
         conversation.push(Speaker::Person, "hello");
         let mut turn = Turn::new();
-        let mut dispatch = |steps: &[BatchStep]| session.agent_batch_in(scope, steps, BatchOptions::ALL_OR_NOTHING);
-        turn.advance(backend, &mut conversation, Lang::En, &mut dispatch);
+        let mut door = crate::reads::MessageDoor::new(session, scope);
+        turn.advance(backend, &mut conversation, Lang::En, &mut door);
         std::thread::sleep(Duration::from_millis(20));
-        turn.advance(backend, &mut conversation, Lang::En, &mut dispatch);
+        turn.advance(backend, &mut conversation, Lang::En, &mut door);
         session.end_edit();
     }
 
@@ -818,14 +876,22 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_the_assistant_does_not_offer_is_a_sentence_not_a_dispatch() {
+    fn a_tool_the_door_does_not_know_is_carried_to_it_instead_of_ending_the_turn() {
+        // The name is not the wire's to refuse: the door answers it with the sentence that names the
+        // tools it does offer, and the model reads that refusal as the answer to its own call. The
+        // turn ends on an answer that names no call, never on a name it did not expect.
         let value = json!({
             "choices": [{ "message": { "content": "", "tool_calls": [{
+                "id": "call-9",
                 "function": { "name": "shell", "arguments": "{}" }
             }] } }]
         });
-        let error = reply_from(&value).expect_err("an unknown tool is refused");
-        assert!(error.sentence().contains("`shell`"), "the sentence names the tool: {}", error.sentence());
+        let reply = reply_from(&value).expect("an unknown tool is the door's to answer");
+        assert!(reply.calls.is_empty(), "it dispatches nothing");
+        assert_eq!(reply.tool_calls.len(), 1);
+        assert_eq!(reply.tool_calls[0].name, "shell");
+        assert_eq!(reply.tool_calls[0].id, "call-9", "the answer is tied to the call");
+        assert!(reply.tool_calls[0].fault.is_none(), "the name is read; only its answer refuses it");
     }
 
     #[test]

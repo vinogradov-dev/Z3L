@@ -386,8 +386,10 @@ pub fn headless_definitions() -> Vec<Tool> {
         Tool::new(
             TOOL_QUERY,
             "Ask the scene one question and write nothing: `tree`, `box`, `bounds`, `parts`, \
-             `diagnostics` or `niche`. The answer is the report the command line prints, so a caller \
-             and the window cannot disagree about the document.",
+             `diagnostics`, `niche`, or `materials` — the records the workshop's catalogue carries, \
+             with the id a command names a board or a band by, its thickness, the sheet it is bought \
+             in and the width a band covers. The answer is the report the command line prints, so a \
+             caller and the window cannot disagree about the document.",
             object_schema::<Query>(),
         ),
         Tool::new(

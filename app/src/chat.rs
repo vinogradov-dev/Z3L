@@ -24,7 +24,7 @@
 //! Changes when: the panel's states, its words, its buttons or the turn's presentation change.
 
 use eframe::egui::{self, Context, Id, RichText, Ui};
-use engine::{AgentMode, BatchOptions, BatchStep, EditScope, Finding, Session};
+use engine::{AgentMode, EditScope, Finding, Session};
 use mcp::{ChatBackend, Conversation, Speaker, Turn};
 use text::{Lang, Message};
 use ui::settings::EndpointProblem;
@@ -351,9 +351,12 @@ impl Chat {
         };
         let scope = *self.scope.get_or_insert_with(|| session.edit_scope());
         {
+            // The door the window is: every batch of the message in its one scope, and the reads
+            // answered by the functions the tool server publishes, so the model in the panel and a
+            // model over MCP read one answer (ADR 0185).
             let conversation = &mut self.conversation;
-            let mut dispatch = |steps: &[BatchStep]| session.agent_batch_in(scope, steps, BatchOptions::ALL_OR_NOTHING);
-            turn.advance(backend, conversation, lang, &mut dispatch);
+            let mut door = mcp::MessageDoor::new(session, scope);
+            turn.advance(backend, conversation, lang, &mut door);
         }
         self.checklist = turn.checklist().to_vec();
         if turn.is_done() {

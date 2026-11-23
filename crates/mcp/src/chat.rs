@@ -28,8 +28,33 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use engine::{BatchEffect, BatchReport, BatchStep};
+use serde_json::{Value, json};
 use text::{Lang, Message};
 use thiserror::Error;
+
+use crate::tools::{Answer, TOOL_BATCH};
+
+/// The tool a model calls to make one batch of changes.
+///
+/// It is [`TOOL_BATCH`]'s id on purpose: one act has one name on both doors, and only its arguments
+/// differ. The turn owns the name because the turn is what runs the batch.
+pub const BATCH_TOOL: &str = TOOL_BATCH;
+
+/// The tool a model calls to publish the steps it is working through.
+pub const CHECKLIST_TOOL: &str = "todo_write";
+
+/// How much of a call's arguments the panel writes on the line that shows the work.
+///
+/// A read is one small object; the cap is for the one that is not, because a line is read at a
+/// glance and the whole argument is in the transcript the model holds.
+const TOOL_LINE_CHARS: usize = 120;
+
+/// What a turn answers a batch it has already run in this turn.
+///
+/// The same steps asked twice in one turn is the model repeating itself, not a second part: a box
+/// that landed once does not land again, and saying so is what lets the model speak instead of
+/// building a duplicate (X130).
+const REPEAT_SENTENCE: &str = "these steps already ran in this turn; nothing was dispatched a second time";
 
 /// The most backend replies one turn may ask for, so a model that loops cannot run forever.
 ///
@@ -66,13 +91,57 @@ pub struct Line {
     pub text: String,
 }
 
-/// One conversation: the lines, in order, and nothing else.
+/// One tool call as the model made it: the tool it named, the arguments it passed and the id the
+/// wire answers it by.
+///
+/// The id is the wire's and it is what ties an answer to its call when the history goes back. The
+/// name decides who answers: [`BATCH_TOOL`] is the turn's, and every other name is a read the door
+/// answers with the same functions the tool server uses — so an unknown name comes back as a
+/// refusal the model can read instead of an error that ends the turn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolCall {
+    /// The wire's id for this call, echoed on its answer.
+    pub id: String,
+    /// The tool the model called.
+    pub name: String,
+    /// The arguments it passed, as the object the published schema describes.
+    pub arguments: Value,
+    /// The sentence the call's own arguments could not be read, when they could not.
+    ///
+    /// A model that mistypes one key is answered with the sentence that names it, in the same turn,
+    /// instead of a turn that ends on a transport complaint: the refusal is the model's to fix.
+    pub fault: Option<String>,
+}
+
+impl ToolCall {
+    /// A call with the wire's id, the tool's name and its arguments.
+    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: Value) -> Self {
+        Self { id: id.into(), name: name.into(), arguments, fault: None }
+    }
+
+    /// The same call, whose arguments could not be read, with the sentence that says why.
+    pub fn faulted(mut self, sentence: impl Into<String>) -> Self {
+        self.fault = Some(sentence.into());
+        self
+    }
+}
+
+/// One conversation: every line the person reads and every message the wire carries.
 ///
 /// It is owned by the shell, before, during and after a turn, so the backend reads the same history
 /// a person does and a stopped turn leaves the words it already said.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Conversation {
     lines: Vec<Line>,
+    /// The same conversation as the wire carries it: one message per line, plus the tool calls and
+    /// their answers.
+    ///
+    /// It is kept beside the lines rather than derived from them because a tool call is not a line:
+    /// the model's own call and the program's answer to it are two messages that a person reads as
+    /// one dim note. Replaying them is what stops a model from planning the same build again — with
+    /// the calls dropped, the history says "the program reports **a refusal**" and nothing about
+    /// what was asked (X130).
+    messages: Vec<Value>,
     /// The live scene the shell hands the model before it asks, empty where the backend reads the
     /// scene itself. It is a system note, not a transcript line: the person never sees it, and it is
     /// replaced for every message instead of growing the history.
@@ -85,17 +154,32 @@ impl Conversation {
         Self::default()
     }
 
-    /// Adds one line.
+    /// Adds one line, to the panel and to the history the model reads.
     pub fn push(&mut self, speaker: Speaker, text: impl Into<String>) {
+        let text = text.into();
+        self.messages.push(message_of(speaker, &text));
+        self.lines.push(Line { speaker, text });
+    }
+
+    /// Adds one line the panel draws and the history does not carry.
+    ///
+    /// It is how the program's own report of a batch travels: the model already holds the same
+    /// sentence as the answer to its call, and a second copy as a `user` turn would be the program
+    /// talking to itself. A tool call and its answer are the same case ([`Self::push_answer`],
+    /// [`Self::push_tool_result`]).
+    pub fn push_line(&mut self, speaker: Speaker, text: impl Into<String>) {
         self.lines.push(Line { speaker, text: text.into() });
     }
 
     /// Adds lines the backend already wrote, in their own order.
     ///
     /// A backend that speaks a protocol of its own reports what it said and what it did as lines of
-    /// this conversation, so the panel draws one transcript whichever backend is behind it.
+    /// this conversation, so the panel draws one transcript whichever backend is behind it. They are
+    /// drawn only: that backend writes its own history.
     pub fn extend(&mut self, lines: Vec<Line>) {
-        self.lines.extend(lines);
+        for line in lines {
+            self.push_line(line.speaker, line.text);
+        }
     }
 
     /// Every line, oldest first.
@@ -103,9 +187,48 @@ impl Conversation {
         &self.lines
     }
 
+    /// The conversation as the wire sends it back, oldest message first.
+    pub fn messages(&self) -> &[Value] {
+        &self.messages
+    }
+
+    /// Records the model's own answer: its words and the calls it made, as one message.
+    ///
+    /// An answer that names a tool is one assistant message carrying both, which is what the wire
+    /// expects and what the model reads back: its own words and what it asked for.
+    pub fn push_answer(&mut self, reply: &Reply) {
+        let spoken = !reply.text.trim().is_empty();
+        if reply.tool_calls.is_empty() {
+            if spoken {
+                self.push(Speaker::Agent, reply.text.clone());
+            }
+            return;
+        }
+        let calls: Vec<Value> = reply.tool_calls.iter().map(tool_call_message).collect();
+        let content = if spoken { Value::String(reply.text.clone()) } else { Value::Null };
+        self.messages.push(json!({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": calls,
+        }));
+        if spoken {
+            self.push_line(Speaker::Agent, reply.text.clone());
+        }
+    }
+
+    /// Records what one tool call answered, tied to it by the wire's id.
+    pub fn push_tool_result(&mut self, call: &ToolCall, answer: &Value) {
+        self.messages.push(json!({
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": answer.to_string(),
+        }));
+    }
+
     /// Forgets everything, which is what closing the tab does with it.
     pub fn clear(&mut self) {
         self.lines.clear();
+        self.messages.clear();
         self.brief.clear();
     }
 
@@ -139,6 +262,12 @@ pub struct Reply {
     pub calls: Vec<BatchStep>,
     /// The steps the model says it is working through, shown beside the conversation.
     pub checklist: Vec<String>,
+    /// Every tool call the answer made, in the order it made them.
+    ///
+    /// They are what the history is sent back with: the batch is one of them and a read is another,
+    /// and a call whose arguments could not be read carries its sentence in
+    /// [`ToolCall::fault`] so the turn answers it instead of ending.
+    pub tool_calls: Vec<ToolCall>,
     /// Lines that are not the model speaking: a tool call it made and what came of it.
     ///
     /// A backend that owns the model loop reports its work through these instead of through
@@ -159,9 +288,18 @@ impl Reply {
         Self { text: text.into(), ..Self::default() }
     }
 
-    /// An answer that asks for one batch.
+    /// An answer that asks for one batch, shaped as the wire would have carried it.
     pub fn calling(calls: Vec<BatchStep>) -> Self {
-        Self { calls, ..Self::default() }
+        let arguments = json!({ "steps": calls.iter().map(step_message).collect::<Vec<_>>() });
+        let call = ToolCall::new("call-batch", BATCH_TOOL, arguments);
+        Self { calls, tool_calls: vec![call], ..Self::default() }
+    }
+
+    /// An answer that asked to read one thing, shaped as the wire would have carried it.
+    pub fn reading(name: impl Into<String>, arguments: Value) -> Self {
+        let name = name.into();
+        let call = ToolCall::new(format!("call-{name}"), name, arguments);
+        Self { tool_calls: vec![call], ..Self::default() }
     }
 
     /// One more piece of an answer still arriving: the lines it said since the last piece.
@@ -214,6 +352,19 @@ pub trait ChatBackend: fmt::Debug + Send {
     /// stop has to travel: the process is asked to cancel and answers with what it had already
     /// done. A backend that answers one request at a time needs nothing.
     fn cancel(&mut self) {}
+}
+
+/// What a turn may do besides ask the model: run one batch and answer one read call.
+///
+/// The turn never touches a session. The shell owns the document, so it answers both — a batch
+/// through `Session::agent_batch_in` and a read through the same functions the tool server
+/// publishes — which is what keeps one projection of the registry on every door (ADR 0185,
+/// ADR 0191). A scripted door in a test answers the same two calls with values it chose.
+pub trait Tools {
+    /// Runs the steps of one `command_batch` answer and reports what it did.
+    fn dispatch(&mut self, steps: &[BatchStep]) -> BatchReport;
+    /// Answers one read call, as the tool server would.
+    fn read(&mut self, call: &ToolCall) -> Answer;
 }
 
 /// A backend that answers from a fixed script, so a whole turn runs in a test without a network.
@@ -280,6 +431,12 @@ pub struct Turn {
     stopped: bool,
     done: bool,
     checklist: Vec<String>,
+    /// The batch this turn has already dispatched, so an answer that repeats it verbatim does not
+    /// build the same parts twice.
+    ///
+    /// Only a batch that ran is kept: a refused one may be corrected and asked again, which is what
+    /// the refusal sentence is for.
+    landed: Option<Vec<BatchStep>>,
 }
 
 impl Default for Turn {
@@ -291,7 +448,15 @@ impl Default for Turn {
 impl Turn {
     /// A turn that has not asked anything yet.
     pub fn new() -> Self {
-        Self { calls: 0, budget: MAX_CALLS, asked: false, stopped: false, done: false, checklist: Vec::new() }
+        Self {
+            calls: 0,
+            budget: MAX_CALLS,
+            asked: false,
+            stopped: false,
+            done: false,
+            checklist: Vec::new(),
+            landed: None,
+        }
     }
 
     /// The same turn with a budget of `calls` replies, which a test uses to reach the limit quickly.
@@ -334,15 +499,15 @@ impl Turn {
     /// One step of the turn, at a frame boundary.
     ///
     /// Exactly one of four things happens: the person's stop ends the turn without asking anything
-    /// more, an answer that arrived is taken and its batch dispatched, a reply is asked for, or the
-    /// budget ends the turn. `dispatch` runs one batch against the document the person is looking
-    /// at and reports what it did; the turn never touches a session itself.
+    /// more, an answer that arrived is taken and its calls answered, a reply is asked for, or the
+    /// budget ends the turn. `tools` runs one batch against the document the person is looking at
+    /// and answers a read; the turn never touches a session itself.
     pub fn advance(
         &mut self,
         backend: &mut dyn ChatBackend,
         conversation: &mut Conversation,
         lang: Lang,
-        dispatch: &mut dyn FnMut(&[BatchStep]) -> BatchReport,
+        tools: &mut dyn Tools,
     ) {
         if self.done {
             return;
@@ -364,7 +529,7 @@ impl Turn {
                     self.done = true;
                 }
                 Ok(reply) => {
-                    self.receive(reply, conversation, lang, dispatch);
+                    self.receive(reply, conversation, lang, tools);
                 }
             }
             return;
@@ -379,33 +544,108 @@ impl Turn {
         self.calls = self.calls.saturating_add(1);
     }
 
-    /// Takes one answer: its words, its checklist and, when it names commands, its one batch.
+    /// Takes one answer: its words, its checklist, its reads and, when it names them, its batch.
     ///
-    /// A piece of an answer still arriving appends what it says and leaves the request in flight,
+    /// Every call is answered, in the order the model made it, and the answer goes into the history
+    /// tied to the call by the wire's id: a read that came before the batch is a schema the build
+    /// used, and a batch that came before a read is what a verification read sees (ADR 0185). A
+    /// piece of an answer still arriving appends what it says and leaves the request in flight,
     /// which is how a process that streams its work is watched instead of waited for (ADR 0230).
-    fn receive(
-        &mut self,
-        reply: Reply,
-        conversation: &mut Conversation,
-        lang: Lang,
-        dispatch: &mut dyn FnMut(&[BatchStep]) -> BatchReport,
-    ) {
-        if !reply.text.trim().is_empty() {
-            conversation.push(Speaker::Agent, reply.text);
-        }
-        conversation.extend(reply.lines);
+    fn receive(&mut self, reply: Reply, conversation: &mut Conversation, lang: Lang, tools: &mut dyn Tools) {
+        conversation.push_answer(&reply);
+        conversation.extend(reply.lines.clone());
         if reply.more {
             self.asked = true;
             return;
         }
         self.checklist = reply.checklist;
-        if reply.calls.is_empty() {
+        if reply.tool_calls.is_empty() {
+            // The model spoke and asked for nothing: the answer is the answer.
             self.done = true;
             return;
         }
-        let report = dispatch(&reply.calls);
-        conversation.push(Speaker::Note, describe(&report, lang));
+        let mut dispatched = false;
+        for call in reply.tool_calls.iter() {
+            if let Some(fault) = &call.fault {
+                conversation.push_line(Speaker::Tool, tool_line(call));
+                conversation.push_tool_result(call, &json!({ "error": fault }));
+                continue;
+            }
+            match call.name.as_str() {
+                CHECKLIST_TOOL => {
+                    conversation.push_tool_result(call, &json!({ "ok": true }));
+                }
+                BATCH_TOOL => {
+                    // One batch per answer: `Reply::calls` is every step the answer named, so a
+                    // second batch call in one message would run them twice.
+                    if dispatched || self.landed.as_deref() == Some(reply.calls.as_slice()) {
+                        conversation.push_line(Speaker::Tool, tool_line(call));
+                        conversation.push_line(Speaker::Note, Message::AssistantRepeatedLine.text(lang));
+                        conversation.push_tool_result(call, &json!({ "note": REPEAT_SENTENCE }));
+                        continue;
+                    }
+                    dispatched = true;
+                    let report = tools.dispatch(&reply.calls);
+                    let sentence = describe(&report, lang);
+                    conversation.push_line(Speaker::Tool, tool_line(call));
+                    conversation.push_line(Speaker::Note, sentence.clone());
+                    conversation.push_tool_result(call, &json!({ "note": sentence }));
+                    if !matches!(report.effect(), BatchEffect::RolledBack) {
+                        self.landed = Some(reply.calls.clone());
+                    }
+                }
+                _ => {
+                    let answer = tools.read(call);
+                    conversation.push_line(Speaker::Tool, tool_line(call));
+                    conversation.push_tool_result(call, answer.body());
+                }
+            }
+        }
     }
+}
+
+/// One line of the conversation as the wire's message with the same content.
+///
+/// The two speakers that are the program's own reports travel as `user` turns that say so, because
+/// the wire has three roles and the reports are neither the person nor the model speaking.
+fn message_of(speaker: Speaker, text: &str) -> Value {
+    let role = match speaker {
+        Speaker::Agent => "assistant",
+        Speaker::Person | Speaker::Tool | Speaker::Note => "user",
+    };
+    let content = match speaker {
+        Speaker::Person | Speaker::Agent => text.to_owned(),
+        Speaker::Tool => format!("The program reports a tool call: {text}"),
+        Speaker::Note => format!("The program reports: {text}"),
+    };
+    json!({ "role": role, "content": content })
+}
+
+/// One tool call as the wire carries it: the id, the kind and the name with its arguments as JSON.
+fn tool_call_message(call: &ToolCall) -> Value {
+    json!({
+        "id": call.id,
+        "type": "function",
+        "function": { "name": call.name, "arguments": call.arguments.to_string() },
+    })
+}
+
+/// One step of a batch as the wire's `command_batch` carries it.
+fn step_message(step: &BatchStep) -> Value {
+    match step.name() {
+        Some(name) => json!({ "command": step.command(), "params": step.params(), "as": name }),
+        None => json!({ "command": step.command(), "params": step.params() }),
+    }
+}
+
+/// The line a read leaves in the panel: the tool it named and, shortened, what it asked for.
+fn tool_line(call: &ToolCall) -> String {
+    let arguments = call.arguments.to_string();
+    if arguments.chars().count() <= TOOL_LINE_CHARS {
+        return format!("{} {arguments}", call.name);
+    }
+    let short: String = arguments.chars().take(TOOL_LINE_CHARS).collect();
+    format!("{} {short}…", call.name)
 }
 
 /// What a batch did, in one sentence the panel draws and a person reads.
@@ -431,7 +671,7 @@ fn describe(report: &BatchReport, lang: Lang) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use engine::{AgentMode, BatchOptions, EditScope, Session};
+    use engine::{AgentMode, EditScope, Session};
     use model::{Id, Node};
     use serde_json::json;
     use testkit::{sample_catalog, sample_product_project};
@@ -465,7 +705,8 @@ pub(crate) mod tests {
     /// Runs `frames` frame boundaries of one turn against `session`, in the turn's one scope.
     ///
     /// It is the shell's half of [`Turn::advance`]: mint one scope per message, dispatch every batch
-    /// of the message inside it, and close it when the turn is over.
+    /// of the message inside it, and close it when the turn is over. The door is the window's own
+    /// ([`crate::reads::MessageDoor`]), so a read is answered by the functions the tool server uses.
     fn drive(
         turn: &mut Turn,
         backend: &mut dyn ChatBackend,
@@ -474,9 +715,9 @@ pub(crate) mod tests {
         scope: EditScope,
         frames: usize,
     ) {
-        let mut dispatch = |steps: &[BatchStep]| session.agent_batch_in(scope, steps, BatchOptions::ALL_OR_NOTHING);
+        let mut door = crate::reads::MessageDoor::new(session, scope);
         for _ in 0..frames {
-            turn.advance(backend, conversation, Lang::En, &mut dispatch);
+            turn.advance(backend, conversation, Lang::En, &mut door);
             if turn.is_done() {
                 break;
             }
@@ -488,6 +729,76 @@ pub(crate) mod tests {
 
     fn name(session: &Session, panel: Id) -> Option<String> {
         session.project().node(panel).map(|node: &Node| node.name().to_owned())
+    }
+
+    #[test]
+    fn a_read_is_answered_in_the_history_and_the_turn_goes_on() {
+        // A model that cannot read the registry guesses a command's fields, and a history that drops
+        // its own calls leaves it guessing again (X130). The read is answered by the door, the call
+        // and its answer are in what the model reads back, and the turn asks again instead of
+        // ending on the first read.
+        let (mut session, panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Scripted::new(vec![
+            Reply::reading(crate::tools::TOOL_LIST, json!({ "command": "panel.create" })),
+            Reply::calling(vec![rename(panel, "Left")]),
+        ]);
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 8);
+
+        assert_eq!(name(&session, panel).as_deref(), Some("Left"), "the answer after the read landed");
+        let messages = conversation.messages();
+        let called = messages
+            .iter()
+            .find(|message| message["role"] == "assistant" && message["tool_calls"].is_array())
+            .expect("the model's own call is in the history it reads back");
+        assert_eq!(called["tool_calls"][0]["function"]["name"], crate::tools::TOOL_LIST);
+        let answered =
+            messages.iter().find(|message| message["role"] == "tool").expect("the read's answer is there too");
+        assert_eq!(answered["tool_call_id"], called["tool_calls"][0]["id"], "the answer names its call");
+        assert!(
+            answered["content"].as_str().is_some_and(|text| text.contains("panel.create")),
+            "and carries the schema of the command it asked for: {answered}"
+        );
+        assert!(
+            conversation
+                .lines()
+                .iter()
+                .any(|line| line.speaker == Speaker::Tool && line.text.contains(crate::tools::TOOL_LIST)),
+            "the person sees the work without reading the transport"
+        );
+    }
+
+    #[test]
+    fn the_same_batch_twice_in_one_turn_builds_once() {
+        // A model that repeats itself is one answer, not two parts: the second copy is answered with
+        // the sentence that says so, and the document keeps one part and one undo entry.
+        let (mut session, panel) = session();
+        let scope = session.edit_scope();
+        let step = rename(panel, "Left");
+        let mut backend = Scripted::new(vec![
+            Reply::calling(vec![step.clone()]),
+            Reply::calling(vec![step]),
+            Reply::saying("renamed"),
+        ]);
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 8);
+
+        assert!(turn.is_done(), "the spoken answer ends the turn");
+        assert_eq!(name(&session, panel).as_deref(), Some("Left"));
+        session.undo().expect("the turn is one entry");
+        assert_eq!(name(&session, panel).as_deref(), Some("Side"), "the repeated batch left no second entry");
+        assert!(
+            conversation.lines().iter().any(|line| line.text == Message::AssistantRepeatedLine.text(Lang::En)),
+            "the person reads why nothing happened the second time: {:?}",
+            conversation.lines()
+        );
     }
 
     #[test]

@@ -44,6 +44,7 @@ pub mod chat;
 pub mod inspect;
 pub mod openai;
 pub mod preview;
+pub mod reads;
 mod report;
 pub mod server;
 pub mod tools;
@@ -56,10 +57,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 pub use acp::{Acp, PROTOCOL_VERSION, Program, Scripted as ScriptedProcess, Spawner, Started};
 pub use channel::{Answering, BridgeError, Call, Channel, ChannelError, Mailbox, Pending, Wake, bridge, queued};
-pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
+pub use chat::{
+    BATCH_TOOL, BackendError, CHECKLIST_TOOL, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, ToolCall,
+    Tools, Turn,
+};
 pub use inspect::{Tab, Window};
 pub use openai::{Endpoint, KEY_ENV, KEY_FILE, OpenAi, key};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
+pub use reads::MessageDoor;
 pub use report::PLAN_NOTE;
 pub use server::{
     CommandServer, Door, LIST_BUDGET_BYTES, asking, dispatch, findings, listing, preview, serve_session, undo,
