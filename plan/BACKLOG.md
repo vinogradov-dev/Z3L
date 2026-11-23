@@ -118,9 +118,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    command that creates a part, so the horizontal and the upright placement cannot disagree
    about which end is the origin. The fill stance then stops being the only place the rule is
    written.
-  Done: A test creates an upright panel by command and asserts its origin is a base corner of
-   the part; a test asserts a placement whose origin is not on the base face is refused with a
-   sentence naming the anchor rule; the wardrobe fixture has every origin at the bottom.
+  Done: A test creates each of the three types by command and asserts its zero corner sits at
+   the point, its class is the type's and the world box's lowest point is that corner's height;
+   a test asserts each type's length axis is never turned downwards; a panel built by the typed
+   command and one built by the fill tool name the same rotation, because both read one stance
+   table.
   `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
 - `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
   Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
@@ -247,6 +249,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A frame test drags the window's bottom edge, asserts the height grows, and asserts the
    transcript's drawn height follows it while the window's own width stays as it was.
   `files: app/src/chat.rs`
+- `[ ]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
+  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
+   scenario starts from — still builds its standard parts from a raw `panel.create` with a
+   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
+   command replaced.
+  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
+   carries a word a person understands instead of four numbers, and the scenarios keep their
+   numbers because the stance is the same one they hand-wrote.
+  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
+   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
+   finding-free inspection.
+  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs`
 
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
