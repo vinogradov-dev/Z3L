@@ -1,11 +1,20 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=c426c9f updated=2026-11-23
+STATE: milestone=M7 phase=T task=- state=idle base=f1d4f04 updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
+
+An acceptance test runs whole tasks the way a foreign client does: a child `z3l mcp serve` over its
+own stdio, the protocol written out as newline-delimited JSON-RPC, and the model a list of calls, so
+the five scenarios of ADR 0193 need no network and no key (J13). A build is one batch of the
+recipe's 38 steps and the fourteen panels it records, the check turn reports nothing and a refusal
+names the parameter to change, the 900 mm turn is composed from the names the tree answered with,
+and the copy's rewind shows one entry per turn. The history gained a tool of its own for it — a
+command cannot be the history's act — and the niche scenario records the refusal the tree cannot yet
+avoid, because a piece rests inside a case only as its child.
 
 A workshop can hand the model loop to a program it already runs: `AssistantSettings.agent` is one
 line, the process it names speaks ACP version one over its own stdio, and the session it opens has

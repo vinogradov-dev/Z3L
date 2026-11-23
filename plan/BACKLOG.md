@@ -104,25 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
-  Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
-   done, and a tool surface can pass every unit test and stay unusable — wrong units, a refusal
-   nobody can act on, an answer of nine hundred lines.
-  Shape: One integration test that starts the server the way a client does, plays the model
-   with a scripted fixture and runs the five scenarios: build a cabinet 800 x 2200 x 560, check
-   it, make it 900 wide, copy it and change the doors, put it in a niche 820 x 2140 x 580.
-   Every assertion goes through `inspect`, the file or `render_preview`, never into the
-   document directly. The first scenario has a recorded form already: the wardrobe in
-   `app/tests/recipes` (38 commands, its own scene, its own catalogue rows) is what a correct
-   build looks like, so the test drives the server to that document and compares the cut list
-   rather than the transcript.
-  Done: The five scenarios pass, each asserting one undo entry per turn, the count of mutating
-   calls and that `undo` restores the document the scenario started from; the scripted model
-   needs no network and no key; the scripted model reads nothing from this repository - only
-   the tool schemas, the answers and the refusals - because a released build ships no prose
-   (J19); `cargo xtask ci` is green.
-  `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs`
-
 ## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
@@ -711,6 +692,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
+  Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
+   done, and a tool surface can pass every unit test and stay unusable — wrong units, a refusal
+   nobody can act on, an answer of nine hundred lines.
+  Shape: One integration test that starts the server the way a client does, plays the model
+   with a scripted fixture and runs the five scenarios: build a cabinet 800 x 2200 x 560, check
+   it, make it 900 wide, copy it and change the doors, put it in a niche 820 x 2140 x 580.
+   Every assertion goes through `inspect`, the file or `render_preview`, never into the
+   document directly. The first scenario has a recorded form already: the wardrobe in
+   `app/tests/recipes` (38 commands, its own scene, its own catalogue rows) is what a correct
+   build looks like, so the test drives the server to that document and compares the cut list
+   rather than the transcript.
+  Done: The five scenarios pass, each asserting one undo entry per turn, the count of mutating
+   calls and that `undo` restores the document the scenario started from; the scripted model
+   needs no network and no key; the scripted model reads nothing from this repository - only
+   the tool schemas, the answers and the refusals - because a released build ships no prose
+   (J19); `cargo xtask ci` is green.
+  `files: app/src/main.rs,Cargo.toml,crates/engine/src/session.rs` — `f1d4f04`
 
 - `[x]` **J11** an agent process owns the model loop and reaches the window over the same channel
   Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an

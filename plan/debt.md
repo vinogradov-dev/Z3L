@@ -508,3 +508,14 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   gate validates and does not see. Add the verb that returns a started task to `## Next`: one marker
   write, the entry moved like `defer` moves it, its `plan/SESSION.<key>.md` removed, in one gated
   write.
+
+- `[engine]` A piece cannot be put into a frame it is not a child of. Measured by the acceptance test
+  (J13, scenario 5): `product.placement.set` on a product whose box would land inside another
+  product's envelope is refused — "`Распашной шкаф 800×460×2200` would come to rest inside `Ниша`" —
+  and nothing reparents an authored piece: `product.create` takes the root or a plain group as its
+  parent, `node.group` makes a group out of siblings and `node.ungroup` the reverse. The owner's
+  sentence "поставь его в нишу 820 × 2140 × 580" therefore ends in a refusal, and the 60 mm by which
+  the piece is taller than the niche is arithmetic the model does, because no rule measures a piece
+  against a frame it is not part of. What would land it: a `node.reparent` command with the write
+  guard's containment rule unchanged, or a "put this piece in that frame" operation that also records
+  the intent, and either one is the owner's decision.
