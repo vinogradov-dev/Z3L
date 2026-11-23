@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=6ca82fe updated=2026-11-23
+STATE: milestone=M7 phase=T task=- state=idle base=2bb4426 updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -56,7 +56,7 @@ settings.
 
 ## Next
 
-Nothing is scheduled: 30 open tasks wait in `## Next`.
+Nothing is scheduled: J14 is back for its key's environment test; 30 open tasks wait in `## Next`.
 
 ## Index
 

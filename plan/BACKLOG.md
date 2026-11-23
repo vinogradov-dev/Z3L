@@ -705,7 +705,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    environment and in the file, and a log line, an error sentence and `settings.json` never
    carry it; the first request of an endpoint asks for consent once and a cleared consent asks
    again; `xtask layers` passes with the vendored-feature test green.
-  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs` — `6ca82fe`
+  `files: crates/mcp/src/chat.rs,crates/mcp/Cargo.toml,app/src/chat.rs,crates/ui/src/settings.rs,xtask/src/main.rs` — `2bb4426`
 
 - `[x]` **J13** an agent task is the acceptance test, and the five scenarios are the milestone
   Why: ADR 0193: the five scenarios in the owner's words are the milestone's definition of
