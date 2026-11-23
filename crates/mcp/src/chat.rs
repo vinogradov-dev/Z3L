@@ -421,7 +421,9 @@ pub trait Tools {
 ///
 /// It is the first backend the tree has (ADR 0187: "a scripted model must run a whole task in
 /// tests"): a test hands in the answers a model would have produced and the frame drives them
-/// through the real turn, the real session and the real undo history.
+/// through the real turn, the real session and the real undo history. A script that answers in
+/// pieces writes them in order after the piece that names the answer: everything between one
+/// non-`more` reply and the next belongs to the same request, exactly as a stream does (J26).
 #[derive(Clone, Debug, Default)]
 pub struct Scripted {
     answers: VecDeque<Result<Reply, BackendError>>,
@@ -451,19 +453,30 @@ impl ChatBackend for Scripted {
     fn ask(&mut self, _transcript: &Conversation) {
         // A script that ran out says so instead of leaving the turn waiting forever for an answer
         // no backend will ever send.
-        self.pending = Some(
-            self.answers
-                .pop_front()
-                .unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers"))),
-        );
+        self.pending = Some(self.next_answer());
     }
 
     fn take(&mut self) -> Option<Result<Reply, BackendError>> {
-        self.pending.take()
+        let answer = self.pending.take()?;
+        // A piece of an answer keeps the request in flight, so the next piece of the script is what
+        // the backend hands over next: a scripted stream needs no second request (J26).
+        if answer.as_ref().is_ok_and(|reply| reply.more) {
+            self.pending = Some(self.next_answer());
+        }
+        Some(answer)
     }
 
     fn waiting(&self) -> bool {
         self.pending.is_none()
+    }
+}
+
+impl Scripted {
+    /// The answer the script holds next, or the sentence that says it has none.
+    fn next_answer(&mut self) -> Result<Reply, BackendError> {
+        self.answers
+            .pop_front()
+            .unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers")))
     }
 }
 

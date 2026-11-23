@@ -100,10 +100,39 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
 }
 
+/// A stub endpoint that answers one request as a stream of events, one `data:` line each.
+///
+/// It is how a client that reads an answer while it is written is proved without a provider: the
+/// listener writes each payload, flushes it and closes the connection, so the body ends where the
+/// last event ended. The body carries no `Content-Length`, which is what a real stream does, and the
+/// content type is the one that tells a client the answer arrives in pieces.
+#[allow(clippy::expect_used)]
+pub fn stub_events(events: Vec<String>) -> (String, Receiver<Request>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+    let port = listener.local_addr().expect("the test reads the port it took").port();
+    let (sender, requests) = mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let Some(request) = read_request(&mut stream) else { continue };
+            let _ = sender.send(request);
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                        Cache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = std::io::Write::write_all(&mut stream, head.as_bytes());
+            for event in &events {
+                let _ = std::io::Write::write_all(&mut stream, format!("data: {event}\n\n").as_bytes());
+                let _ = std::io::Write::flush(&mut stream);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            break;
+        }
+    });
+    (format!("http://127.0.0.1:{port}/v1"), requests)
+}
+
 /// One loopback listener that answers the first request with `status` and `answer` and breaks.
 #[allow(clippy::expect_used)]
-fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
     let port = listener.local_addr().expect("the test reads the port it took").port();
     let (sender, requests) = mpsc::channel();
     std::thread::spawn(move || {
