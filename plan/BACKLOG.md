@@ -292,6 +292,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    stream's own live task answers and `cargo xtask plan` passes; a `state-contract` test covers
    the absent note; `cargo xtask ci` is green.
   `files: state-contract/src/cli/write.rs,state-contract/src/cli/mod.rs,AGENTS.md`
+- `[ ]` **J21** an https endpoint panics on the request thread, because ureq defaults to Rustls and nothing selects native-tls
+  Why: Filed from the owner's run: `https://opencode.ai/inference/openai/v1` with a model never
+   answered, and the panel read "the assistant's request ended without an answer". The log
+   carries ureq's panic `uri scheme is https, provider is Rustls but feature is not enabled:
+   rustls`. The workspace enables `native-tls` (ADR 0189), but ureq's `TlsProvider` defaults to
+   Rustls and is never selected automatically, so every https endpoint killed the worker thread
+   and closed the answer channel.
+  Shape: `OpenAi::new` builds the shared agent with
+   `TlsConfig::builder().provider(TlsProvider::NativeTls)`; a test reads the agent's own config
+   and asserts the provider, so the missing selection fails before a request; a live probe
+   against an https host ends in an HTTP sentence, not a panic.
+  Done: An https endpoint is reached and reports a reply or an HTTP status, never the TLS
+   panic; the regression test passes with the provider set and fails without it; `cargo xtask
+   ci` is green.
+  `files: crates/mcp/src/openai.rs`
 
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
