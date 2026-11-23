@@ -1221,15 +1221,25 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         ui.label(egui::RichText::new(Message::AssistantConsentNone.text(lang)).small().color(theme::text_dim(ui)));
     }
     // The list is read before it is written: a forget clicked this frame lands after the rows that
-    // drew, so the row under the pointer is the row that disappears and no other.
+    // drew, so the row under the pointer is the row that disappears and no other. A row is also the
+    // fastest way back from a mistyped address: *Use again* puts the remembered one in the field,
+    // which is the first-run help a workshop already has without naming a provider in code.
     let mut forget = None;
+    let mut again = None;
     for endpoint in &settings.assistant.consent {
         ui.horizontal(|ui| {
             ui.label(endpoint.as_str());
+            if ui.button(Message::AssistantConsentUse.text(lang)).clicked() {
+                again = Some(endpoint.clone());
+            }
             if ui.button(Message::AssistantConsentForget.text(lang)).clicked() {
                 forget = Some(endpoint.clone());
             }
         });
+    }
+    if let Some(endpoint) = again {
+        settings.assistant.endpoint = endpoint;
+        changed = true;
     }
     if let Some(endpoint) = forget {
         settings.assistant.forget_consent(&endpoint);

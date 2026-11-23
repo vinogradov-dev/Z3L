@@ -1479,6 +1479,7 @@ messages! {
         "Пока ни один адрес не подтверждён: перед первым сообщением программа спросит."
     ],
     AssistantConsentForget = ["Forget", "Забыть"],
+    AssistantConsentUse = ["Use again", "Использовать снова"],
     AssistantConsentTitle = ["Send to this endpoint?", "Отправлять на этот адрес?"],
     AssistantConsentBody = [
         "Your messages and the program's own description of what it can do leave this machine for {}. Nothing else is sent.",
