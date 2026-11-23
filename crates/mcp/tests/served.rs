@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use engine::Session;
 use mcp::{
     CommandServer, PreviewSize, Previewer, SceneSink, TOOL_BATCH, TOOL_FINDINGS, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY,
-    TOOL_RUN,
+    TOOL_RUN, TOOL_UNDO,
 };
 use model::{ClassCode, Envelope, Id, Placement, Project};
 use rmcp::ServiceExt;
@@ -144,7 +144,7 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     // What the server offers: the coarse tools, not one tool per command id.
     let tools = client.list_tools(None).await.expect("the tool list answers");
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
-    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
+    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_UNDO, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
 
     // `command_list` names every command with the schema of its parameters.
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
@@ -211,6 +211,74 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
         assert!(!session.can_undo(), "the two calls left exactly two entries");
         assert_eq!(session.project().container(product).map(|container| container.children().len()), Some(0));
     }
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
+async fn undo_takes_back_the_entry_a_call_landed_and_says_what_is_left() {
+    // J13's Done clause asks that `undo` restore the document a scenario started from, so the
+    // history needs a door of its own: a command is a step of a batch and a batch is one undo entry,
+    // and taking an entry back from inside the entry is a contradiction. A caller that landed
+    // something wrong corrects it instead of pushing further, and the answer says the revision the
+    // document now holds and whether another entry is left — which is how it knows it undid exactly
+    // the turn it meant to.
+    let (mut session, products) = session_with(1);
+    let product = *products.first().expect("one product");
+    assert!(session.open_product(product), "the fixture opens the one product");
+    let before = session.project().revision().get();
+    let session = Arc::new(Mutex::new(session));
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
+    let parts_before = body(&call(&mut client, TOOL_QUERY, json!({"kind": "parts"})).await)["answer"].clone();
+
+    // A session that has written nothing has nothing to take back, and says so in one sentence.
+    let empty = call(&mut client, TOOL_UNDO, json!({})).await;
+    assert!(empty.is_error.unwrap_or(false), "nothing to undo is a failed call: {}", body(&empty));
+    assert!(
+        body(&empty)["error"].as_str().is_some_and(|sentence| sentence.contains("nothing to undo")),
+        "the refusal is the history's own sentence: {}",
+        body(&empty)
+    );
+
+    // One call is one entry, and one undo returns the document to the revision it started from.
+    let built = call(
+        &mut client,
+        TOOL_BATCH,
+        json!({"steps": [
+            {"command": "panel.create", "params": panel(product, "Side")},
+            {"command": "panel.create", "params": panel(product, "Shelf")},
+        ]}),
+    )
+    .await;
+    let report = body(&built);
+    assert_eq!(report["effect"], json!("landed"), "{report}");
+    assert_ne!(report["revision"], json!(before), "the batch moved the document");
+
+    let undone = call(&mut client, TOOL_UNDO, json!({})).await;
+    assert!(!undone.is_error.unwrap_or(true), "the undo answers: {}", body(&undone));
+    let answer = body(&undone);
+    let restored = answer["revision"].as_u64().unwrap_or_default();
+    let landed = report["revision"].as_u64().unwrap_or_default();
+    assert!(restored > landed, "an undo is a revision of its own, so every cache is invalidated: {answer}");
+    assert_eq!(answer["can_undo"], json!(false), "and the call was exactly one entry: {answer}");
+    {
+        let session = session.lock().expect("the server did not poison the session");
+        assert_eq!(session.project().container(product).map(|container| container.children().len()), Some(0));
+    }
+    // The surface a person reads says the same thing: the parts table is empty again.
+    let asked = call(&mut client, TOOL_QUERY, json!({"kind": "parts"})).await;
+    let parts = body(&asked);
+    assert_eq!(parts["answer"], parts_before, "the cut list is the one the call started from: {parts}");
+
+    // In plan mode the undo is the write plan refuses, with the sentence the batch already carries.
+    {
+        let mut session = session.lock().expect("the server did not poison the session");
+        session.set_agent_mode(engine::AgentMode::Plan);
+    }
+    let planned = call(&mut client, TOOL_UNDO, json!({})).await;
+    assert!(planned.is_error.unwrap_or(false), "plan mode refuses the undo: {}", body(&planned));
+    assert_eq!(body(&planned)["error"], json!(mcp::PLAN_NOTE), "the switch is named once, not twice");
 
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
