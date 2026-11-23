@@ -415,7 +415,26 @@ fn step(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), 
         .filter_map(|key| options.value(key).map(|value| (*key, value.to_owned())))
         .collect();
     let note_path = stream_of(root, &id)?.note_path();
-    let session = read(root, &note_path)?;
+    let session = match std::fs::read_to_string(root.join(&note_path)) {
+        Ok(text) => text,
+        // A stream checkout sees only what its branch carries, so the `task start` the primary ran
+        // in its own working tree leaves the `[~]` marker in history and the note out of it. The
+        // entry says which task runs and what its goal is, so the note is written from it here
+        // instead of failing on a file another checkout owns (P28).
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let backlog = read(root, "plan/BACKLOG.md")?;
+            let tasks = crate::parse_backlog(&backlog);
+            let task = find(&tasks, &id)?;
+            if task.status != TaskStatus::Doing {
+                return Err(format!(
+                    "`{note_path}` is not there and task {id} is not in progress; `cargo xtask task start \
+                     {id}` writes the note, and `step` only keeps a running one true"
+                ));
+            }
+            session_note(&id, task, &options)
+        }
+        Err(error) => return Err(format!("cannot read `{note_path}`: {error}")),
+    };
     let mut session = if let Some(text) = options.value("add") {
         edit::add_step(&session, text)?
     } else if fields.is_empty() || options.flag("tick") {
@@ -1725,6 +1744,28 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
     }
 
     #[test]
+    fn a_stream_checkout_writes_the_note_its_primary_started_elsewhere() {
+        // J15/P28: the primary ran `task start J2` in its own working tree, so the `[~]` marker
+        // arrived through `dev` and the note — a working-tree file of another checkout — did not.
+        // The entry carries the goal, so the stream's `step` writes the note instead of refusing.
+        let backlog = STREAM_BACKLOG
+            .replace("## Now\n\n", "## Now\n\n- `[~]` **J2** the report\n  `files: src/b.rs`\n\n")
+            .replace("- `[ ]` **J2** the report\n  `files: src/b.rs`\n\n## Done\n", "## Done\n");
+        let root = project("stream-note-lost", STREAM_STATUS, &backlog, None);
+        assert!(!root.join("plan/SESSION.agent.md").exists(), "the stream's copy holds no note");
+        run_on(&root, "stream/agent", &["step", "J2", "--now", "the table", "--resume", "src/b.rs"])
+            .expect("the running task's note is written from its entry");
+        let note = text(&root, "plan/SESSION.agent.md");
+        assert!(note.contains("task: J2"), "{note}");
+        assert!(note.contains("goal: the report"), "the entry's lead is the goal: {note}");
+        assert!(note.contains("now: the table"), "the step reaches the new note: {note}");
+        assert!(note.contains("resume: src/b.rs"), "{note}");
+        assert_eq!(text(&root, "plan/BACKLOG.md"), backlog, "the shared order is untouched");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid with the note it wrote");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_primary_checkout_writes_the_shared_files_it_always_did() {
         // `dev` is the plan's own branch: no `stream/` prefix, which is what the rule reads.
         let root = project("primary-writes", STREAM_STATUS, STREAM_BACKLOG, None);
@@ -2144,11 +2185,13 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
     }
 
     #[test]
-    fn a_step_without_a_session_note_is_refused() {
+    fn a_step_without_a_note_says_which_verb_writes_one_and_refuses_a_task_that_is_not_running() {
         let root = project("step-none", STATUS, BACKLOG, None);
         let before = snapshot(&root);
         let error = run(&root, &["step", "P6", "--tick"]).expect_err("there is no note");
-        assert!(error.contains("cannot read `plan/SESSION.md`"), "{error}");
+        assert!(error.contains("`plan/SESSION.md` is not there"), "{error}");
+        assert!(error.contains("not in progress"), "{error}");
+        assert!(error.contains("cargo xtask task start P6"), "the refusal names the verb: {error}");
         assert_eq!(snapshot(&root), before);
         let _ = std::fs::remove_dir_all(&root);
     }
