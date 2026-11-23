@@ -104,6 +104,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
+- `[~]` **J24** each tab has its own assistant conversation, backend and undo space
+  Why: The owner asked that every tab have its own agent and its own space. The document and
+   session are already per tab, but `Chat` is one field on the shell, so the conversation,
+   backend and turn are shared by every tab. Switching tabs keeps the same conversation and can
+   steal the turn.
+  Shape: Move the chat into the tab payload (or a tab wrapper): each tab owns its conversation,
+   backend, turn, edit scope and session id. The settings, consent list and panel position stay
+   workspace-level; the panel draws the active tab. A background turn pauses (its request stays
+   in flight) until its tab is active, so switching never loses an answer; the shell applies
+   settings to every tab.
+  Done: Two tabs hold two conversations and two backends; a message sent in one is not in the
+   other; switching tabs neither drops nor mixes the turn; the panel draws the active tab;
+   settings changes reach every tab; the existing chat tests are updated; `cargo xtask ci` is
+   green.
+  `files: app/src/main.rs,app/src/chat.rs,app/src/tabs.rs,app/src/frame_tests.rs`
+
 ## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
@@ -676,21 +692,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-- `[ ]` **J24** each tab has its own assistant conversation, backend and undo space
-  Why: The owner asked that every tab have its own agent and its own space. The document and
-   session are already per tab, but `Chat` is one field on the shell, so the conversation,
-   backend and turn are shared by every tab. Switching tabs keeps the same conversation and can
-   steal the turn.
-  Shape: Move the chat into the tab payload (or a tab wrapper): each tab owns its conversation,
-   backend, turn, edit scope and session id. The settings, consent list and panel position stay
-   workspace-level; the panel draws the active tab. A background turn pauses (its request stays
-   in flight) until its tab is active, so switching never loses an answer; the shell applies
-   settings to every tab.
-  Done: Two tabs hold two conversations and two backends; a message sent in one is not in the
-   other; switching tabs neither drops nor mixes the turn; the panel draws the active tab;
-   settings changes reach every tab; the existing chat tests are updated; `cargo xtask ci` is
-   green.
-  `files: app/src/main.rs,app/src/chat.rs,app/src/tabs.rs,app/src/frame_tests.rs`
 - `[ ]` **J25** the program knows its providers and lists their models instead of asking the person for a header
   Why: The owner asked the program to know its providers and models, as SolidCraft does: a
    preset fills the address, a Go endpoint routes by model family, and the model list comes
