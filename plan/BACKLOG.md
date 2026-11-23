@@ -104,28 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
-  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
-   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
-   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
-   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
-   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
-   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
-   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
-   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
-   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
-   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
-   view was left behind, so the person reads it as a camera that moves by itself. The same
-   stale target is why a standard view does not centre the model (X121) and why the
-   orthographic height was left at the scale of the earlier oversized build (X120).
-  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
-   the model outside the current frame refits and the status bar says so, and once the person
-   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
-   and gets the place a person looks for it among the view controls.
-  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
-   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
-   centre; the frame-all control is reachable from the view controls and by its key.
-  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs`
 - `[ ]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
   Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
    и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
@@ -658,6 +636,29 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
+  Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
+   смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
+   "почему-то вращается сама камера", and "не хватает инструмента приблизить всё, чтобы
+   уместить всю сцену". Measured: the camera is fitted once, when the tab opens
+   (`app/src/document.rs:474`, `home_camera(scene_bounds)`), and an empty scene has no bounds
+   centre, so `home_camera` answers `Camera::default()` - target at the origin, distance 1200
+   mm. Nineteen commands then built a 800 x 460 x 2200 wardrobe and nothing refitted it: the
+   model is framed from 1.2 m at its base corner, so the orbit pivots on a point that is not
+   the model and a small drag throws it out of view. `frame_all` exists and recomputes the fit
+   on a key (`app/src/document.rs:2543`, `view.projection.frame-all`, F), but nothing says the
+   view was left behind, so the person reads it as a camera that moves by itself. The same
+   stale target is why a standard view does not centre the model (X121) and why the
+   orthographic height was left at the scale of the earlier oversized build (X120).
+  Shape: The view remembers whether a person framed it: while it did not, a rebuild that takes
+   the model outside the current frame refits and the status bar says so, and once the person
+   frames or orbits by hand the view is theirs and stays. `frame all` remains the explicit act
+   and gets the place a person looks for it among the view controls.
+  Done: A frame test builds a part far outside the frame and asserts the view refits, and that
+   a view the person moved is left alone; a test asserts the orbit target is the framed bounds
+   centre; the frame-all control is reachable from the view controls and by its key.
+  `files: app/src/document.rs,crates/scene/src/camera.rs,crates/ui/src/inventory.rs` — `64edc50`
 
 - `[x]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
   Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
