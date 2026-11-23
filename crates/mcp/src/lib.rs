@@ -62,7 +62,7 @@ pub use chat::{
     Tools, Turn,
 };
 pub use inspect::{Tab, Window};
-pub use openai::{Endpoint, KEY_ENV, KEY_FILE, OpenAi, key};
+pub use openai::{Endpoint, GO_SESSION_HEADER, KEY_ENV, KEY_FILE, ModelInfo, OpenAi, go_gateway, key, models};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
 pub use reads::MessageDoor;
 pub use report::PLAN_NOTE;

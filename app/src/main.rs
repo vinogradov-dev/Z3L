@@ -45,6 +45,7 @@ mod header;
 mod logging;
 mod measure_gizmo;
 mod mesh_pick;
+mod model_list;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
@@ -289,6 +290,11 @@ struct App {
     watch: directory_watch::Watch,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
+    /// The model list the *Assistant* page asked its endpoint for, and the last answer (ADR 0234).
+    ///
+    /// It is view state of this window: the request is made off the frame, the answer is thrown away
+    /// when another address is asked for, and nothing of it is ever written to the settings file.
+    assistant_models: model_list::Models,
     /// Whether the Settings window is open.
     settings_open: bool,
     /// Whether the Home surface is open.
@@ -448,6 +454,7 @@ impl App {
             settings_store,
             watch,
             settings_section: SettingsSection::default(),
+            assistant_models: model_list::Models::default(),
             settings_open: false,
             home_open: false,
             render_open: false,
@@ -1324,9 +1331,17 @@ impl App {
             return;
         }
         let before = self.settings.clone();
-        let outcome = ui::settings::show(ctx, &mut self.settings, &mut self.settings_section);
+        self.assistant_models.poll();
+        let outcome =
+            ui::settings::show(ctx, &mut self.settings, &mut self.settings_section, self.assistant_models.listed());
         if outcome.changed {
             self.apply_settings(&before, ctx);
+        }
+        // The page asked for an endpoint's models; the request is made off this frame and its answer
+        // is drawn by a later one, so pressing the button never stalls the window (ADR 0234).
+        if let Some(address) = outcome.list_models {
+            let folder = self.settings_store.folder().map(std::path::Path::to_path_buf);
+            self.assistant_models.request(&address, folder);
         }
         if outcome.close {
             self.settings_open = false;

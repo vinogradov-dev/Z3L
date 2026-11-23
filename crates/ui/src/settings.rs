@@ -660,6 +660,100 @@ impl Default for AssistantSettings {
     }
 }
 
+/// One address a person can fill the endpoint field with, and the word the picker shows for it.
+///
+/// A preset is **data, not a wire**: it writes a base URL into the field and nothing else, so a
+/// workshop can edit the field afterwards and the request is still the one OpenAI-compatible wire
+/// whatever was chosen (ADR 0234, which amends ADR 0189's "no provider name in a type"). The names
+/// are the few addresses a furniture maker in this workshop is likely to be handed, not a catalogue:
+/// a missing one costs a typed URL and no feature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Preset {
+    /// The word the picker shows, in both interface languages.
+    pub name: Message,
+    /// The base URL it fills the endpoint field with; the client appends `/chat/completions`.
+    pub base_url: &'static str,
+}
+
+/// The presets the *Assistant* page offers, in the order it offers them.
+///
+/// Measured 2026-11-23: each address answers a model list at `{base}/models` and the two the same
+/// gateway serves (`OpenCode` and `OpenCode Go`) differ only in the tier — `inference/openai/v1`
+/// lists 105 models, `inference/go/v1` the 36 the subscription serves, and the `go` form is what the
+/// client recognises as a gateway that routes on a session header (X124, ADR 0234). A local server
+/// is the same field with its own port, which is why the last two presets name this computer.
+pub const PRESETS: &[Preset] = &[
+    Preset { name: Message::AssistantProviderOpenCodeGo, base_url: "https://opencode.ai/inference/go/v1" },
+    Preset { name: Message::AssistantProviderOpenCode, base_url: "https://opencode.ai/inference/openai/v1" },
+    Preset { name: Message::AssistantProviderDeepSeek, base_url: "https://api.deepseek.com/v1" },
+    Preset { name: Message::AssistantProviderOpenAi, base_url: "https://api.openai.com/v1" },
+    Preset { name: Message::AssistantProviderOllama, base_url: "http://localhost:11434/v1" },
+    Preset { name: Message::AssistantProviderLmStudio, base_url: "http://localhost:1234/v1" },
+];
+
+/// One model an endpoint listed, as the page shows it.
+///
+/// The shell reads the endpoint's answer through `mcp` (the only crate that speaks HTTP) and hands
+/// the rows here, so a page draws a choice without knowing what a wire is (ADR 0234).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelRow {
+    /// The id a request asks for.
+    pub id: String,
+    /// The endpoint's own name for it, or the id when it has none.
+    pub name: String,
+}
+
+/// What the shell knows about the models of the address the page shows.
+///
+/// It is view state: one listing per address, asked for by the page's button and thrown away when
+/// the page closes, because a model list is the endpoint's answer and not a workspace setting.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListedModels {
+    /// The address these rows are about; a page showing another one draws nothing of them.
+    pub address: String,
+    /// Whether a listing of `address` is in flight.
+    pub listing: bool,
+    /// The rows, in the endpoint's own order.
+    pub rows: Vec<ModelRow>,
+    /// Why the last listing of `address` failed, in the client's own sentence.
+    pub failed: Option<String>,
+}
+
+impl ListedModels {
+    /// Whether the rows belong to `address`.
+    pub fn is_for(&self, address: &str) -> bool {
+        self.address == address.trim().trim_end_matches('/')
+    }
+
+    /// The note the page draws under the model field, when there is one to draw.
+    ///
+    /// It is the page's own sentence in every case but a refusal, which quotes the wire: a person
+    /// who typed an address has to read what the address answered, not "failed" (ADR 0227).
+    pub fn note(&self, address: &str, lang: Lang) -> Option<String> {
+        if !self.is_for(address) {
+            return None;
+        }
+        if self.listing {
+            return Some(Message::AssistantModelsListing.text(lang).to_owned());
+        }
+        if let Some(failed) = &self.failed {
+            return Some(Message::AssistantModelsFailed.with(lang, [failed.clone()]));
+        }
+        (self.rows.is_empty()).then(|| Message::AssistantModelsNone.text(lang).to_owned())
+    }
+}
+
+impl AssistantSettings {
+    /// The preset whose address is in the field, or `None` for a typed address.
+    ///
+    /// It is derived on read, so a preset cannot be remembered in the settings file and then
+    /// disagree with the field: choosing one writes the address and nothing else.
+    pub fn preset(&self) -> Option<usize> {
+        let endpoint = self.endpoint.trim().trim_end_matches('/');
+        PRESETS.iter().position(|preset| preset.base_url.trim_end_matches('/') == endpoint)
+    }
+}
+
 /// Why a typed base URL cannot be used as one endpoint.
 ///
 /// The wire appends `/chat/completions` to whatever the field holds, so an address that is not one
@@ -998,19 +1092,33 @@ impl SettingsSection {
 }
 
 /// What the settings window reports back to the shell.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SettingsOutcome {
     /// A value changed and has to be applied and persisted.
     pub changed: bool,
     /// The window asked to close.
     pub close: bool,
+    /// The address whose model list the page asked for, if the button was pressed this frame.
+    ///
+    /// The page cannot ask: `ureq` lives in `mcp` and this crate may not depend on it, so the shell
+    /// takes the address, lists it off the frame and hands the rows back in [`ListedModels`]
+    /// (ADR 0234).
+    pub list_models: Option<String>,
 }
 
 /// Draws the Settings modal and returns whether a value changed or the window closed.
 ///
 /// The window never writes a file: the shell applies the change at once and owns the atomic save.
 /// Escape and a click on the backdrop close it, like every other modal of the application.
-pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSection) -> SettingsOutcome {
+///
+/// `models` is what the shell has listed for the address the page shows; the page draws it and asks
+/// for another listing, and it never waits for one.
+pub fn show(
+    ctx: &Context,
+    settings: &mut Settings,
+    section: &mut SettingsSection,
+    models: &ListedModels,
+) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
     let lang = settings.appearance.language.lang();
     let response = Modal::new(Id::unique("settings_window")).show(ctx, |ui| {
@@ -1040,7 +1148,7 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
                     SettingsSection::Viewport => viewport_ui(ui, settings, lang),
                     SettingsSection::Panels => panels_ui(ui, settings, lang),
                     SettingsSection::Shortcuts => shortcuts_ui(ui, lang),
-                    SettingsSection::Assistant => assistant_ui(ui, settings, lang),
+                    SettingsSection::Assistant => assistant_ui(ui, settings, models, lang, &mut outcome.list_models),
                 };
             });
         });
@@ -1178,7 +1286,13 @@ fn swatch(ui: &mut Ui, fill: egui::Color32) {
 /// never in, so "why is it not configured" has an answer a person can read (ADR 0189). Nothing here
 /// reaches the network by itself: the channel binds loopback, and a message leaves only after the
 /// panel has asked once per endpoint.
-fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
+fn assistant_ui(
+    ui: &mut Ui,
+    settings: &mut Settings,
+    models: &ListedModels,
+    lang: Lang,
+    list_models: &mut Option<String>,
+) -> bool {
     ui.heading(Message::SectionAssistant.text(lang));
     ui.label(Message::AssistantWays.text(lang));
 
@@ -1187,8 +1301,10 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     // visible, which is where the doubled address of J22 came from.
     ui.add_space(theme::STEP * 2.0);
     ui.label(egui::RichText::new(Message::AssistantByAddress.text(lang)).strong());
+    let mut changed = provider_ui(ui, settings, lang);
+    ui.label(egui::RichText::new(Message::AssistantProviderHint.text(lang)).small().color(theme::text_dim(ui)));
     ui.label(Message::AssistantEndpoint.text(lang));
-    let mut changed = ui
+    changed |= ui
         .add(
             egui::TextEdit::singleline(&mut settings.assistant.endpoint)
                 .hint_text(Message::AssistantEndpointHint.text(lang))
@@ -1201,14 +1317,52 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     } else {
         ui.label(egui::RichText::new(Message::AssistantEndpointHint.text(lang)).small().color(theme::text_dim(ui)));
     }
-    ui.label(Message::AssistantModel.text(lang));
-    changed |= ui
-        .add(
-            egui::TextEdit::singleline(&mut settings.assistant.model)
-                .hint_text(Message::AssistantModelHint.text(lang))
-                .desired_width(ui.available_width()),
-        )
-        .changed();
+    // The model and its listing share a row: the field is still the truth (a model the endpoint does
+    // not list yet is typed here), and the button asks the address what it answers. The picker below
+    // is drawn from what came back and writes the field, so a person chooses an id they cannot
+    // misspell instead of one they remember (ADR 0234).
+    let mut listed = false;
+    ui.horizontal(|ui| {
+        ui.label(Message::AssistantModel.text(lang));
+        let field = (ui.available_width() - 96.0).max(160.0);
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut settings.assistant.model)
+                    .hint_text(Message::AssistantModelHint.text(lang))
+                    .desired_width(field),
+            )
+            .changed();
+        let askable = settings.assistant.endpoint_problem().is_none() && !settings.assistant.endpoint.trim().is_empty();
+        let button = ui.add_enabled(askable, egui::Button::new(Message::AssistantModelsList.text(lang)));
+        let button = button.on_hover_text(Message::AssistantModelsListHint.text(lang));
+        if button.clicked() {
+            listed = true;
+        }
+    });
+    if listed {
+        *list_models = Some(settings.assistant.endpoint.trim().to_owned());
+    }
+    let address = settings.assistant.endpoint.trim();
+    if let Some(note) = models.note(address, lang) {
+        let ink = if models.failed.is_some() && models.is_for(address) { theme::warn(ui) } else { theme::text_dim(ui) };
+        ui.label(egui::RichText::new(note).small().color(ink));
+    }
+    if models.is_for(address) && !models.rows.is_empty() {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("settings_assistant_models")
+                .selected_text(Message::AssistantModelsPick.text(lang))
+                .show_ui(ui, |ui| {
+                    for row in &models.rows {
+                        let label = if row.name == row.id {
+                            row.id.clone()
+                        } else {
+                            Message::AssistantModelNamed.with(lang, [row.name.clone(), row.id.clone()])
+                        };
+                        changed |= ui.selectable_value(&mut settings.assistant.model, row.id.clone(), label).changed();
+                    }
+                });
+        });
+    }
     ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
     ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
     ui.label(egui::RichText::new(Message::AssistantWhatNext.text(lang)).small().color(theme::text_dim(ui)));
@@ -1262,6 +1416,36 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         changed = true;
     }
     changed
+}
+
+/// The preset row: a preset writes its address into the endpoint field, and *Other address* leaves
+/// the field exactly as it is.
+///
+/// The row is derived from the field on every read (`AssistantSettings::preset`), so it never holds a
+/// choice of its own: a pinned preset in the settings file would one day disagree with the address
+/// beside it, and the field is the value the request is built from (ADR 0234).
+fn provider_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
+    ui.label(Message::AssistantProvider.text(lang));
+    let before = settings.assistant.preset();
+    let shown = match before.and_then(|index| PRESETS.get(index)) {
+        Some(preset) => preset.name.text(lang),
+        None => Message::AssistantProviderCustom.text(lang),
+    };
+    let mut chosen = before;
+    egui::ComboBox::from_id_salt("settings_assistant_provider").width(260.0).selected_text(shown).show_ui(ui, |ui| {
+        for (index, preset) in PRESETS.iter().enumerate() {
+            ui.selectable_value(&mut chosen, Some(index), preset.name.text(lang));
+        }
+        ui.selectable_value(&mut chosen, None, Message::AssistantProviderCustom.text(lang));
+    });
+    let Some(preset) = chosen.and_then(|index| PRESETS.get(index)) else {
+        return false;
+    };
+    if chosen == before {
+        return false;
+    }
+    settings.assistant.endpoint = preset.base_url.to_owned();
+    true
 }
 
 /// The *Panels* page: the two floating side panels and the opacity they share with the chrome.
