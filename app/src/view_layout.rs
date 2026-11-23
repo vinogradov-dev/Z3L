@@ -324,20 +324,45 @@ impl Leaf {
         self.shadows = !self.shadows;
     }
 
-    /// Points the leaf along a preset direction.
+    /// Points the leaf along a preset direction, centring a standard view on the scene.
     ///
-    /// A preset writes yaw and pitch only: the target and the distance stay, so switching presets
-    /// never moves the model or changes its size. A standard view is orthographic by default and
-    /// converts a perspective view by the visible-height rule, while the axonometric view keeps the
-    /// projection the camera already had (ADR 0049).
-    pub(crate) fn apply_preset(&mut self, preset: OpeningView) {
+    /// A standard view is the plan a maker checks a dimension against, so it shows the model and
+    /// not a corner of the empty scene: the preset writes the direction, the projection, the target
+    /// and, unless the person has already framed this view by hand, the distance that holds the
+    /// scene's bounds. A view the person framed keeps the size they chose, and only the direction,
+    /// the projection and the target move; the axonometric view keeps its target, its distance and
+    /// its projection, because it is the familiar angle and not a standard view (ADR 0049, X121).
+    pub(crate) fn apply_preset(&mut self, preset: OpeningView, fit: Camera) {
         let [x, y, z] = preset.direction();
         let direction = geom::DVec3::new(x, y, z);
-        self.camera.look_from_oriented(direction, scene::canonical_up(direction));
         if preset.is_standard() {
-            self.camera.set_orthographic();
+            self.aim_standard(direction, fit);
+        } else {
+            self.camera.look_from_oriented(direction, scene::canonical_up(direction));
         }
         self.preset = Some(preset);
+    }
+
+    /// Points the leaf at a standard `direction`: the scene's centre, framed by the scene's fit.
+    ///
+    /// `fit` is the camera `home_camera` builds from the scene's bounds — its target is the centre
+    /// of the model and its distance holds the whole of it. The person's size survives a preset:
+    /// a view they framed by hand keeps its distance, so pressing Top on a view zoomed into a
+    /// detail does not throw away the zoom, while the target still lands on the model (X121).
+    /// A standard view is orthographic, and its height follows the distance.
+    fn aim_standard(&mut self, direction: geom::DVec3, fit: Camera) {
+        let distance = if self.framed { self.camera.distance() } else { fit.distance() };
+        let up = scene::canonical_up(direction);
+        match Camera::new(fit.target(), distance) {
+            Ok(mut camera) => {
+                camera.look_from_oriented(direction, up);
+                camera.set_orthographic();
+                self.camera = camera;
+            }
+            // A frame no camera may stand at is not the person's to see; the direction still is, so
+            // the view turns and keeps the frame it has.
+            Err(_) => self.camera.look_from_oriented(direction, up),
+        }
     }
 
     /// Fits the leaf on the whole scene, which makes the view the person's.
@@ -373,7 +398,7 @@ impl Leaf {
         match self.preset {
             Some(preset) => {
                 self.camera = fit;
-                self.apply_preset(preset);
+                self.apply_preset(preset, fit);
             }
             None => {
                 let direction = self.camera.eye() - self.camera.target();
@@ -394,8 +419,11 @@ impl Leaf {
     }
 
     /// Returns the leaf to *Axonometric* without refitting the scene.
+    ///
+    /// The familiar angle is not a standard view: it keeps the target, the distance and the
+    /// projection, and only turns the camera (ADR 0049).
     pub(crate) fn home(&mut self) {
-        self.apply_preset(OpeningView::Axonometric);
+        self.apply_preset(OpeningView::Axonometric, self.camera);
     }
 
     /// Orbits the leaf, which leaves its preset name and makes the view the person's.
@@ -408,13 +436,14 @@ impl Leaf {
     /// Looks from an arbitrary direction, which leaves its preset name.
     ///
     /// A pole direction takes the canonical up, so clicking the top ball never keeps the yaw the
-    /// camera happened to have (X20). A click on a world axis is a standard view, so it makes the
-    /// camera orthographic by the same visible-height rule as a standard preset; a free direction
-    /// keeps the projection.
-    pub(crate) fn look_from(&mut self, direction: geom::DVec3) {
-        self.camera.look_from_oriented(direction, scene::canonical_up(direction));
+    /// camera happened to have (X20). A click on a world axis is a standard view, so it centres the
+    /// scene exactly as a standard preset does and makes the camera orthographic; a free direction
+    /// keeps the projection and the frame (X121).
+    pub(crate) fn look_from(&mut self, direction: geom::DVec3, fit: Camera) {
         if along_world_axis(direction) {
-            self.camera.set_orthographic();
+            self.aim_standard(direction, fit);
+        } else {
+            self.camera.look_from_oriented(direction, scene::canonical_up(direction));
         }
         self.preset = None;
         self.framed = true;
@@ -579,7 +608,7 @@ impl LayoutState {
                 shadows: ContactShadows::default().visible,
                 framed: false,
             };
-            leaf.apply_preset(kind.standard_view(index, opening));
+            leaf.apply_preset(kind.standard_view(index, opening), fit);
             state.leaves.push(leaf);
         }
         let ids: Vec<LeafId> = state.leaves.iter().map(|leaf| leaf.id).collect();
@@ -1027,9 +1056,9 @@ mod tests {
         layout.set_kind(LayoutKind::TwoColumns);
         let ids: Vec<LeafId> = layout.current().leaves.iter().map(|leaf| leaf.id).collect();
         let first = layout.leaf_mut(ids[0]).expect("first");
-        first.apply_preset(OpeningView::Front);
+        first.apply_preset(OpeningView::Front, fit);
         let second = layout.leaf_mut(ids[1]).expect("second");
-        second.look_from(geom::DVec3::new(1.0, 1.0, 1.0));
+        second.look_from(geom::DVec3::new(1.0, 1.0, 1.0), fit);
 
         layout.leaf_mut(ids[0]).expect("first").frame(fit);
         layout.leaf_mut(ids[1]).expect("second").frame(fit);
@@ -1095,7 +1124,7 @@ mod tests {
         let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
         layout.set_kind(LayoutKind::TwoColumns);
         let ids: Vec<LeafId> = layout.current().leaves.iter().map(|leaf| leaf.id).collect();
-        layout.leaf_mut(ids[0]).expect("first").apply_preset(OpeningView::Top);
+        layout.leaf_mut(ids[0]).expect("first").apply_preset(OpeningView::Top, fit);
         layout.leaf_mut(ids[1]).expect("second").orbit(0.3, 0.1);
 
         let grown = corners(geom::DVec3::new(10.0, 20.0, 30.0), 4_000.0);
@@ -1139,7 +1168,7 @@ mod tests {
                 Self::Orbit => leaf.orbit(0.2, 0.1),
                 Self::Pan => leaf.pan_pixels(20.0, 10.0, 600.0),
                 Self::Zoom => leaf.zoom_about(1.2, None),
-                Self::Look => leaf.look_from(geom::DVec3::new(0.3, 1.0, 0.4)),
+                Self::Look => leaf.look_from(geom::DVec3::new(0.3, 1.0, 0.4), fit),
                 Self::Roll => leaf.roll_by(0.2),
             }
         }
@@ -1162,7 +1191,7 @@ mod tests {
         let id = layout.active();
         let leaf = layout.leaf_mut(id).expect("the active leaf");
         // A free direction, then an orthographic projection: neither belongs to a preset.
-        leaf.look_from(geom::DVec3::new(1.0, 2.0, 3.0));
+        leaf.look_from(geom::DVec3::new(1.0, 2.0, 3.0), fit);
         assert!(leaf.toggle_projection().kept(), "a view at 900 mm has a distance for its height");
         assert_eq!(leaf.preset, None);
 
@@ -1185,7 +1214,7 @@ mod tests {
         let fit = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 900.0).expect("camera");
         let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
-        leaf.apply_preset(OpeningView::Front);
+        leaf.apply_preset(OpeningView::Front, fit);
         assert!(leaf.toggle_projection().kept(), "a standard view at 900 mm switches exactly");
         assert!(matches!(leaf.camera().projection(), scene::Projection::Perspective { .. }));
 
@@ -1207,7 +1236,8 @@ mod tests {
         let mut layout = layout(LayoutKind::Quad);
         let active = layout.current().leaves[1].id;
         layout.set_active(active);
-        layout.leaf_mut(active).expect("the active leaf").look_from(geom::DVec3::new(1.0, 2.0, 3.0));
+        let fit = layout.active_camera();
+        layout.leaf_mut(active).expect("the active leaf").look_from(geom::DVec3::new(1.0, 2.0, 3.0), fit);
         assert!(layout.press(area, egui::pos2(400.0, 60.0), true), "the central border is grabbed");
         layout.drag_by(area, egui::vec2(40.0, 0.0));
         layout.end_drag();
@@ -1320,7 +1350,8 @@ mod tests {
         let second = regions[1].0;
 
         // Arrange the four-view layout: a free camera, a non-default active view and a split ratio.
-        layout.leaf_mut(second).expect("second").look_from(geom::DVec3::new(1.0, 2.0, 3.0));
+        let fit = layout.active_camera();
+        layout.leaf_mut(second).expect("second").look_from(geom::DVec3::new(1.0, 2.0, 3.0), fit);
         layout.set_active(second);
         assert!(layout.press(area, egui::pos2(400.0, 60.0), true), "the central border is grabbed");
         layout.drag_by(area, egui::vec2(60.0, 0.0));
@@ -1510,11 +1541,13 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_turns_the_view_and_never_moves_the_model() {
+    fn a_standard_preset_puts_the_view_on_the_scene_at_the_owners_eye_convention() {
+        // X121: a standard view is the plan a maker checks a dimension against, so it looks at the
+        // model and not at a corner of the empty scene. The direction, the projection and the
+        // target are the preset's; the distance is the scene's own fit.
         let layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.current().leaves[0].clone();
-        let target = leaf.camera().target();
-        let distance = leaf.camera().distance();
+        let fit = Camera::new(geom::DVec3::new(-2_500.0, 4_000.0, 900.0), 2_400.0).expect("camera");
 
         // The owner's eye convention: the eye offset is the camera's `-forward`.
         for (preset, forward, right, up) in [
@@ -1525,10 +1558,10 @@ mod tests {
             (OpeningView::Bottom, geom::DVec3::Z, -geom::DVec3::X, geom::DVec3::Y),
         ] {
             let mut leaf = leaf.clone();
-            leaf.apply_preset(preset);
+            leaf.apply_preset(preset, fit);
             let camera = leaf.camera();
-            assert_eq!(camera.target(), target, "{preset:?} keeps the target");
-            assert!((camera.distance() - distance).abs() < 1.0e-9, "{preset:?} keeps the distance");
+            assert_eq!(camera.target(), fit.target(), "{preset:?} centres the scene");
+            assert!((camera.distance() - fit.distance()).abs() < 1.0e-9, "{preset:?} frames the scene");
             assert!(camera.forward().dot(forward) > 0.999, "{preset:?} looks along {forward:?}");
             assert!(camera.right().dot(right) > 0.999, "{preset:?} has {right:?} to the right");
             assert!(camera.up().dot(up) > 0.999, "{preset:?} has {up:?} up");
@@ -1536,11 +1569,48 @@ mod tests {
             assert_eq!(leaf.preset, Some(preset));
         }
 
-        // The axonometric default is the only preset that is not a standard view.
+        // The axonometric default is the only preset that is not a standard view: it turns the
+        // camera and keeps the frame, so Home never throws away a pan or a zoom (ADR 0049).
         let mut axonometric = leaf.clone();
-        axonometric.apply_preset(OpeningView::Axonometric);
-        assert!(matches!(axonometric.camera().projection(), scene::Projection::Perspective { .. }));
+        let before = axonometric.camera();
+        axonometric.apply_preset(OpeningView::Axonometric, fit);
+        let camera = axonometric.camera();
+        assert_eq!(camera.target(), before.target(), "the familiar angle keeps the target");
+        assert!((camera.distance() - before.distance()).abs() < 1.0e-9, "and the distance");
+        assert!(matches!(camera.projection(), scene::Projection::Perspective { .. }));
         assert_eq!(axonometric.preset, Some(OpeningView::Axonometric));
+    }
+
+    #[test]
+    fn a_view_the_person_framed_keeps_its_size_through_a_preset() {
+        // The size is the person's: a view zoomed into a detail and then asked for the top view keeps
+        // the height it showed, while its target still lands on the model (X121).
+        let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
+        let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
+        leaf.zoom_about(0.25, None);
+        let distance = leaf.camera().distance();
+        let fit = Camera::new(geom::DVec3::new(3_000.0, -1_500.0, 200.0), 5_000.0).expect("camera");
+
+        leaf.apply_preset(OpeningView::Top, fit);
+
+        assert_eq!(leaf.camera().target(), fit.target(), "the view looks at the model");
+        assert!((leaf.camera().distance() - distance).abs() < 1.0e-9, "at the size the person chose");
+        assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
+    }
+
+    #[test]
+    fn an_orbit_after_a_preset_turns_about_the_scene_the_preset_centred() {
+        // The pivot the person orbits with is the one the preset wrote, so a top view of a model away
+        // from the origin turns about the model and not about the empty scene's corner (X121).
+        let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
+        let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
+        let fit = Camera::new(geom::DVec3::new(-1_200.0, 800.0, 450.0), 3_200.0).expect("camera");
+        leaf.apply_preset(OpeningView::Top, fit);
+
+        leaf.orbit(0.4, -0.2);
+
+        assert_eq!(leaf.camera().target(), fit.target(), "the new target is the orbit's pivot");
+        assert_eq!(leaf.preset, None, "and the orbit leaves the preset");
     }
 
     #[test]
@@ -1554,9 +1624,10 @@ mod tests {
         let distance = leaf.camera().distance();
 
         // The top preset and the widget's `+Z` ball land on the same basis: +Y up, +X right.
-        leaf.apply_preset(OpeningView::Top);
+        let fit = leaf.camera();
+        leaf.apply_preset(OpeningView::Top, fit);
         let preset = leaf.camera();
-        leaf.look_from(geom::DVec3::Z);
+        leaf.look_from(geom::DVec3::Z, fit);
         let widget = leaf.camera();
         assert_eq!(preset, widget, "a preset and the widget agree on the top view");
         assert_eq!(widget.target(), target, "the snap does not move the target");
@@ -1565,7 +1636,7 @@ mod tests {
         assert!(widget.right().dot(geom::DVec3::X) > 0.999, "and +X right");
 
         // The widget's bottom ball is +Y up and -X right.
-        leaf.look_from(-geom::DVec3::Z);
+        leaf.look_from(-geom::DVec3::Z, fit);
         let bottom = leaf.camera();
         assert_eq!(bottom.target(), target);
         assert!(bottom.up().dot(geom::DVec3::Y) > 0.999, "the bottom view is +Y up");
@@ -1576,8 +1647,9 @@ mod tests {
     fn a_side_view_keeps_z_up() {
         let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
+        let fit = leaf.camera();
         for preset in [OpeningView::Front, OpeningView::Right] {
-            leaf.apply_preset(preset);
+            leaf.apply_preset(preset, fit);
             assert!(
                 leaf.camera().up().dot(geom::DVec3::Z) > 0.999,
                 "{preset:?} keeps +Z up, got {:?}",
@@ -1591,7 +1663,8 @@ mod tests {
         let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let id = layout.active();
         let leaf = layout.leaf_mut(id).expect("the active leaf");
-        leaf.apply_preset(OpeningView::Top);
+        let fit = leaf.camera();
+        leaf.apply_preset(OpeningView::Top, fit);
         assert_eq!(leaf.preset, Some(OpeningView::Top));
         leaf.orbit(0.4, 0.1);
         assert_eq!(leaf.preset, None, "an orbit leaves every preset");
@@ -1615,7 +1688,7 @@ mod tests {
         // A standard preset converts the perspective view without moving its framing.
         let target = leaf.camera().target();
         let distance = leaf.camera().distance();
-        leaf.apply_preset(OpeningView::Left);
+        leaf.apply_preset(OpeningView::Left, leaf.camera());
         let scene::Projection::Orthographic { height } = leaf.camera().projection() else {
             panic!("a standard preset is orthographic");
         };
@@ -1624,7 +1697,7 @@ mod tests {
         assert!((leaf.camera().distance() - distance).abs() < 1.0e-9);
 
         // The corner widget's axis balls are standard views, so they do the same.
-        leaf.look_from(geom::DVec3::X);
+        leaf.look_from(geom::DVec3::X, leaf.camera());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
         assert_eq!(leaf.preset, None, "a ball snap is a direction, not a named preset");
     }
@@ -1636,13 +1709,13 @@ mod tests {
         assert!(leaf.toggle_projection().kept());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
 
-        leaf.apply_preset(OpeningView::Axonometric);
+        leaf.apply_preset(OpeningView::Axonometric, leaf.camera());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
 
         // Return to perspective and take a free direction: no axis, no projection change.
         let mut perspective = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let leaf = perspective.leaf_mut(perspective.active()).expect("the active leaf");
-        leaf.look_from(geom::DVec3::new(1.0, 1.0, 1.0));
+        leaf.look_from(geom::DVec3::new(1.0, 1.0, 1.0), leaf.camera());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Perspective { .. }));
     }
 
@@ -1650,7 +1723,7 @@ mod tests {
     fn the_projection_toggle_works_in_a_standard_view_and_keeps_its_name() {
         let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
-        leaf.apply_preset(OpeningView::Top);
+        leaf.apply_preset(OpeningView::Top, leaf.camera());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
 
         assert!(leaf.toggle_projection().kept());
@@ -1688,7 +1761,7 @@ mod tests {
         let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let id = layout.active();
         let leaf = layout.leaf_mut(id).expect("the active leaf");
-        leaf.apply_preset(OpeningView::Front);
+        leaf.apply_preset(OpeningView::Front, leaf.camera());
         let forward = leaf.camera().forward();
 
         leaf.roll_to(std::f64::consts::FRAC_PI_2);
@@ -1703,7 +1776,7 @@ mod tests {
         assert_eq!(leaf.camera().roll(), 0.0, "Home resets the roll");
         leaf.roll_by(0.3);
         assert!(leaf.camera().roll() > 0.0, "a roll can be applied again");
-        leaf.apply_preset(OpeningView::Top);
+        leaf.apply_preset(OpeningView::Top, leaf.camera());
         assert_eq!(leaf.camera().roll(), 0.0, "a preset resets the roll");
         leaf.roll_to(0.4);
         leaf.frame(Camera::default());

@@ -8149,6 +8149,45 @@ fn a_view_nobody_framed_follows_the_model_it_was_built_into() {
 }
 
 #[test]
+fn a_standard_view_centres_the_model_that_stands_away_from_the_origin() {
+    // X121, the owner's report: «когда жму на виджете вид сверху или сбоку, то вид не центрируется
+    // на центр сцены» — top and side kept the target the view happened to have, so a model standing
+    // away from the empty scene's origin was framed at a corner. A standard view writes the target,
+    // the projection and the distance that holds the scene, so the model lands in the middle.
+    let mut harness = Harness::with_session("frame-view-standard-centres", empty_session());
+    harness.settle();
+    // Two boards: a near one that is the model, and a far one that the automatic fit (X119) has to
+    // reach. Removing the far one leaves a model the view already holds, so nothing centres the view
+    // on the person's behalf and the target stays where the union of the two was.
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [600.0, 200.0, 0.0]);
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Far", [6_000.0, 4_000.0, 0.0]);
+    harness.settle();
+    harness.app.tabs.active_mut().session.undo().expect("the far board is one entry");
+    harness.settle();
+
+    let centre = scene_centre(&harness);
+    assert!(
+        (harness.camera().target() - centre).length() > 100.0,
+        "the view still looks at the union the far board left: {:?} against {centre:?}",
+        harness.camera().target()
+    );
+
+    harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Top);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    let camera = document.camera();
+    let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+    let aspect = f64::from(rect.width()) / f64::from(rect.height());
+    let corners = document.scene_bounds().corners().expect("the board has eight corners");
+    assert!((camera.target() - centre).length() < 1.0, "the top view looks at the model: {:?}", camera.target());
+    assert!(camera.holds(&corners, aspect), "and holds the whole of it in {rect:?}");
+    let ndc = camera.project_ndc(centre, aspect).expect("the model's centre is in front of the top view");
+    assert!(ndc.x.abs() < 1.0e-6 && ndc.y.abs() < 1.0e-6, "the model's centre lands on the view's centre: {ndc:?}");
+    assert!(matches!(camera.projection(), scene::Projection::Orthographic { .. }), "a top view is a plan");
+}
+
+#[test]
 fn a_view_the_person_framed_is_left_alone_until_frame_all_asks_again() {
     // The other half of X119: the following fit is the tool's, not the person's. An orbit, a pan, a
     // zoom or *Frame all* makes the view theirs, and a part built outside it thereafter is drawn

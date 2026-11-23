@@ -2778,8 +2778,8 @@ impl Document {
 
     /// Returns the active view to *Axonometric* without refitting the scene.
     ///
-    /// The preset writes yaw and pitch only, so the model does not move and the view keeps its
-    /// target, its distance and its projection (ADR 0049).
+    /// The familiar angle is not a standard view: it writes yaw and pitch only, so the model does
+    /// not move and the view keeps its target, its distance and its projection (ADR 0049).
     pub(crate) fn home_view(&mut self) {
         self.layout.active_leaf_mut().home();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
@@ -2815,13 +2815,25 @@ impl Document {
         home_camera(self.scene_bounds).ok().map(|fit| fit.visible_height())
     }
 
+    /// The scene's own frame: the centre of the model and the distance that holds all of it.
+    ///
+    /// A scene no camera can hold has no frame, and a view asked to centre on it keeps the frame it
+    /// has: the fallback is the active view's own camera, so a preset never moves a view to a point
+    /// nobody can see (X121).
+    fn scene_fit(&self) -> Camera {
+        home_camera(self.scene_bounds).unwrap_or_else(|_| self.layout.active_camera())
+    }
+
     /// Turns the active view to a standard preset, the way the corner widget and the view menu do.
     ///
-    /// The preset writes the camera's direction and its projection, so this is view state and no
-    /// command (ADR 0049); the shell's camera is refreshed here so one entry point cannot leave the
-    /// two disagreeing.
+    /// The preset writes the camera's direction, its projection and the point it centres on, so this
+    /// is view state and no command (ADR 0049); the shell's camera is refreshed here so one entry
+    /// point cannot leave the two disagreeing. A standard view centres the scene on the distance
+    /// that holds it, unless the person has already framed this view by hand and chosen its size
+    /// (X121).
     pub(crate) fn apply_view_preset(&mut self, preset: ui::display::OpeningView) {
-        self.layout.active_leaf_mut().apply_preset(preset);
+        let fit = self.scene_fit();
+        self.layout.active_leaf_mut().apply_preset(preset, fit);
         let camera = self.layout.active_camera();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), camera);
     }
@@ -3822,7 +3834,8 @@ impl Document {
         {
             match action {
                 gizmo::GizmoAction::LookFrom(direction) => {
-                    self.layout.active_leaf_mut().look_from(direction);
+                    let fit = self.scene_fit();
+                    self.layout.active_leaf_mut().look_from(direction, fit);
                 }
                 gizmo::GizmoAction::Home => self.home_view(),
                 gizmo::GizmoAction::ToggleProjection => self.toggle_view_projection(),
