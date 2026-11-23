@@ -84,7 +84,7 @@ use ui::settings::{Settings, SettingsSection};
 use ui::ui_scale;
 use ui::{Palette, TransformMode, icons, theme};
 
-use crate::chat::{Chat, ChatAction};
+use crate::chat::ChatAction;
 use crate::document::{DeleteRequest, Document, SnapChoice, delete_request};
 use crate::file_menu::{Answer, Confirm, FileAction, PreservedSections};
 use crate::file_picker::{PickMode, Picker, Started, scene_file};
@@ -331,12 +331,12 @@ struct App {
     /// frame landed what an agent asked for — the frame a call waits for is the one that shows it
     /// (X111).
     frames: u64,
-    /// The assistant panel: the conversation, the person's mode switch and the turn in flight.
+    /// Whether the assistant panel is on screen.
     ///
-    /// The panel is window state, not document state: it is never serialised and it cannot write the
-    /// document except through a turn, which lands through the same batch an agent's call does
-    /// (ADR 0186, ADR 0187).
-    chat: Chat,
+    /// The panel is one window over the workspace, so whether it is up, where it sits and how wide
+    /// it is are the shell's; what it says is the active tab's ([`Document::chat`]). The header's
+    /// cell and `Ctrl+J` are one act and both write this flag (X106, ADR 0222, J24).
+    assistant_open: bool,
 }
 
 impl App {
@@ -463,8 +463,30 @@ impl App {
             mailbox: None,
             queued: Vec::new(),
             frames: 0,
-            chat: Chat::new(),
+            assistant_open: false,
         })
+    }
+
+    /// The active tab's assistant state: the conversation, the backend and the turn.
+    ///
+    /// Every door the assistant panel has reads the tab that is in front, so a message is always
+    /// the front scene's and never a neighbour's (J24).
+    fn chat(&self) -> &crate::chat::Chat {
+        &self.tabs.active().chat
+    }
+
+    /// The active tab's assistant state, mutably.
+    fn chat_mut(&mut self) -> &mut crate::chat::Chat {
+        &mut self.tabs.active_mut().chat
+    }
+
+    /// Shows the assistant panel, or puts it away without touching any tab's conversation.
+    ///
+    /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
+    /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
+    /// (X106, ADR 0222).
+    fn toggle_assistant(&mut self) {
+        self.assistant_open = !self.assistant_open;
     }
 
     /// Reports a failure in the active tab's status bar.
@@ -569,7 +591,7 @@ impl App {
             }
             // The assistant's cell and its key are one act: the panel is the shell's, and the mode
             // switch inside it is the person's (ADR 0190, ADR 0222).
-            HeaderAction::Assistant => self.chat.toggle(),
+            HeaderAction::Assistant => self.toggle_assistant(),
             HeaderAction::CollapsePanels => self.shell.panels.toggle_collapse_all(),
             HeaderAction::HidePanels => self.shell.panels.toggle_hide_all(),
             HeaderAction::ToggleRibbon => {
@@ -926,7 +948,7 @@ impl App {
                 // A batch that arrives while a chat turn is open lands in the turn's own edit scope,
                 // so a process that edits in several calls of one message leaves one undo entry
                 // (ADR 0187, ADR 0230). The scope is read before the document is borrowed.
-                let scope = self.chat.scope();
+                let scope = self.chat().scope();
                 let document = self.tabs.active_mut();
                 // The save a caller asks for is the person's *Save* performed on their document, so
                 // it goes through the same writer and to the same file (X114). A scene that was
@@ -951,13 +973,18 @@ impl App {
         self.pending_question.is_some() || self.tabs.active().holding_piece()
     }
 
-    /// Gives the panel the model the workspace names, and takes it away when it names none.
+    /// Gives every tab the model the workspace names, and takes it away when it names none.
     ///
     /// Two ways to one loop (ADR 0189, ADR 0230), and the process wins: a command the workshop typed
     /// starts an agent that owns the loop itself, and the endpoint is the OpenAI-compatible wire the
     /// panel asks only while that command is empty. Both are settings and the channel is the
-    /// window's, so the two are read every frame and the panel is handed the answer; a backend this
+    /// window's, so the two are read every frame and every tab is handed the answer; a backend this
     /// shell did not create — a test's script — is left alone.
+    ///
+    /// Every tab and not only the one in front: the backend is part of the tab's own conversation, so
+    /// a settings change reaches the scenes that are not on screen and a tab that comes forward is
+    /// already able to send (J24). A tab with a turn in flight keeps its backend until that turn is
+    /// over, because the answer belongs to the process that is running it.
     ///
     /// The key is not read here: it belongs to the message that needs it, so no frame touches the
     /// file and the homes are named by the sentence a turn answers with when neither has one.
@@ -970,14 +997,17 @@ impl App {
             (None, Some(problem)) => Some(problem),
             _ => None,
         };
-        self.chat.apply_agent(program.clone(), self.channel.is_some());
-        self.chat.apply_problem(problem);
-        let endpoint = match (program, assistant.endpoint_to_ask()) {
+        let endpoint = match (program.clone(), assistant.endpoint_to_ask()) {
             (None, Some(base_url)) => Some(mcp::Endpoint::new(base_url, assistant.model.trim())),
             _ => None,
         };
         let folder = self.settings_store.folder().map(std::path::Path::to_path_buf);
-        self.chat.apply_model(endpoint, folder);
+        let channel_open = self.channel.is_some();
+        for (_, document) in self.tabs.iter_mut() {
+            document.chat.apply_agent(program.clone(), channel_open);
+            document.chat.apply_problem(problem);
+            document.chat.apply_model(endpoint.clone(), folder.clone());
+        }
     }
 
     /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
@@ -986,12 +1016,16 @@ impl App {
     /// the person's Stop lands between two calls and a drag is never interleaved with an answer. A
     /// gesture in flight pauses the turn instead of failing it: the next frame that has the window
     /// to itself carries on.
+    ///
+    /// Only the tab in front is served, so a turn in a scene the person is not looking at pauses
+    /// where it stopped: its reply stays in flight in its own backend and resumes the frame its tab
+    /// comes forward again, which is what makes switching tabs cost no answer (J24).
     fn serve_chat(&mut self, lang: text::Lang) {
         if self.gesture_in_flight() {
             return;
         }
-        let Self { tabs, chat, .. } = self;
-        chat.serve(&mut tabs.active_mut().session, lang);
+        let document = self.tabs.active_mut();
+        document.chat.serve(&mut document.session, lang);
     }
 
     /// Draws the assistant panel and performs the one action it asked for.
@@ -1004,24 +1038,29 @@ impl App {
     /// pending question has the window; whether the turn is running is the panel's own state, which
     /// is what draws Stop.
     fn assistant(&mut self, ctx: &egui::Context) {
-        if !self.chat.open {
+        if !self.assistant_open {
             return;
         }
         let lang = ui::language(ctx);
-        self.chat.refresh_findings(&self.tabs.active().session);
         let mode = self.tabs.active().session.agent_mode();
         let held = self.gesture_in_flight();
-        match self.chat.show(ctx, mode, lang, held) {
+        let open = &mut self.assistant_open;
+        let document = self.tabs.active_mut();
+        document.chat.refresh_findings(&document.session);
+        match document.chat.show(ctx, open, mode, lang, held) {
             ChatAction::None => {}
-            ChatAction::Send => self.send_chat(self.chat.input.trim().to_owned(), lang),
-            ChatAction::Stop => self.chat.stop(),
+            ChatAction::Send => {
+                let text = self.chat().input.trim().to_owned();
+                self.send_chat(text, lang);
+            }
+            ChatAction::Stop => self.chat_mut().stop(),
             ChatAction::AllowEndpoint => self.allow_endpoint(lang),
-            ChatAction::DenyEndpoint => self.chat.clear_consent(),
+            ChatAction::DenyEndpoint => self.chat_mut().clear_consent(),
             ChatAction::Mode(mode) => {
-                self.chat.stop();
+                self.chat_mut().stop();
                 self.tabs.active_mut().session.set_agent_mode(mode);
             }
-            ChatAction::Close => self.chat.open = false,
+            ChatAction::Close => self.assistant_open = false,
         }
     }
 
@@ -1034,18 +1073,18 @@ impl App {
         // The key is read when a message is sent and not once per frame: a workspace whose key is
         // missing reads the sentence that names both homes instead of being asked a question about
         // a message that cannot go anywhere.
-        if self.chat.asks_an_endpoint()
+        if self.chat().asks_an_endpoint()
             && let Err(error) = mcp::key(self.settings_store.folder())
         {
-            self.chat.note(error.sentence().to_owned());
+            self.chat_mut().note(error.sentence().to_owned());
             return;
         }
-        if let Some(endpoint) = self.chat.unconsented(&self.settings.assistant) {
-            self.chat.request_consent(endpoint);
+        if let Some(endpoint) = self.chat().unconsented(&self.settings.assistant) {
+            self.chat_mut().request_consent(endpoint);
             return;
         }
-        let Self { tabs, chat, .. } = self;
-        chat.begin(&mut tabs.active_mut().session, text, lang);
+        let document = self.tabs.active_mut();
+        document.chat.begin(&mut document.session, text, lang);
     }
 
     /// The person agreed to send to the endpoint the panel named: remember it, then send.
@@ -1053,12 +1092,12 @@ impl App {
     /// The agreement is written now instead of when the settings window closes, because a promise
     /// that dies with a crash is a promise the program did not keep.
     fn allow_endpoint(&mut self, lang: text::Lang) {
-        let Some(endpoint) = self.chat.take_consent() else {
+        let Some(endpoint) = self.chat_mut().take_consent() else {
             return;
         };
         self.settings.assistant.remember_consent(&endpoint);
         self.persist_settings();
-        let text = self.chat.input.trim().to_owned();
+        let text = self.chat().input.trim().to_owned();
         self.send_chat(text, lang);
     }
 
@@ -1578,7 +1617,7 @@ impl App {
             || self.palette.is_open()
             || self.product_card.is_open()
             || self.pending_question.is_some();
-        let chat_open = self.chat.open;
+        let chat_open = self.assistant_open;
         {
             let Self { tabs, shell, .. } = self;
             tabs.active_mut().handle_keys(ui, modals || chat_open, shell);
@@ -1592,7 +1631,7 @@ impl App {
                 self.palette.open();
             }
             if shortcuts.assistant {
-                self.chat.toggle();
+                self.toggle_assistant();
             }
             let requested = self.tabs.active_mut().handle_shortcuts(shortcuts, ui::language(ui.ctx()));
             if let Some(action) = requested {
@@ -1653,7 +1692,7 @@ impl App {
                 panels_collapsed: self.shell.panels.all_collapsed(),
                 mode: self.shell.mode,
                 render_open: self.render_open,
-                assistant_open: self.chat.open,
+                assistant_open: self.assistant_open,
             }
         };
         let mut header_action = None;

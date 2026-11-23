@@ -912,7 +912,7 @@ fn the_delete_key_removes_a_node_while_the_assistant_panel_is_open() {
     let [selected] = harness.selected()[..] else {
         panic!("the click selects exactly one row: {:?}", harness.selected());
     };
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.settle();
 
     harness.press(egui::Key::Delete, egui::Modifiers::NONE);
@@ -7017,10 +7017,136 @@ fn rename_step(panel: Id, name: &str) -> engine::BatchStep {
 fn drive_turn(harness: &mut Harness, frames: usize) {
     for _ in 0..frames {
         harness.frame();
-        if !harness.app.chat.is_busy() {
+        if !harness.app.chat_mut().is_busy() {
             return;
         }
     }
+}
+
+#[test]
+fn each_tab_holds_its_own_conversation_and_its_own_backend() {
+    // J24: the conversation and the backend belonged to the window, so a second scene inherited the
+    // first one's transcript and could take its turn. Both are the tab's now: what one tab said is
+    // not in the other, and coming back finds both where they were left.
+    let (mut harness, panel) = chat_fixture("frame-chat-tabs");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the first scene's answer"),
+    ])));
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    drive_turn(&mut harness, 24);
+    let first_tab = harness.app.tabs.active_id();
+    let first_lines = harness.app.chat_mut().conversation.lines().len();
+    assert!(first_lines > 2, "the first tab holds a whole turn: {first_lines}");
+
+    harness.app.new_tab().expect("a second scene");
+    let second_tab = harness.app.tabs.active_id();
+    assert_ne!(first_tab, second_tab);
+    assert!(harness.app.chat_mut().conversation.is_empty(), "the new scene starts with nothing said");
+    assert!(harness.app.chat_mut().backend.is_none(), "and with no backend of the first one's");
+    assert!(!harness.app.chat_mut().is_busy(), "and no turn of its own");
+
+    harness.app.chat_mut().note("the second scene's line".to_owned());
+    harness.frame();
+    let first = harness.app.tabs.document(first_tab).expect("the first tab is still open");
+    assert_eq!(first.chat.conversation.lines().len(), first_lines, "the first tab's transcript is untouched");
+    assert!(
+        !first.chat.conversation.lines().iter().any(|line| line.text == "the second scene's line"),
+        "and it never sees what the front tab said"
+    );
+
+    assert!(harness.app.tabs.activate(first_tab));
+    harness.frame();
+    assert_eq!(harness.app.chat_mut().conversation.lines().len(), first_lines, "coming back finds the transcript");
+    assert!(harness.app.chat_mut().backend.is_some(), "and the backend that answered it");
+}
+
+#[test]
+fn a_turn_pauses_when_its_tab_leaves_and_finishes_when_it_comes_back() {
+    // The turn is the tab's too: leaving the scene keeps the reply in flight and lands no step
+    // behind the person's back, and coming back carries on instead of losing the answer (J24).
+    let (mut harness, panel) = chat_fixture("frame-chat-tabs-paused");
+    harness.app.assistant_open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying("the side is renamed"),
+    ])));
+    let first_tab = harness.app.tabs.active_id();
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    // The first frame asks, the second lands the batch: the turn is half done when the tab leaves.
+    harness.frame();
+    harness.frame();
+    assert!(harness.app.chat_mut().is_busy(), "the turn is in flight");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the half that arrived landed");
+    let said = harness.app.chat_mut().conversation.lines().len();
+
+    harness.app.new_tab().expect("a second scene");
+    for _ in 0..12 {
+        harness.frame();
+    }
+    let first = harness.app.tabs.document(first_tab).expect("the first tab is still open");
+    assert!(first.chat.is_busy(), "the turn is paused, not dropped");
+    assert_eq!(first.chat.conversation.lines().len(), said, "and it advanced no step out of sight");
+    assert!(harness.app.chat_mut().conversation.is_empty(), "nothing of it appears in the front scene");
+
+    assert!(harness.app.tabs.activate(first_tab));
+    drive_turn(&mut harness, 24);
+    assert_eq!(
+        harness.app.chat_mut().conversation.lines().last().map(|line| line.text.as_str()),
+        Some("the side is renamed"),
+        "the answer closes the turn in the scene it was asked in"
+    );
+}
+
+#[test]
+fn the_workspace_settings_reach_every_open_tab() {
+    // The backend is the tab's, so a settings change is applied to every tab and not only to the one
+    // in front: a scene that comes forward is already able to send (J24).
+    let (mut harness, _panel) = chat_fixture("frame-chat-tabs-settings");
+    harness.app.new_tab().expect("a second scene");
+    harness.settle();
+    assert_eq!(harness.app.tabs.iter().count(), 2, "two scenes are open");
+    assert!(
+        harness.app.tabs.iter().all(|(_, document)| !document.chat.asks_an_endpoint()),
+        "no model is configured yet"
+    );
+
+    harness.app.settings.assistant.endpoint = "https://example.invalid/v1".to_owned();
+    harness.app.settings.assistant.model = "a-model".to_owned();
+    harness.frame();
+    assert!(
+        harness.app.tabs.iter().all(|(_, document)| document.chat.asks_an_endpoint()),
+        "every open tab took the endpoint, not only the one in front"
+    );
+}
+
+#[test]
+fn the_panel_draws_the_conversation_of_the_tab_in_front() {
+    // One window over the workspace, one transcript: what it says is the front scene's, and every
+    // other scene keeps its own words for the moment it comes forward (J24).
+    let (mut harness, _panel) = chat_fixture("frame-chat-tabs-panel");
+    harness.app.assistant_open = true;
+    let first_tab = harness.app.tabs.active_id();
+    harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, "the first scene's answer");
+    harness.settle();
+    assert!(harness.drew("the first scene's answer"), "the panel draws the scene in front");
+
+    harness.app.new_tab().expect("a second scene");
+    harness.settle();
+    assert!(!harness.drew("the first scene's answer"), "and only that one");
+
+    harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, "the second scene's answer");
+    harness.settle();
+    assert!(harness.drew("the second scene's answer"), "the second scene's words are drawn now");
+    assert!(!harness.drew("the first scene's answer"), "and the first one's are not");
+
+    assert!(harness.app.tabs.activate(first_tab));
+    harness.settle();
+    assert!(harness.drew("the first scene's answer"), "coming back draws its own transcript again");
+    assert!(!harness.drew("the second scene's answer"));
 }
 
 #[test]
@@ -7028,9 +7154,9 @@ fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
     // ADR 0187 through the real frame: the answer of one message is one entry, and the panel says so
     // in its own note line, which is the sentence a person reads instead of reading the history.
     let (mut harness, panel) = chat_fixture("frame-chat-turn");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
-    harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
         mcp::Reply::calling(vec![rename_step(panel, "Left")]),
         mcp::Reply::saying("the side is renamed"),
     ])));
@@ -7040,7 +7166,7 @@ fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
 
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the answer landed");
     assert_eq!(
-        harness.app.chat.conversation.lines().last().map(|line| line.text.as_str()),
+        harness.app.chat_mut().conversation.lines().last().map(|line| line.text.as_str()),
         Some("the side is renamed"),
         "the model's own words close the turn"
     );
@@ -7056,7 +7182,7 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
     // message stops at the question, nothing leaves until the person says yes, the agreement is in
     // the workspace file, and clearing it asks again. No provider, no network, no key in the tree.
     let (mut harness, panel) = chat_fixture("frame-chat-consent");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
     let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
@@ -7065,18 +7191,18 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
     harness.app.settings.assistant.model = "stub-model".to_owned();
     harness.settle();
     assert_eq!(
-        harness.app.chat.unconsented(&harness.app.settings.assistant),
+        harness.app.chat().unconsented(&harness.app.settings.assistant),
         Some(url.clone()),
         "the endpoint is installed and nothing has been agreed to yet"
     );
 
     // The first message stops at the question: the panel holds the words and the stub hears nothing.
-    harness.app.chat.input = "rename the side".to_owned();
+    harness.app.chat_mut().input = "rename the side".to_owned();
     harness.settle();
     let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
     harness.click(field_send, egui::PointerButton::Primary);
-    assert_eq!(harness.app.chat.consent_pending(), Some(url.as_str()), "the message waits for the answer");
-    assert_eq!(harness.app.chat.input, "rename the side", "and stays in the field");
+    assert_eq!(harness.app.chat_mut().consent_pending(), Some(url.as_str()), "the message waits for the answer");
+    assert_eq!(harness.app.chat_mut().input, "rename the side", "and stays in the field");
     harness.frame();
     assert!(harness.drew(Message::AssistantConsentTitle.text(Lang::En)), "the card is drawn");
     assert!(
@@ -7092,10 +7218,10 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
     let card_send = assistant_send_points(&harness).into_iter().next().expect("the card draws its own Send");
     harness.click(card_send, egui::PointerButton::Primary);
     assert!(harness.app.settings.assistant.consents(&url), "the answer is remembered");
-    assert_eq!(harness.app.chat.consent_pending(), None, "and the card is gone");
+    assert_eq!(harness.app.chat_mut().consent_pending(), None, "and the card is gone");
     for _ in 0..400 {
         harness.frame();
-        if !harness.app.chat.is_busy() {
+        if !harness.app.chat_mut().is_busy() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -7110,11 +7236,11 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
 
     // Clearing the answer asks again: the question is the workspace's, not the tab's.
     harness.app.settings.assistant.forget_consent(&url);
-    harness.app.chat.input = "rename it once more".to_owned();
+    harness.app.chat_mut().input = "rename it once more".to_owned();
     harness.settle();
     let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
     harness.click(field_send, egui::PointerButton::Primary);
-    assert_eq!(harness.app.chat.consent_pending(), Some(url.as_str()), "a cleared consent asks again");
+    assert_eq!(harness.app.chat_mut().consent_pending(), Some(url.as_str()), "a cleared consent asks again");
 }
 
 #[test]
@@ -7123,7 +7249,7 @@ fn the_request_carries_the_live_root_id_and_the_house_conventions() {
     // only the static guide. The brief is the live scene; the conventions are the house rule. Both
     // reach the system message through the page, the shell and the backend.
     let (mut harness, panel) = chat_fixture("frame-chat-brief");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
     let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
@@ -7133,13 +7259,13 @@ fn the_request_carries_the_live_root_id_and_the_house_conventions() {
     harness.app.settings.assistant.remember_consent(&url);
     harness.settle();
 
-    harness.app.chat.input = "куб 100 на 200 на 300".to_owned();
+    harness.app.chat_mut().input = "куб 100 на 200 на 300".to_owned();
     harness.settle();
     let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
     harness.click(send, egui::PointerButton::Primary);
     for _ in 0..400 {
         harness.frame();
-        if !harness.app.chat.is_busy() {
+        if !harness.app.chat_mut().is_busy() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -7159,14 +7285,14 @@ fn a_message_to_a_typed_but_unusable_address_answers_the_clause_and_sends_nothin
     // J22: a URL pasted into the URL that was already in the field is not an endpoint. The panel
     // names the clause instead of saying "no model", and no backend is installed to ask anything.
     let (mut harness, _panel) = chat_fixture("frame-chat-endpoint-problem");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.settings.assistant.endpoint =
         "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
     harness.app.settings.assistant.model = "a-model".to_owned();
     harness.settle();
-    assert!(!harness.app.chat.asks_an_endpoint(), "an unusable address installs no backend");
+    assert!(!harness.app.chat_mut().asks_an_endpoint(), "an unusable address installs no backend");
 
-    harness.app.chat.input = "hello".to_owned();
+    harness.app.chat_mut().input = "hello".to_owned();
     harness.settle();
     let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
     harness.click(send, egui::PointerButton::Primary);
@@ -7245,9 +7371,9 @@ fn the_assistant_panel_lists_what_the_rules_found() {
     // explains it. The fixture's panel is 700 mm wide in a 600 mm envelope, so the one finding is
     // the envelope rule and it names the panel the person can select.
     let (mut harness, panel) = chat_fixture("frame-findings");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.frame();
-    let findings = harness.app.chat.findings();
+    let findings = harness.app.chat_mut().findings();
     assert!(
         findings.iter().any(|finding| finding.code == engine::Code::EnvelopeOut && finding.nodes.contains(&panel)),
         "the panel lists the envelope finding: {findings:?}"
@@ -7268,7 +7394,11 @@ fn the_assistant_panel_lists_what_the_rules_found() {
         )
         .expect("the panel fits the envelope");
     harness.frame();
-    assert!(harness.app.chat.findings().is_empty(), "a clean scene reports nothing: {:?}", harness.app.chat.findings());
+    assert!(
+        harness.app.chat_mut().findings().is_empty(),
+        "a clean scene reports nothing: {:?}",
+        harness.app.chat_mut().findings()
+    );
 }
 
 #[test]
@@ -7276,8 +7406,8 @@ fn the_panel_in_plan_mode_draws_the_plan_and_writes_nothing() {
     // ADR 0190: the first mode is plan, the answer runs with writing off, and what a person sees is
     // the same dispatch the command line's dry run measured — not prose the model imagined.
     let (mut harness, panel) = chat_fixture("frame-chat-plan");
-    harness.app.chat.open = true;
-    harness.app.chat.backend =
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend =
         Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
 
     harness.app.send_chat("rename the side".to_owned(), Lang::En);
@@ -7296,12 +7426,12 @@ fn a_running_turn_draws_stop_where_send_was() {
     // and the person could not stop the agent from the panel at all. The button follows the turn,
     // and the gesture only postpones the next message.
     let (mut harness, panel) = chat_fixture("frame-chat-stop-button");
-    harness.app.chat.open = true;
-    harness.app.chat.backend =
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend =
         Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::calling(vec![rename_step(panel, "Left")])])));
 
     harness.settle();
-    assert!(!harness.app.chat.is_busy(), "no turn has started");
+    assert!(!harness.app.chat_mut().is_busy(), "no turn has started");
     assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "an idle panel offers Send: {:?}", harness.drawn);
     assert!(!harness.drew(Message::AssistantStop.text(Lang::En)), "and draws no Stop");
 
@@ -7323,9 +7453,9 @@ fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
     // The stop is between calls (ADR 0187): the second answer is never asked for, so the document
     // holds the first answer and one undo entry — never a batch cut in half.
     let (mut harness, panel) = chat_fixture("frame-chat-stop");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
-    harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
         mcp::Reply::calling(vec![rename_step(panel, "Left")]),
         mcp::Reply::calling(vec![rename_step(panel, "Right")]),
     ])));
@@ -7339,7 +7469,7 @@ fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
         }
     }
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the first answer landed");
-    harness.app.chat.stop();
+    harness.app.chat_mut().stop();
     drive_turn(&mut harness, 12);
 
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the stopped answer never ran");
@@ -7358,10 +7488,10 @@ fn the_assistant_panel_opens_on_its_key_and_draws_its_two_modes() {
     // sentence that stands for it.
     let (mut harness, _panel) = chat_fixture("frame-chat-panel");
     harness.settle();
-    assert!(!harness.app.chat.open, "the panel starts closed");
+    assert!(!harness.app.assistant_open, "the panel starts closed");
 
     harness.press(egui::Key::J, egui::Modifiers::CTRL);
-    assert!(harness.app.chat.open, "Ctrl+J opens it");
+    assert!(harness.app.assistant_open, "Ctrl+J opens it");
     harness.settle();
     assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn");
     assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "and the build segment beside it");
@@ -7399,7 +7529,7 @@ fn the_header_cell_opens_the_assistant_and_the_panel_draws_its_two_modes() {
     // own surfaces are, and the switch is inside the panel it opens (ADR 0209, ADR 0222).
     let (mut harness, _panel) = chat_fixture("frame-chat-header-cell");
     harness.settle();
-    assert!(!harness.app.chat.open, "the panel starts closed");
+    assert!(!harness.app.assistant_open, "the panel starts closed");
 
     let at = harness.face(&assistant_cell_hint()).unwrap_or_else(|| {
         panic!(
@@ -7408,14 +7538,14 @@ fn the_header_cell_opens_the_assistant_and_the_panel_draws_its_two_modes() {
         )
     });
     harness.click(at, egui::PointerButton::Primary);
-    assert!(harness.app.chat.open, "the header's cell opens the panel");
+    assert!(harness.app.assistant_open, "the header's cell opens the panel");
     assert!(harness.drew(Message::AssistantPlanMode.text(Lang::En)), "the plan segment is drawn: {:?}", harness.drawn);
     assert!(harness.drew(Message::AssistantBuildMode.text(Lang::En)), "the build segment is beside it");
     assert!(harness.drew(Message::AssistantPlanHint.text(Lang::En)), "and the sentence plan means");
 
     // The same cell closes it, so one press is one toggle whichever door asked for it.
     harness.click(at, egui::PointerButton::Primary);
-    assert!(!harness.app.chat.open, "a second press closes the panel");
+    assert!(!harness.app.assistant_open, "a second press closes the panel");
 }
 
 #[test]
@@ -7430,13 +7560,13 @@ fn the_assistant_panel_keeps_the_size_it_opens_at() {
         let (mut harness, _panel) = chat_fixture("frame-chat-size");
         harness.settle();
         harness.app.settings.appearance.language = lang;
-        harness.app.chat.open = true;
-        harness.app.chat.backend = Some(Box::new(mcp::Scripted::new(vec![])));
-        harness.app.chat.conversation.push(
+        harness.app.assistant_open = true;
+        harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![])));
+        harness.app.chat_mut().conversation.push(
             mcp::Speaker::Agent,
             "an answer long enough to wrap over several lines, which is what the transcript is for ".repeat(3),
         );
-        harness.app.chat.input =
+        harness.app.chat_mut().input =
             "a message the person is typing that is longer than the field that holds it ".repeat(3);
         let id = egui::Id::unique("assistant_panel");
         let mut first = None;
@@ -7460,7 +7590,7 @@ fn drive_agent_turn(harness: &mut Harness) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         harness.frame();
-        if !harness.app.chat.is_busy() {
+        if !harness.app.chat_mut().is_busy() {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -7517,7 +7647,7 @@ fn an_agent_process_turn_lands_one_undo_entry_and_the_panel_draws_its_calls() {
     // entry, because a batch that reaches the window inside a turn lands in the turn's scope. The
     // panel draws the calls and the refusal from the protocol's own messages, not from prose.
     let (mut harness, panel) = chat_fixture("frame-acp-turn");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     let folder = testkit::scratch_dir("frame-acp-turn-channel");
     assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
@@ -7569,7 +7699,7 @@ fn an_agent_process_turn_lands_one_undo_entry_and_the_panel_draws_its_calls() {
         peer.answer(&prompt, serde_json::json!({ "stopReason": "end_turn" }));
         let _ = told;
     });
-    harness.app.chat.backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
 
     harness.app.send_chat("rename the side".to_owned(), Lang::En);
     harness.frame();
@@ -7590,12 +7720,12 @@ fn an_agent_process_turn_lands_one_undo_entry_and_the_panel_draws_its_calls() {
     told.send(sentence.clone()).expect("the process hears what the window said");
 
     drive_agent_turn(&mut harness);
-    assert!(!harness.app.chat.is_busy(), "the turn ended with the process's answer");
+    assert!(!harness.app.chat_mut().is_busy(), "the turn ended with the process's answer");
     assert_eq!(seen.complaint(), None, "the process did what it was written to do");
     assert!(seen.method("session/prompt").is_some(), "the message reached the process as one prompt");
 
     let drawn: Vec<(mcp::Speaker, String)> =
-        harness.app.chat.conversation.lines().iter().map(|line| (line.speaker, line.text.clone())).collect();
+        harness.app.chat_mut().conversation.lines().iter().map(|line| (line.speaker, line.text.clone())).collect();
     assert!(
         drawn.contains(&(mcp::Speaker::Tool, "command_batch · node.rename".to_owned())),
         "the panel drew the tool call: {drawn:?}"
@@ -7618,7 +7748,7 @@ fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() 
     // the document, the panel says the process ended, and the history is one entry — a batch is all
     // or nothing in the window, so nothing is ever cut in half (ADR 0187, ADR 0230).
     let (mut harness, panel) = chat_fixture("frame-acp-dies");
-    harness.app.chat.open = true;
+    harness.app.assistant_open = true;
     harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
     let folder = testkit::scratch_dir("frame-acp-dies-channel");
     assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
@@ -7631,7 +7761,7 @@ fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() 
         // The process dies here, with the turn open and the prompt unanswered.
         let _ = asking.send(1);
     });
-    harness.app.chat.backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
 
     harness.app.send_chat("rename the side".to_owned(), Lang::En);
     harness.frame();
@@ -7640,9 +7770,9 @@ fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() 
     assert!(!landed.failed(), "the call landed before the process died: {:?}", landed.body());
 
     drive_agent_turn(&mut harness);
-    assert!(!harness.app.chat.is_busy(), "the turn ended when the process did");
+    assert!(!harness.app.chat_mut().is_busy(), "the turn ended when the process did");
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the document keeps the completed batch");
-    let last = harness.app.chat.conversation.lines().last().expect("the panel said something last");
+    let last = harness.app.chat_mut().conversation.lines().last().expect("the panel said something last");
     assert_eq!(last.speaker, mcp::Speaker::Note, "the ending is the panel's own note: {last:?}");
     assert!(last.text.contains("ended"), "and it says the process ended: {}", last.text);
     assert_eq!(seen.complaint(), None, "the client itself broke nothing");
