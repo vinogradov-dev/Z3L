@@ -292,6 +292,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    stream's own live task answers and `cargo xtask plan` passes; a `state-contract` test covers
    the absent note; `cargo xtask ci` is green.
   `files: state-contract/src/cli/write.rs,state-contract/src/cli/mod.rs,AGENTS.md`
+- `[ ]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
+  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
+   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
+   batch is one operation a person takes back with one undo, so the document moves once and the
+   answer says so. Suspected cause: each landed command bumps the revision on the batch's
+   working copy, and the install keeps the last number, so the count of commands is visible
+   where the count of operations is meant.
+  Shape: Decide that one batch is one revision, install the copy with the original revision
+   plus one, and have the batch answer carry the entries it left beside the revision it moved
+   to; the alternative — documenting that a command writes two changes — leaves the invariant
+   unobservable from outside, which is why the run could not check it.
+  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
+   answer says one entry (one unit test on Session::batch).
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs`
+
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -734,8 +749,60 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
    the progress line; `cargo xtask ci` is green.
   `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs`
+- `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
+  Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
+   entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
+   although the task calls them part of the piece. The class registry names them (20.06 is the
+   hanging rail) and the domain says a fitting is a piece mounted on a part.
+  Shape: The catalogue's starter carries the rows a workshop buys — a leg of a diameter and a
+   height, a rail of a diameter and a length — with the class that makes them fittings, so a
+   build names a row and gets a part in the cut list and a line in the price instead of a solid
+   nobody counts. The acceptance recipe then names them the way it names a board.
+  Done: The recipe's four legs and its rail appear in the parts table and in the order
+   package's price rows, and the prompt no longer says the hardware is drawn simply (one
+   scenario test over the recipe).
+  `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **J29** the chat reads the schema, the scene and the catalogue, so a model builds instead of guessing
+  Why: The panel's model had two tools and no parameter schema: six refusals out of eight
+   answers on a cabinet recipe, each one taking the whole batch back. Its own calls never
+   entered the history either, because this model's content is null and the wire replayed the
+   words alone, so it planned the same build again; and a turn ended only on a reply with no
+   call, so a model that always calls one ran to twelve requests.
+  Shape: The wire offers command_list, query and inspect, answered by mcp::reads::MessageDoor
+   over the same functions the tool server publishes; the conversation keeps one assistant
+   message per answer with its tool_calls and one tool message per answer, tied by the wire's
+   id; a turn ends on an answer that names no call; a repeat of a landed batch is answered
+   instead of run again; query gained materials, the workshop's catalogue. ADR 0232 supersedes
+   J14's ruling.
+  Done: A turn that reads a schema and then dispatches lands its batch, and the history it
+   reads back holds its call and the answer tied by the wire's id (unit test over Scripted);
+   the panel and a foreign client read one command_list answer, byte for byte (unit test over
+   MessageDoor); query materials answers a row per record with the id a command takes and its
+   thickness (engine test).
+  `files: crates/mcp/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/reads.rs,crates/mcp/src/tools.rs,app/src/chat.rs,crates/engine/src/read.rs,crates/engine/src/guide.rs,docs/decisions/0232-the-chat-offers-the-tools-the-door-publishes.md` — `c877192`
+
+- `[x]` **J28** the parameters a caller sends inside a string are parsed instead of refused
+  Why: command_run answered «invalid type: string …, expected struct ObjectCuboidCreate» for
+   params sent as a JSON string: the data was right and only the envelope was wrong, and the
+   sentence named nothing the caller got wrong about the command.
+  Shape: RunRequest::params and StepRequest::params read the string form by parsing it, and
+   leave a string that is not JSON alone so the command still names exactly what it received.
+  Done: A run and a batch step whose params is a JSON string dispatch the value the string
+   encodes, and a string that is not JSON still reaches the command as itself (one unit test).
+  `files: crates/mcp/src/tools.rs` — `c877192`
+
+- `[x]` **J27** the panel draws Stop while the turn runs, so the agent can be stopped
+  Why: A person watching «the agent is working» had no button to stop it: the panel took the
+   shell's gesture for the turn's own state, so a working turn drew Send and a click on it was
+   refused in silence.
+  Shape: Chat::field reads the two facts where each one lives: the turn (Chat::is_busy) decides
+   Send or Stop, and the gesture the shell hands in only postpones the next message.
+  Done: A frame with a turn in flight draws Stop and never Send, and an idle panel draws the
+   opposite (one frame test).
+  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs` — `c877192`
 
 - `[x]` **X127** the model guesses the placement shape and builds one box from nine bodies
   Why: A request for one cube spent the turn's calls on four refusals (`size_um`, missing

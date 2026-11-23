@@ -235,6 +235,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0228](0228-the-tool-server-asks-for-a-picture-it-is-handed.md) | The tool server asks for a picture it is handed | Accepted; states the screenshot channel 0028 left open |
 | [0230](0230-an-agent-process-owns-the-model-loop.md) | An agent process owns the model loop, and the bridge is what it holds | Accepted |
 | [0231](0231-the-list-is-short-rows-and-a-schema-is-read-by-id.md) | The list is short rows, and a schema is read one id at a time | Accepted; amends the `command_list` answer of 0185 and the dictionary clause of 0227 |
+| [0232](0232-the-chat-offers-the-tools-the-door-publishes.md) | The chat offers the tools the door publishes, and the history keeps every call | Accepted; supersedes the no-read-tool ruling of J14, refines 0185, 0189 and 0190 |
 
 ## Format
 
