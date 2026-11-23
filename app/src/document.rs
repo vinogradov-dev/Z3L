@@ -2,9 +2,10 @@
 //!
 //! A document is the whole payload of one tab: the session (project, undo history, dirty marker),
 //! the editor (selection, tools, cards), the evaluation cache and the kernel, the frame evaluated
-//! from them, the split layout and its cameras, the renderer target of this tab and the gizmos that
-//! act on it. Activating another tab swaps this object and nothing else happens — no file is read
-//! or written, so a workspace holds several scenes at once (U45).
+//! from them, the split layout and its cameras, the renderer target of this tab, the gizmos that act
+//! on it and the assistant's conversation for it. Activating another tab swaps this object and
+//! nothing else happens — no file is read or written, so a workspace holds several scenes at once
+//! (U45).
 //!
 //! The split is the one ADR 0029 draws: a document never stores a viewport, a hover highlight or a
 //! window fold. What the *window* decides — the pointer, the armed navigation gesture, the
@@ -42,6 +43,7 @@ use units::Length;
 
 use crate::area_gizmo;
 use crate::box_gizmo::{self, BoxGrips, GripUpdate};
+use crate::chat::Chat;
 use crate::contour_gizmo;
 use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawInput, DrawModifiers};
@@ -431,6 +433,12 @@ pub(crate) struct Document {
     snap_mode: model::SnapMode,
     /// Whether the kinds or the mode changed since the shell last wrote the workspace settings.
     snaps_changed: bool,
+    /// This tab's assistant: the conversation, the backend that answers it and the turn in flight.
+    ///
+    /// It sits in the payload because it is the tab's, not the window's: two open scenes hold two
+    /// conversations, and a turn paused by switching tabs resumes where it stopped when the tab is
+    /// in front again (J24). The panel itself — whether it is up and where it sits — is the shell's.
+    pub(crate) chat: Chat,
 }
 
 /// The workspace's snap choice: what may capture the pointer, and how the answer reads.
@@ -543,6 +551,7 @@ impl Document {
             snaps: settings.snaps.kinds(),
             snap_mode: settings.snaps.mode,
             snaps_changed: false,
+            chat: Chat::new(),
         })
     }
 

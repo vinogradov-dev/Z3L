@@ -21,6 +21,12 @@
 //! scene and closes without touching it. Its one row in `HOST_OWNERS` is the surface it draws
 //! (`xtask/src/ui_rules.rs`).
 //!
+//! One window, one tab: this state belongs to the tab payload (`crate::document::Document`), so two
+//! open scenes hold two conversations, two backends and two turns, and a message sent in one is
+//! never in the other (J24). The window itself is the workspace's — whether it is up, where it sits
+//! and how wide it is come from the shell — so switching tabs changes what the panel *says* and not
+//! whether it is on screen.
+//!
 //! Changes when: the panel's states, its words, its buttons or the turn's presentation change.
 
 use eframe::egui::{self, Context, Id, RichText, Ui};
@@ -82,8 +88,6 @@ pub(crate) enum ChatAction {
 /// The backend is the model's adapter (ADR 0028): `None` is the state the feature is born in — no
 /// endpoint, no request, no network — and the panel says so instead of pretending to think.
 pub(crate) struct Chat {
-    /// Whether the panel is on screen.
-    pub(crate) open: bool,
     /// What the person has typed and not sent.
     pub(crate) input: String,
     /// The conversation, which is chat state and never document data (ADR 0187).
@@ -125,7 +129,6 @@ impl Chat {
     /// A panel with nothing said, nothing typed and no model connected.
     pub(crate) fn new() -> Self {
         Self {
-            open: false,
             input: String::new(),
             conversation: Conversation::new(),
             backend: None,
@@ -274,24 +277,12 @@ impl Chat {
         self.turn.is_some()
     }
 
-    /// Opens the panel, or closes it without touching the turn's document.
-    ///
-    /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
-    /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
-    /// (X106, ADR 0222). Closing keeps the conversation and the mode, which are the tab's.
-    pub(crate) fn toggle(&mut self) {
-        self.open = !self.open;
-    }
-
     /// Re-reads the rules when the document has moved since the last look.
     ///
     /// The pass is a derivation and costs a walk of the tree and a pair of boxes per part, so it runs
     /// once per revision and never per frame. Closing the panel keeps the list, like the
     /// conversation, and reopening on the same revision shows it without a second walk.
     pub(crate) fn refresh_findings(&mut self, session: &Session) {
-        if !self.open {
-            return;
-        }
         let revision = session.project().revision().get();
         if self.findings_revision == Some(revision) {
             return;
@@ -373,19 +364,25 @@ impl Chat {
     /// at the next frame boundary, so Send waits while it lasts. Whether the agent is working is the
     /// panel's own to read ([`Self::is_busy`]) — the Stop button is the turn's state and a shell
     /// flag anywhere else in the signature hid it for the whole life of a turn.
-    pub(crate) fn show(&mut self, ctx: &Context, mode: AgentMode, lang: Lang, held: bool) -> ChatAction {
+    pub(crate) fn show(
+        &mut self,
+        ctx: &Context,
+        open: &mut bool,
+        mode: AgentMode,
+        lang: Lang,
+        held: bool,
+    ) -> ChatAction {
         let mut action = ChatAction::None;
-        let mut open = self.open;
         egui::Window::new(Message::SectionAssistant.text(lang))
             .id(Id::unique("assistant_panel"))
-            .open(&mut open)
+            .open(open)
             .default_size(egui::vec2(WIDTH, HEIGHT))
             .min_width(WIDTH)
             .resizable(true)
             .show(ctx, |ui| {
                 action = self.body(ui, mode, lang, held);
             });
-        if !open {
+        if !*open {
             action = ChatAction::Close;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
