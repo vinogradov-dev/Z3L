@@ -696,6 +696,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **J22** an address that cannot be sent to is named before a message leaves, and the assistant page leads with it
+  Why: The owner pasted a URL into the address that was already in Settings and the only answer
+   was the endpoint's 404; the field accepted it and the panel said "no model" or sent it.
+   Measured: the stored value was two URLs joined (`https://…/openaihttps://…/openai/v1/v1`),
+   the single address answers 401 and the doubled one 404, so the program sent exactly what it
+   held. A beginner has no way to tell a base URL from the completion URL, and the page led
+   with the agent process.
+  Shape: The settings rule names the clause under the field and `endpoint_to_ask` returns none
+   while it stands: one absolute http(s) address, no second scheme, a host, no
+   `/chat/completions`. The Assistant page leads with the address, puts the process under an
+   advanced heading, states what happens next, and widens the modal and its fields so a long
+   URL is visible. The panel repeats the clause instead of the generic "no model" sentence.
+   Provider presets stay out: ADR 0189 forbids a provider name in a type, a match arm or a
+   default, so that is an owner question.
+  Done: A doubled or otherwise unusable address is named in Settings and in the panel and sends
+   nothing; a local and a cloud address still pass; the page is taller and its fields fill the
+   column; a headless frame test sees both sentences; `cargo xtask ci` is green.
+  `files: crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs,app/src/main.rs` — `9576f93`
+
 - `[x]` **J21** an https endpoint panics on the request thread, because ureq defaults to Rustls and nothing selects native-tls
   Why: Filed from the owner's run: `https://opencode.ai/inference/openai/v1` with a model never
    answered, and the panel read "the assistant's request ended without an answer". The log
