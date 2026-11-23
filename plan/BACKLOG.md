@@ -45,19 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
-  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
-   scenario starts from — still builds its standard parts from a raw `panel.create` with a
-   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
-   command replaced.
-  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
-   carries a word a person understands instead of four numbers, and the scenarios keep their
-   numbers because the stance is the same one they hand-wrote.
-  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
-   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
-   finding-free inspection.
-  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs`
-
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -522,6 +509,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
+  Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
+   scenario starts from — still builds its standard parts from a raw `panel.create` with a
+   hand-written quaternion, so the recipe a model reads still teaches the shape the typed
+   command replaced.
+  Shape: Each standard part in the recipe names its type and its base corner, so the recipe
+   carries a word a person understands instead of four numbers, and the scenarios keep their
+   numbers because the stance is the same one they hand-wrote.
+  Done: The recipe's shelf, post and wall parts are dispatched as `panel.create.standard`, and
+   `app/tests/scenarios.rs` still asserts the same sizes, the same world boxes and the same
+   finding-free inspection.
+  `files: app/tests/recipes/wardrobe-800x460x2200.jsonl,app/tests/scenarios.rs` — `f70556f`
 
 - `[x]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
   Why: Observed: a body handed to held three entries, and the write replaced five hundred lines

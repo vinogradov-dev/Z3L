@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X132 state=doing base=eacb414 updated=2026-11-24
+STATE: milestone=M7 phase=T task=- state=idle base=f70556f updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -56,7 +56,7 @@ started from plus one (X128, ADR 0234).
 
 ## Next
 
-X132 is next: the wardrobe recipe names its parts instead of placing them by hand.
+Nothing is scheduled: 20 open tasks wait in `## Next`.
 
 ## Index
 
