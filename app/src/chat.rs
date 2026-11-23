@@ -19,7 +19,9 @@
 //!
 //! It is a `Window`, like Settings and Home: the panel is not a document surface, it opens over the
 //! scene and closes without touching it. Its one row in `HOST_OWNERS` is the surface it draws
-//! (`xtask/src/ui_rules.rs`).
+//! (`xtask/src/ui_rules.rs`). The height is the person's: the rows under the conversation take what
+//! they need from the bottom, and the transcript fills what is left, so a taller window reads more
+//! of a long answer and a short one keeps the room those rows ask for (X131).
 //!
 //! One window, one tab: this state belongs to the tab payload (`crate::document::Document`), so two
 //! open scenes hold two conversations, two backends and two turns, and a message sent in one is
@@ -37,11 +39,11 @@ use ui::settings::EndpointProblem;
 use ui::theme;
 
 /// The width and height the panel opens at, in points.
+///
+/// The height is only where the window opens: the transcript takes whatever the person drags the
+/// window to, and the window never shrinks below the rows it draws beneath it (X131).
 const WIDTH: f32 = 420.0;
 const HEIGHT: f32 = 520.0;
-
-/// The height of the transcript above the field, in points.
-const TRANSCRIPT_HEIGHT: f32 = 300.0;
 
 /// The findings a panel lists before it says how many are left.
 ///
@@ -405,17 +407,32 @@ impl Chat {
         action
     }
 
-    /// The panel's inside: the mode switch, the transcript, the checklist and the field.
+    /// The panel's inside: the switch, the transcript, the findings, the checklist and the field.
+    ///
+    /// The rows under the conversation are laid out from the bottom as one panel, so the transcript
+    /// gets exactly the height that is left: the window's height is the person's, and a taller
+    /// window shows a taller transcript instead of blank space under the field (X131). Drawing the
+    /// transcript first with a fixed cap is what pinned the window's height to its content in both
+    /// directions, so a drag inward hit the cap and a drag outward ran off the screen.
     fn body(&mut self, ui: &mut Ui, mode: AgentMode, lang: Lang, held: bool) -> ChatAction {
         let mut action = ChatAction::None;
         self.mode_switch(ui, mode, lang, &mut action);
         ui.add_space(theme::STEP);
         ui.separator();
+        egui::Panel::bottom("assistant_footer")
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .show(ui, |ui| self.footer(ui, lang, held, &mut action));
         egui::ScrollArea::vertical()
-            .max_height(TRANSCRIPT_HEIGHT)
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .show(ui, |ui| self.transcript(ui, lang));
+        action
+    }
+
+    /// Everything under the conversation: the rules' findings, the model's checklist, what the turn
+    /// is doing and the one field with its button.
+    fn footer(&mut self, ui: &mut Ui, lang: Lang, held: bool, action: &mut ChatAction) {
         self.findings_section(ui, lang);
         if !self.checklist.is_empty() {
             ui.separator();
@@ -450,10 +467,9 @@ impl Chat {
             ui.label(RichText::new(words).color(ink));
         }
         if let Some(endpoint) = self.consent_pending() {
-            self.consent_card(ui, endpoint, lang, &mut action);
+            self.consent_card(ui, endpoint, lang, action);
         }
-        self.field(ui, lang, held, &mut action);
-        action
+        self.field(ui, lang, held, action);
     }
 
     /// The one question a message to a new endpoint asks, in the panel the person is already reading.
@@ -603,8 +619,9 @@ impl Chat {
                             .clicked()
                             .then_some(ChatAction::Send)
                     };
-                    // The copy sits beside Send, not on a row of its own: the panel keeps the height
-                    // it opened at, and a short label leaves the field wide in both languages.
+                    // The copy sits beside Send, not on a row of its own: a second row would be
+                    // height the transcript cannot have, and a short label leaves the field wide in
+                    // both languages.
                     let copy = ui.add_enabled(
                         !self.conversation.is_empty(),
                         egui::Button::new(Message::AssistantCopy.text(lang)),

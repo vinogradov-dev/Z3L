@@ -7814,6 +7814,62 @@ fn the_assistant_panel_keeps_the_size_it_opens_at() {
     }
 }
 
+#[test]
+fn the_assistant_window_takes_the_height_a_drag_gives_it() {
+    // X131: the transcript stopped at TRANSCRIPT_HEIGHT whatever the window did, and the window
+    // follows its content, so the bottom edge could move neither way — inward it hit the transcript
+    // cap, outward it ran off the screen. A long answer stayed cut off. The transcript now takes the
+    // height the window has left, so the drag is the person's and the answer follows it.
+    let (mut harness, _panel) = chat_fixture("frame-chat-resize");
+    harness.settle();
+    harness.app.assistant_open = true;
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![])));
+    for n in 0..14 {
+        harness.app.chat_mut().conversation.push(mcp::Speaker::Agent, format!("line {n} of the answer"));
+    }
+    harness.settle();
+    let id = egui::Id::unique("assistant_panel");
+    let last_line = |harness: &Harness| {
+        harness
+            .drawn_rects
+            .iter()
+            .find(|(_, text)| text.contains("line 13 of the answer"))
+            .map(|(rect, _)| *rect)
+            .expect("the answer's last line is drawn")
+    };
+    let opened = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let opened_line = last_line(&harness);
+
+    // Pull the bottom edge up: the window shrinks and the transcript with it.
+    let bottom = egui::pos2(opened.center().x, opened.bottom() - 2.0);
+    harness.drag(bottom, egui::vec2(0.0, -100.0), egui::PointerButton::Primary);
+    let shrunk = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let shrunk_line = last_line(&harness);
+    assert!(
+        shrunk.height() < opened.height() - 80.0,
+        "the window shrinks with the drag: opened {opened:?}, shrunk {shrunk:?}"
+    );
+    assert!(
+        shrunk_line.top() < opened_line.top() - 80.0,
+        "the transcript shrinks with it: opened {opened_line:?}, shrunk {shrunk_line:?}"
+    );
+
+    // And push it back down: the window grows and the transcript takes the height it gained.
+    let bottom = egui::pos2(shrunk.center().x, shrunk.bottom() - 2.0);
+    harness.drag(bottom, egui::vec2(0.0, 100.0), egui::PointerButton::Primary);
+    let grown = harness.ctx.memory(|m| m.area_rect(id)).expect("the panel drew");
+    let grown_line = last_line(&harness);
+    assert!(
+        grown.height() > shrunk.height() + 80.0,
+        "the window grows with the drag: shrunk {shrunk:?}, grown {grown:?}"
+    );
+    assert_eq!(grown.width(), opened.width(), "the width stays as it was");
+    assert!(
+        grown_line.top() > shrunk_line.top() + 80.0,
+        "the transcript takes the height it gained: shrunk {shrunk_line:?}, grown {grown_line:?}"
+    );
+}
+
 /// Drives frames until the panel's turn is over, with the real time a process needs to answer.
 ///
 /// A scripted agent is a thread on the other end of two pipes, so a loop that ran as fast as it
