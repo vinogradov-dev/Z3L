@@ -1617,6 +1617,7 @@ messages! {
     CmdRemoveMachining = ["Remove machining", "Удалить обработку"],
     CmdMoveMachining = ["Move machining", "Переместить обработку"],
     CmdCreatePanel = ["Create panel", "Создать панель"],
+    CmdCreateStandardPanel = ["Create standard panel", "Создать типовую панель"],
     CmdFillNiche = ["Fill a niche", "Заполнить нишу"],
     CmdCreateContourPanel = ["Create contour panel", "Создать панель по контуру"],
     CmdSetPanelOutline = ["Set panel outline", "Задать контур панели"],

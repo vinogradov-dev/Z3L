@@ -12,7 +12,7 @@ use serde::Serialize;
 mod camera_light_cmds;
 mod contact_shape;
 mod error;
-mod fill;
+pub(crate) mod fill;
 #[cfg(test)]
 mod frame_contract;
 mod move_query;

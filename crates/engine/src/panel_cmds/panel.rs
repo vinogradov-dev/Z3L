@@ -16,9 +16,10 @@
 
 use catalog::Directory;
 use geom::Contact;
+use geom::DVec3;
 use model::{
     ClassCode, Contour, EdgeBevel, EdgeRef, Id, ItemId, Level, Operation, Panel, PanelNominalSize, PanelOutline,
-    Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
+    PanelType, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -458,6 +459,99 @@ fn create_enabled(session: &Session, params: &Value) -> bool {
         && session.directory().board(params.material).is_some()
 }
 
+/// Stable id of the typed panel creation command.
+pub const CREATE_STANDARD_ID: &str = "panel.create.standard";
+
+/// User-facing label of the typed panel creation command.
+pub const CREATE_STANDARD_LABEL: Message = Message::CmdCreateStandardPanel;
+
+/// The typed panel creation command's parameters: a maker's word instead of a quaternion.
+///
+/// A panel's local frame is the same for every type — `X` is the length, `Y` the width and `Z` the
+/// thickness, which the material carries — so the caller names the type and the base corner and the
+/// command answers the rotation (X117). A type is a class and a stance, not a second kind of part:
+/// anything else is drawn by the contour and points commands.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelCreateStandard {
+    /// Id of the container that receives the panel.
+    pub parent: Id,
+    /// User-visible panel name; it must contain a non-whitespace character.
+    pub name: String,
+    /// Panel-body material from the session catalogue; its record carries the thickness.
+    pub material: ItemId,
+    /// The type: `shelf`, `post` or `wall`, which fixes the part's frame and its class.
+    #[serde(rename = "type")]
+    pub kind: PanelType,
+    /// Where the panel's own zero corner stands: the base corner nearest the product's origin, in
+    /// the parent's frame, millimetres.
+    pub at: [f64; 3],
+    /// Length: the panel's own `X`, in the type's frame.
+    pub length: Length,
+    /// Width: the panel's own `Y`, in the type's frame.
+    pub width: Length,
+}
+
+impl PanelCreateStandard {
+    fn parse(params: &Value) -> Result<Self, CommandError> {
+        serde_json::from_value(params.clone())
+            .map_err(|error| CommandError::InvalidParams { command: CREATE_STANDARD_ID, message: error.to_string() })
+    }
+
+    /// The request `panel.create` would take for this panel, so the two store a board one way.
+    fn into_create(self) -> Result<PanelCreate, CommandError> {
+        let class = self.kind.class().ok_or_else(|| CommandError::InvalidParams {
+            command: CREATE_STANDARD_ID,
+            message: format!("the class registry does not carry the code of a {}", self.kind.word()),
+        })?;
+        let nominal_size = PanelNominalSize::new(self.length, self.width)
+            .map_err(|error| CommandError::InvalidParams { command: CREATE_STANDARD_ID, message: error.to_string() })?;
+        let placement = Placement::new(DVec3::from_array(self.at), self.kind.rotation())
+            .map_err(|error| CommandError::InvalidParams { command: CREATE_STANDARD_ID, message: error.to_string() })?;
+        Ok(PanelCreate {
+            parent: self.parent,
+            name: self.name,
+            nominal_size,
+            material: self.material,
+            placement,
+            class: Some(class),
+            outline: None,
+            bevels: Vec::new(),
+        })
+    }
+}
+
+/// The `panel.create.standard` command.
+pub(crate) const CREATE_STANDARD: CommandSpec = CommandSpec::new::<PanelCreateStandard>(
+    CREATE_STANDARD_ID,
+    CREATE_STANDARD_LABEL,
+    create_standard_enabled,
+    create_standard_run,
+)
+.creating(Creation::new(Level::Part));
+
+/// Whether the typed create may run: the same conditions as `panel.create`.
+fn create_standard_enabled(session: &Session, params: &Value) -> bool {
+    PanelCreateStandard::parse(params).is_ok_and(|params| {
+        !params.name.trim().is_empty()
+            && session.project().is_container(params.parent)
+            && allow_creation(session.project(), params.parent, session.active_product()).is_ok()
+            && session.directory().board(params.material).is_some()
+    })
+}
+
+/// Creates one typed panel.
+fn create_standard_run(
+    project: &mut Project,
+    catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let create = PanelCreateStandard::parse(params)?.into_create()?;
+    let id = create_panel(project, catalog, create)?;
+    Ok(CommandOutcome::created(id))
+}
+
 fn create_run(
     project: &mut Project,
     catalog: &Directory,
@@ -754,6 +848,49 @@ mod tests {
             panel: panel_id(),
             source: EdgeRef::Rect { edge: RectEdge::Bottom.id() },
             angle: Degrees::from_millidegrees(angle),
+        }
+    }
+
+    #[test]
+    fn a_typed_panel_is_born_on_its_base_corner_and_never_turned_upside_down() {
+        // X117: the maker names a type and a base corner instead of a quaternion, so a build cannot
+        // hang a board's origin above its geometry. Every type keeps its local zero corner at `at`
+        // and its lowest point on that corner's height.
+        for kind in PanelType::ALL {
+            let (project, product) = testkit::sample_product_project();
+            let mut session = Session::with_directory(project, sample_catalog());
+            assert!(session.open_product(product), "the sample product opens");
+            let request = PanelCreateStandard {
+                parent: product,
+                name: format!("{} panel", kind.word()),
+                material: ItemId::new(1, 1).expect("the sample board"),
+                kind,
+                at: [100.0, 200.0, 300.0],
+                length: Length::from_millimetres(600).expect("a length"),
+                width: Length::from_millimetres(400).expect("a width"),
+            };
+            let asked = params(&request);
+            let spec = CommandRegistry::new().get(CREATE_STANDARD_ID).expect("registered");
+            assert!(spec.enabled(&session, &asked), "{} is offered", kind.word());
+
+            let created = session
+                .dispatch(CREATE_STANDARD_ID, &asked)
+                .expect("the typed create runs")
+                .created_id()
+                .expect("a panel id");
+            let placement = session.project().world_placement(created).expect("a placement");
+            assert!(
+                (placement.translation() - DVec3::new(100.0, 200.0, 300.0)).length() < 1.0e-9,
+                "{} puts its zero corner at the point: {placement:?}",
+                kind.word()
+            );
+            let size = session.project().panel(created).expect("a panel").nominal_size();
+            assert_eq!(size.length(), Length::from_millimetres(600).expect("a length"), "{}", kind.word());
+            assert_eq!(size.width(), Length::from_millimetres(400).expect("a width"), "{}", kind.word());
+            let born = session.project().class(created);
+            assert_eq!(born, kind.class(), "{} is born classified as its type", kind.word());
+            let boxed = session.project().world_box(created).expect("a box");
+            assert!((boxed.0.z - 300.0).abs() < 1.0e-9, "{} stands on its base corner: {boxed:?}", kind.word());
         }
     }
 

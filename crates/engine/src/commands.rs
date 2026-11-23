@@ -246,6 +246,7 @@ fn annotate_units(value: &mut Value) {
 /// The commands compiled into this build.
 static COMMANDS: &[CommandSpec] = &[
     panel_cmds::CREATE,
+    panel_cmds::CREATE_STANDARD,
     panel_cmds::FILL,
     panel_cmds::CONTOUR_CREATE,
     panel_cmds::OUTLINE_SET,
@@ -662,7 +663,10 @@ mod tests {
         let fill = registry.get("panel.fill").expect("panel.fill is registered");
         assert_eq!(fill.label().text(Lang::En), "Fill a niche");
         assert_eq!(fill.creation_word(), Some("part"));
-        assert_eq!(registry.specs().len(), 66);
+        // A typed create names the maker's word instead of a quaternion (X117).
+        let typed = registry.get("panel.create.standard").expect("panel.create.standard is registered");
+        assert_eq!(typed.label().text(Lang::En), "Create standard panel");
+        assert_eq!(registry.specs().len(), 67);
     }
 
     #[test]
