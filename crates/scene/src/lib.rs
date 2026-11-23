@@ -44,7 +44,7 @@ pub mod ray;
 pub use band::{BandCoverage, NdcRect};
 pub use camera::{
     Camera, CameraError, DEFAULT_FOV_Y, MAX_DISTANCE_MM, MAX_PITCH, MIN_DISTANCE_MM, MIN_PITCH, POLE_TOLERANCE,
-    Projection, canonical_up,
+    Projection, ProjectionToggle, canonical_up,
 };
 pub use decor::{Decor, DecorError, DecorId, DecorImage, MAX_DECOR_SIDE, Turns};
 pub use ray::{LINE_PICK_RADIUS_POINTS, Ray, ray_segment, ray_triangle};
@@ -1464,7 +1464,7 @@ mod tests {
         assert!((camera.roll() - 0.8).abs() < 1.0e-12, "pan keeps the roll");
         camera.zoom(1.1);
         assert!((camera.roll() - 0.8).abs() < 1.0e-12, "zoom keeps the roll");
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept(), "a default view has a distance for its height");
         assert!((camera.roll() - 0.8).abs() < 1.0e-12, "the projection toggle keeps the roll");
 
         camera.look_from(DVec3::new(0.3, 0.4, 0.5));
@@ -1540,7 +1540,7 @@ mod tests {
     fn toggling_the_projection_keeps_the_visible_height() {
         let mut camera = Camera::default();
         let perspective = camera;
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept());
         let Projection::Orthographic { height } = camera.projection() else {
             panic!("a perspective view becomes orthographic");
         };
@@ -1551,7 +1551,7 @@ mod tests {
         assert_eq!(camera.pitch(), perspective.pitch());
         assert_eq!(camera.distance(), perspective.distance());
 
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept());
         assert!(matches!(camera.projection(), Projection::Perspective { .. }));
         assert!((camera.distance() - perspective.distance()).abs() < 1.0e-9, "the frame comes back");
         assert_eq!(camera.target(), perspective.target());
@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn zooming_an_orthographic_view_scales_the_visible_height() {
         let mut camera = Camera::default();
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept());
         let Projection::Orthographic { height } = camera.projection() else {
             panic!("the view is orthographic");
         };
@@ -1609,8 +1609,8 @@ mod tests {
         };
         assert!((zoomed - height * 0.5).abs() < 1.0e-9, "zooming in halves the visible height");
 
-        camera.toggle_projection();
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept());
+        assert!(camera.toggle_projection().kept());
         let Projection::Orthographic { height: returned } = camera.projection() else {
             panic!("the round trip returns an orthographic view");
         };
@@ -1623,9 +1623,86 @@ mod tests {
             .looked_from(DVec3::new(0.0, 0.0, 100.0), DVec3::X, DVec3::Y, -DVec3::Z)
             .with_projection(Projection::Orthographic { height: 500.0 });
         let mut camera = authored;
-        camera.toggle_projection();
+        assert_eq!(camera.toggle_projection(), ProjectionToggle::Pinned, "a pinned camera is not switched");
         camera.zoom(4.0);
         assert_eq!(camera, authored, "a pinned camera is not view state the viewport may change");
+    }
+
+    #[test]
+    fn a_projection_switch_keeps_the_height_or_moves_nothing() {
+        // X120: the switch promised the height at the target and clamped the distance instead, so a
+        // large orthographic view landed a kilometre from its model without a word. Every height is
+        // either shown at the same size or refused with the reason; no switch leaves the camera on a
+        // limit it did not ask for.
+        let heights = [
+            8.3,
+            2_000.0,
+            828_427.0,
+            MIN_DISTANCE_MM / (DEFAULT_FOV_Y * 0.5).tan(),
+            MAX_DISTANCE_MM * 2.0 * (DEFAULT_FOV_Y * 0.5).tan(),
+            2_200_000.0,
+            5.0,
+            1.0e9,
+        ];
+        for height in heights {
+            let mut camera = Camera::default().with_projection(Projection::Orthographic { height });
+            assert!(camera.projection().is_valid(), "the height {height} is a view a camera can hold");
+            let before = camera;
+            let outcome = camera.toggle_projection();
+            if outcome.kept() {
+                assert!(matches!(camera.projection(), Projection::Perspective { .. }), "{height} switched");
+                assert!(
+                    ((camera.visible_height() - height) / height).abs() < 1.0e-9,
+                    "the frame at the target is the one the view had: {} against {height}",
+                    camera.visible_height()
+                );
+                assert_ne!(camera.distance(), MIN_DISTANCE_MM, "a switched view is not clamped short");
+                assert!(
+                    camera.distance() > MIN_DISTANCE_MM && camera.distance() <= MAX_DISTANCE_MM,
+                    "and stands inside the distances the camera supports: {}",
+                    camera.distance()
+                );
+            } else {
+                assert_eq!(outcome, ProjectionToggle::NoDistance { height }, "the reason names the height");
+                assert_eq!(camera, before, "a switch with no distance to stand at moves nothing");
+            }
+        }
+    }
+
+    #[test]
+    fn a_view_wound_out_to_the_distance_cap_still_switches() {
+        // The app reaches the widest frame it can hold by zooming out until `zoom` stops at the cap,
+        // so the height is a multiplication away from the distance that shows it. The round trip is
+        // off by a rounding step, and a view that sat at the cap must still switch (X120).
+        let mut camera = Camera::default();
+        assert!(camera.toggle_projection().kept());
+        camera.zoom(1.0e12);
+        assert_eq!(camera.distance(), MAX_DISTANCE_MM, "the wheel stops at the cap");
+        let height = camera.visible_height();
+
+        assert!(camera.toggle_projection().kept(), "a view at the cap has a distance to stand at");
+        assert!(matches!(camera.projection(), Projection::Perspective { .. }));
+        assert!(
+            ((camera.visible_height() - height) / height).abs() < 1.0e-9,
+            "and keeps the frame it had: {} against {height}",
+            camera.visible_height()
+        );
+    }
+
+    #[test]
+    fn the_visible_height_is_the_same_number_in_both_projections() {
+        let mut camera = Camera::default();
+        camera.orbit(0.4, -0.2);
+        camera.zoom(1.7);
+        let perspective = camera.visible_height();
+        assert!((perspective - 2.0 * camera.distance() * (DEFAULT_FOV_Y * 0.5).tan()).abs() < 1.0e-9);
+
+        camera.set_orthographic();
+        assert!((camera.visible_height() - perspective).abs() < 1.0e-9, "the switch keeps the height it names");
+        let Projection::Orthographic { height } = camera.projection() else {
+            panic!("the view is orthographic");
+        };
+        assert!((height - perspective).abs() < 1.0e-9, "and the projection holds that same number");
     }
 
     #[test]

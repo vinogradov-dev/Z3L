@@ -109,6 +109,10 @@ messages! {
         "The view was fitted to the scene · F frames it again and leaves it to you",
         "Вид подогнан под сцену · F подгоняет снова, и дальше он ваш"
     ],
+    StatusRefitted = [
+        "Perspective cannot show a view this wide · the view was fitted to the scene",
+        "Перспектива не покажет такой широкий вид · вид подогнан под сцену"
+    ],
     StatusScale = ["{} %", "{} %"],
     UnlockHint = [
         "Unlock it in the scene tree to move or delete it",
