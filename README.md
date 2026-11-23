@@ -63,4 +63,5 @@ document allowed, so a defect report is the file and one sentence about the gest
 
 ## License
 
-Apache-2.0: [`LICENSE-APACHE`](LICENSE-APACHE). Copyright 2026 the Z3L authors.
+Apache-2.0 — [`LICENSE`](LICENSE); the attribution notices are in [`NOTICE`](NOTICE).
+Copyright 2026 Alexander Grigoryevich Vinogradov.
