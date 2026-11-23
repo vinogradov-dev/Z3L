@@ -118,60 +118,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    model reaches its family's wire; the person never types a header; the key is not in
    settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
   `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
-
-## Bugs
-- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
-  Why: Measured 2026-11-21: the workshop directory this machine reads
-   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
-   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
-   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
-   mm, and neither exists in either place, so a recipe that names them can only run against the
-   fixture in `app/tests/recipes/catalogue/`.
-  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
-   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
-   starter package the build reads, so a recipe names a row a fresh machine has too.
-  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
-   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
-   against the default directory rather than a fixture copy.
-  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
-- `[ ]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
-  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
-   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
-   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
-   states in its own module comment ("the only place where placement coordinates meet
-   floating-point millimetres"). The published schema shows `format: double` for the
-   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
-   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
-   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
-   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
-   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
-   numbers back as given.
-  Shape: The unit travels with the value, decided once for every command that takes a
-   placement: either the translation enters the surface as `Length` like every other length and
-   the model converts at its own float boundary (where the module already says the conversion
-   belongs), or the schema states millimetres in the field description and the answer echoes
-   the placement it stored, in the unit the caller sent. Not both, and not silence.
-  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
-   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
-   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
-   authored through the surface and read back agrees on every coordinate.
-  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs`
-- `[ ]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
-  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
-   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
-   answered an empty list for every one of them. docs/domain/products.md §2 promises the
-   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
-   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
-   materials, the core and machining only, so the one check that would have caught a whole
-   build being wrong said nothing, and the mistake survived a full build, a cut list and a
-   hand-written overlap check.
-  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
-   product envelope is one issue naming the node and the axis it leaves by, in the same answer
-   that lists the panel problems; a part flush with a face and a part a millimetre past it are
-   different sentences, and a part inside reports nothing.
-  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
-   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
-  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md`
 - `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
   Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
    угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
@@ -274,20 +220,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
    no turn in flight, which still draws Send.
   `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
-- `[ ]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
-  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
-   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
-   batch is one operation a person takes back with one undo, so the document moves once and the
-   answer says so. Suspected cause: each landed command bumps the revision on the batch's
-   working copy, and the install keeps the last number, so the count of commands is visible
-   where the count of operations is meant.
-  Shape: Decide that one batch is one revision, install the copy with the original revision
-   plus one, and have the batch answer carry the entries it left beside the revision it moved
-   to; the alternative — documenting that a command writes two changes — leaves the invariant
-   unobservable from outside, which is why the run could not check it.
-  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
-   answer says one entry (one unit test on Session::batch).
-  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs`
 - `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
   Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
    of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
@@ -301,6 +233,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A body that omits an entry the file already holds is refused with that entry's opening
    words, and a body that adds one is written (one unit test over ).
   `files: state-contract/src/cli/write.rs,plan/debt.md`
+
+## Bugs
+- `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
+  Why: Measured 2026-11-21: the workshop directory this machine reads
+   (`~/.config/z3l/nomenclature`) holds two records - `1-1` "Graphite oak" at 25 mm and `1-101`
+   "PVC edge" at 2 mm - and the starter rows the tests build hold 18 mm boards with 2 mm edges
+   only. The wardrobe the owner asked for needs an 18 mm white board and an edge of 0.5 or 1
+   mm, and neither exists in either place, so a recipe that names them can only run against the
+   fixture in `app/tests/recipes/catalogue/`.
+  Shape: The rows a workshop starts from carry the boards and the edges a carcass is actually
+   made of: an 18 mm melamine board and a 0.5 and a 1 mm edge beside the 2 mm one, in the
+   starter package the build reads, so a recipe names a row a fresh machine has too.
+  Done: A test asserts the default directory answers an 18 mm board and a 0.5 mm and a 1 mm
+   banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
+   against the default directory rather than a fixture copy.
+  `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -717,6 +665,61 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
+  Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
+   the revision from 8 to 53, and the answer does not say how many edits it made. Expected: a
+   batch is one operation a person takes back with one undo, so the document moves once and the
+   answer says so. Suspected cause: each landed command bumps the revision on the batch's
+   working copy, and the install keeps the last number, so the count of commands is visible
+   where the count of operations is meant.
+  Shape: Decide that one batch is one revision, install the copy with the original revision
+   plus one, and have the batch answer carry the entries it left beside the revision it moved
+   to; the alternative — documenting that a command writes two changes — leaves the invariant
+   unobservable from outside, which is why the run could not check it.
+  Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
+   answer says one entry (one unit test on Session::batch).
+  `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs` — `8853fbb`
+
+- `[x]` **X116** a part kilometres outside its product is not a diagnostic, though the domain says it is
+  Why: Measured 2026-11-21: 14 panels placed a thousand times away from where they belonged -
+   translations up to 2 182 000 against a 800 x 460 x 2200 envelope - and `query diagnostics`
+   answered an empty list for every one of them. docs/domain/products.md §2 promises the
+   opposite: "A child may poke out. It is a diagnostic - «деталь выходит за габарит изделия» -
+   not a silent resize and not a rejected edit". `crates/engine/src/diagnostics.rs` checks
+   materials, the core and machining only, so the one check that would have caught a whole
+   build being wrong said nothing, and the mistake survived a full build, a cut list and a
+   hand-written overlap check.
+  Shape: The diagnostic the domain already names: a child whose derived bounds lie outside its
+   product envelope is one issue naming the node and the axis it leaves by, in the same answer
+   that lists the panel problems; a part flush with a face and a part a millimetre past it are
+   different sentences, and a part inside reports nothing.
+  Done: A test puts a panel outside the envelope and asserts the issue names the node; a test
+   asserts a part inside reports nothing; the wardrobe fixture reports nothing on all 14 parts.
+  `files: crates/engine/src/diagnostics.rs,crates/model/src/project/query.rs,docs/domain/products.md` — `63c1852`
+
+- `[x]` **X115** a placement is millimetres while the sizes beside it are micrometres, and nothing on the surface says which is which
+  Why: Measured 2026-11-21: one command takes two unit systems and says so nowhere.
+   `panel.create` carries `nominal_size` as `Length` - integer micrometres - and
+   `placement.translation` as floating-point millimetres, which `crates/model/src/placement.rs`
+   states in its own module comment ("the only place where placement coordinates meet
+   floating-point millimetres"). The published schema shows `format: double` for the
+   translation and says no unit, while `Length` next to it says micrometres, and AGENTS.md §4.3
+   says every physical size is a `Length`. A caller that reads the rules writes micrometres in
+   both and gets a wardrobe a thousand times its size: measured, a 2200 mm wardrobe built with
+   micrometre translations spanned 2 200 000 mm, no query complained, and the render asked for
+   a 3 585 601 mm camera distance. The mistake is invisible in the answer, which echoes the
+   numbers back as given.
+  Shape: The unit travels with the value, decided once for every command that takes a
+   placement: either the translation enters the surface as `Length` like every other length and
+   the model converts at its own float boundary (where the module already says the conversion
+   belongs), or the schema states millimetres in the field description and the answer echoes
+   the placement it stored, in the unit the caller sent. Not both, and not silence.
+  Done: A test dispatches a panel with its translation as `Length` and asserts the panel sits
+   at the millimetres the caller meant; a test asserts the schema of every length-shaped field
+   of `panel.create`, `node.placement.set` and `product.create` states its unit; a document
+   authored through the surface and read back agrees on every coordinate.
+  `files: crates/model/src/placement.rs,crates/engine/src/panel_cmds,crates/mcp/src/tools.rs` — `861f1d8`
 
 - `[x]` **X130** the assistant's no-key test reads the developer's own environment, so the gate fails on a machine that is configured
   Why: Measured 2026-11-23 in this checkout: `cargo xtask ci` fails at test in an ordinary

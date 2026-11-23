@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=df2f3d2 updated=2026-11-23
+STATE: milestone=M7 phase=T task=X117 state=idle base=8853fbb updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -49,9 +49,14 @@ A drawing becomes bodies in one press, one per ring, in one revision (X100, ADR 
 render is our own path tracer, and every drawable carries the `Surface` that `render.final` fills
 from the render's settings (Y2, ADR 0213).
 
+A batch is one operation in every number a caller reads: one undo entry, one revision and one
+`entries` in the answer, because the copy the steps ran on is installed with the revision the
+batch started from plus one (X128, ADR 0234).
+
 ## Next
 
-Nothing is scheduled: 32 open tasks wait in `## Next`.
+X117 is next: a panel placed by a command can hang its origin above its own geometry, and the anchor
+rule lives only in the fill tool
 
 ## Index
 
