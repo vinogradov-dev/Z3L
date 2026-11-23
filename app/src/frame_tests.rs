@@ -25,6 +25,8 @@ use ui::{DrawIntent, DrawTool, FieldParam, MeasureStage, TransformMode};
 use units::Length;
 
 use super::*;
+use crate::document::WHEEL_NOTCH_POINTS;
+use crate::scene_build::home_camera;
 
 /// The window a headless frame is drawn into: the default launch size (M2).
 fn screen() -> egui::Rect {
@@ -1945,6 +1947,66 @@ fn a_carried_piece_keeps_the_hand_through_a_long_move_and_a_zoom() {
     assert!(
         (harness.app.tabs.active().carried_delta() - before).length() > 1.0,
         "after the zoom the mouse carries the piece again from the hand"
+    );
+}
+
+/// The wheel event a mouse sends: one notch is [`WHEEL_NOTCH_POINTS`] points.
+fn wheel(points: f32) -> egui::Event {
+    egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, points),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    }
+}
+
+#[test]
+fn the_wheel_brings_a_camera_left_a_kilometre_back_to_the_model() {
+    // X120, the owner's report: from a kilometre the wheel moved the camera by a share of a
+    // kilometre — a millimetre on screen — so coming back to a wardrobe took thirty notches and read
+    // as movement by micrometres. The step now takes a share of the gap to the scene's own frame.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-wheel-far", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    // The pointer sits on the model, which is the middle of the view and where the anchor of a zoom
+    // under it is: the wheel keeps what is under the pointer, so a pointer beside the model would
+    // rightly carry the view after itself.
+    harness.hover(harness.node_point(panel));
+
+    // Wind out to the distance cap: a kilometre from a two metre board, which is where the report
+    // left the camera.
+    harness.run(vec![wheel(-(WHEEL_NOTCH_POINTS as f32) * 25.0)]);
+    harness.settle();
+    let far = harness.camera();
+    assert!(
+        (far.distance() - scene::MAX_DISTANCE_MM).abs() < 1.0e-6,
+        "the wheel stops at the cap, a kilometre out: {}",
+        far.distance()
+    );
+
+    let fit = home_camera(harness.app.tabs.active().scene_bounds()).expect("the scene fits a camera");
+    let mut notches = 0;
+    while notches < 20 && harness.camera().visible_height() > fit.visible_height() * 1.05 {
+        harness.run(vec![wheel(WHEEL_NOTCH_POINTS as f32)]);
+        // One event is one notch, and `egui` spreads it over the frames after it: the test delivers
+        // a whole notch before it counts one.
+        for _ in 0..12 {
+            harness.frame();
+        }
+        notches += 1;
+    }
+    // The gap from the cap to the scene's own frame is `ln(828427 / 3125)` — 5.6 — and a notch takes
+    // half of what is left, so six notches close it and the seventh is the frame the first event
+    // lands on. Thirty notches were the old answer and are the defect the report names.
+    assert!(notches <= 8, "the model comes back in a handful of notches, not {notches}");
+    assert!(
+        harness.camera().visible_height() <= fit.visible_height() * 1.05,
+        "and it fills the frame: {} against {}",
+        harness.camera().visible_height(),
+        fit.visible_height()
     );
 }
 

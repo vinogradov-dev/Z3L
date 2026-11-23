@@ -384,7 +384,9 @@ impl Leaf {
         match projection {
             scene::Projection::Perspective { .. } => {
                 if matches!(self.camera.projection(), scene::Projection::Orthographic { .. }) {
-                    self.camera.toggle_projection();
+                    // The fit camera stands at a distance the camera supports, so the switch to
+                    // perspective always has the distance the height needs.
+                    let _ = self.camera.toggle_projection();
                 }
             }
             scene::Projection::Orthographic { .. } => self.camera.set_orthographic(),
@@ -452,8 +454,17 @@ impl Leaf {
     }
 
     /// Switches the projection, which is not a change of direction.
-    pub(crate) fn toggle_projection(&mut self) {
-        self.camera.toggle_projection();
+    ///
+    /// The answer says whether the frame survived it: a height perspective cannot show is the
+    /// caller's to repair, by fitting the view on the scene (X120).
+    pub(crate) fn toggle_projection(&mut self) -> scene::ProjectionToggle {
+        self.camera.toggle_projection()
+    }
+
+    /// Puts the leaf's camera at `camera`, for a test that has to hold a state no gesture reaches.
+    #[cfg(test)]
+    pub(crate) fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
     }
 }
 
@@ -1152,7 +1163,7 @@ mod tests {
         let leaf = layout.leaf_mut(id).expect("the active leaf");
         // A free direction, then an orthographic projection: neither belongs to a preset.
         leaf.look_from(geom::DVec3::new(1.0, 2.0, 3.0));
-        leaf.toggle_projection();
+        assert!(leaf.toggle_projection().kept(), "a view at 900 mm has a distance for its height");
         assert_eq!(leaf.preset, None);
 
         let larger = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 1800.0).expect("camera");
@@ -1175,7 +1186,7 @@ mod tests {
         let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
         leaf.apply_preset(OpeningView::Front);
-        leaf.toggle_projection();
+        assert!(leaf.toggle_projection().kept(), "a standard view at 900 mm switches exactly");
         assert!(matches!(leaf.camera().projection(), scene::Projection::Perspective { .. }));
 
         leaf.frame(fit);
@@ -1622,7 +1633,7 @@ mod tests {
     fn an_axonometric_preset_and_a_free_direction_keep_the_projection() {
         let mut layout = Layout::new(Camera::default(), OpeningView::Axonometric, ShadingStyle::default());
         let leaf = layout.leaf_mut(layout.active()).expect("the active leaf");
-        leaf.toggle_projection();
+        assert!(leaf.toggle_projection().kept());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
 
         leaf.apply_preset(OpeningView::Axonometric);
@@ -1642,11 +1653,11 @@ mod tests {
         leaf.apply_preset(OpeningView::Top);
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
 
-        leaf.toggle_projection();
+        assert!(leaf.toggle_projection().kept());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Perspective { .. }));
         assert_eq!(leaf.preset, Some(OpeningView::Top), "the toggle is not a change of direction");
 
-        leaf.toggle_projection();
+        assert!(leaf.toggle_projection().kept());
         assert!(matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. }));
         assert_eq!(leaf.preset, Some(OpeningView::Top), "the preset name survives both ways");
     }
@@ -1661,7 +1672,7 @@ mod tests {
             layout.leaf(first).expect("the leaf").camera().projection(),
             scene::Projection::Orthographic { .. }
         ));
-        layout.leaf_mut(first).expect("the leaf").toggle_projection();
+        assert!(layout.leaf_mut(first).expect("the leaf").toggle_projection().kept());
         for (index, leaf) in layout.current().leaves.iter().enumerate() {
             let ortho = matches!(leaf.camera().projection(), scene::Projection::Orthographic { .. });
             assert_eq!(

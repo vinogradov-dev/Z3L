@@ -314,7 +314,7 @@ mod tests {
         assert!(text.contains(" · Roll "), "and the roll: {text}");
         assert!(text.ends_with("Persp"), "a perspective view names the mode: {text}");
 
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept());
         assert!(camera_line(camera, Lang::En).ends_with("Ortho"), "an orthographic view names the mode");
 
         camera.roll_to(std::f64::consts::FRAC_PI_2);

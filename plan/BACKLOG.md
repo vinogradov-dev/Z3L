@@ -104,27 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
-  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
-   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
-   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
-   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
-   so the promise its own comment makes - "the distance that shows the same height" - is broken
-   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
-   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
-   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
-   coming back from a kilometre takes about twenty-eight notches and reads as movement by
-   micrometres.
-  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
-   height cannot be shown in perspective the view refits the scene or says why instead of
-   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
-   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
-   explicit escape.
-  Done: A test switches a large orthographic height to perspective and asserts the visible
-   height at the target is unchanged, or that the answer says the view was refitted; a test
-   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
-   notches; a test asserts no projection switch leaves the camera clamped at the cap.
-  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs`
 - `[ ]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
   Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
    центрируется на центр сцены". Measured: `Layout::apply_preset`
@@ -636,6 +615,28 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
+  Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
+   и я не могу приблизиться, она словно движется по микрометрам вперёд". Measured:
+   `Camera::toggle_projection` (`crates/scene/src/camera.rs:250`) computes `distance = height /
+   (2 * tan(fov/2))` and then silently clamps it with `MAX_DISTANCE_MM`, which is 1 000 000 mm,
+   so the promise its own comment makes - "the distance that shows the same height" - is broken
+   without a word. An orthographic height left at the scale of a large scene (2 200 000 mm
+   here) lands the perspective camera at the cap, a kilometre from a 2.2 m wardrobe. The wheel
+   is a fixed ratio per point (`ZOOM_PER_SCROLL_POINT = 0.004`, `app/src/document.rs:3150`), so
+   coming back from a kilometre takes about twenty-eight notches and reads as movement by
+   micrometres.
+  Shape: The switch keeps the frame it promises: the visible height is preserved, and when a
+   height cannot be shown in perspective the view refits the scene or says why instead of
+   clamping silently. The wheel step follows how far the camera is from the scene, so a distant
+   camera returns in a few notches while a close one keeps its fine step; `frame all` stays the
+   explicit escape.
+  Done: A test switches a large orthographic height to perspective and asserts the visible
+   height at the target is unchanged, or that the answer says the view was refitted; a test
+   zooms from a kilometre and asserts the scene fills the frame inside a bounded number of
+   notches; a test asserts no projection switch leaves the camera clamped at the cap.
+  `files: crates/scene/src/camera.rs,app/src/document.rs,app/src/view_layout.rs` — `47da4f4`
 
 - `[x]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
   Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры

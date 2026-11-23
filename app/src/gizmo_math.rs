@@ -1387,7 +1387,7 @@ mod tests {
     fn orthographic_view(eye: DVec3) -> Camera {
         let mut camera = Camera::default();
         camera.look_from(eye);
-        camera.toggle_projection();
+        assert!(camera.toggle_projection().kept(), "a default view has a distance for its height");
         camera
     }
 
@@ -1795,7 +1795,7 @@ mod tests {
 
         let mut axonometric = Camera::default();
         axonometric.look_from(DVec3::new(1.0, 1.0, 1.0));
-        axonometric.toggle_projection();
+        assert!(axonometric.toggle_projection().kept());
         assert_eq!(WorkPlane::from_camera(axonometric), WorkPlane::WORLD_XY);
 
         let mut orbited = orthographic_view(DVec3::Y);
