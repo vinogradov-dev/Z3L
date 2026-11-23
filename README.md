@@ -63,4 +63,4 @@ document allowed, so a defect report is the file and one sentence about the gest
 
 ## License
 
-MIT OR Apache-2.0, at your option: [`LICENSE-MIT`](LICENSE-MIT), [`LICENSE-APACHE`](LICENSE-APACHE).
+Apache-2.0: [`LICENSE-APACHE`](LICENSE-APACHE). Copyright 2026 the Z3L authors.
