@@ -588,18 +588,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-- `[ ]` **J26** a simple request feels long because nothing says what the agent is doing
-  Why: The owner says a simple request takes long and the panel does not say what the agent is
-   doing. The OpenAI backend waits for one whole completion, the panel shows one static
-   "working" line, and the only feedback is the final answer.
-  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
-   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
-   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
-   shows the work instead of a spinner.
-  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
-   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
-   the progress line; `cargo xtask ci` is green.
-  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs`
 - `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
   Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
    entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
@@ -615,6 +603,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **J26** a simple request feels long because nothing says what the agent is doing
+  Why: The owner says a simple request takes long and the panel does not say what the agent is
+   doing. The OpenAI backend waits for one whole completion, the panel shows one static
+   "working" line, and the only feedback is the final answer.
+  Shape: Show the elapsed seconds, the call count and the current step (checklist and last
+   command) while a request runs; then stream the answer with SSE and draw it as it arrives.
+   Stop stays at the call boundary. The prompt already asks for a few sentences; the panel
+   shows the work instead of a spinner.
+  Done: A request in flight shows elapsed time and the current step; a streaming answer appears
+   in pieces; Stop ends at the next call; a test drives a scripted stream and a frame test sees
+   the progress line; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/mcp/src/chat.rs,crates/text/src/messages.rs` — `b52ae53`
 
 - `[x]` **X120** switching an orthographic view to perspective can drop the camera at the distance cap, and the wheel cannot bring it back
   Why: Owner report 2026-11-21: "когда переключаю с орто на перспективу, камера отлетает далеко
