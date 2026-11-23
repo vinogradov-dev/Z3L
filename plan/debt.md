@@ -18,6 +18,14 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   leaves when a maintained pure-Rust TLS provider exists whose crypto is neither `ring` nor
   `aws-lc-rs`; until then the vendored build is the breach, and the feature is the switch.
 
+- `[assistant]` The assistant speaks one wire, the OpenAI-compatible one, and the gateway's other
+  families are not implemented: `inference/anthropic/v1/messages` (content blocks,
+  `tool_use`/`tool_result`) and whatever a Google family would be. Not building it was a decision,
+  not an omission — measured 2026-11-23, every family path serves the same 105 (or 36, on the go tier)
+  model ids, so a model reachable today is reachable on the OpenAI wire (J25, ADR 0235). It leaves
+  when a model is served only on `/messages`; the price is a body shape of its own plus a family table
+  derived from the model name, and a stub is the only way to prove it on a machine without a key.
+
 - `[assistant]` A turn of the assistant panel advances one step per frame but asks for no frame of
   its own (`Chat::is_busy`, `App::serve_chat`), so a turn that is not stopped from outside still waits
   for the pointer between two calls: the channel was given its ring in X111, and the panel's own turn

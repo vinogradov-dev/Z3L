@@ -104,20 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **J25** the program knows its providers and lists their models instead of asking the person for a header
-  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
-   preset fills the address, a Go endpoint routes by model family, and the model list comes
-   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
-   product surface instead of a free-text endpoint.
-  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
-   address) with base URLs and the Go protocol table by model family; a model list from `GET
-   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
-   provider names are data and one wire still serves the ordinary case; the protocol matrix is
-   derived from the model name, not a second adapter per provider.
-  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
-   model reaches its family's wire; the person never types a header; the key is not in
-   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
-  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
 - `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
   Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
    угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
@@ -678,6 +664,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **J25** the program knows its providers and lists their models instead of asking the person for a header
+  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
+   preset fills the address, a Go endpoint routes by model family, and the model list comes
+   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
+   product surface instead of a free-text endpoint.
+  Shape: A provider preset table on the *Assistant* page — OpenCode Go, OpenCode, DeepSeek,
+   OpenAI, Ollama and LM Studio, six rows of a name and a base URL — that writes the address
+   into the field the person still types in (*Other address* clears nothing), and a model list
+   read from `GET {base}/models` with a picker that writes the chosen id. The row is derived
+   from the field (`AssistantSettings::preset`), so a pinned choice cannot disagree with the
+   address. Measured 2026-11-23: the gateway's families are real wires but every family serves
+   every model, so the OpenAI wire stays and the family matrix is debt, not this task; the key
+   keeps its two homes. ADR 0235 amends ADR 0189: provider names are data.
+  Done: A preset fills the address and the field stays the person's own; a model the endpoint
+   listed fills the model field; the Go preset's address is the one the wire routes on and
+   carries the session header the person never types; the assistant settings section carries no
+   header and no key; a test covers the preset table, the list parser (both envelopes, a
+   refusal, an empty list) and the listing's own request; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/model_list.rs,app/src/frame_tests.rs` — `577232e`
 
 - `[x]` **X128** a batch of thirty-nine steps moves the revision by fifty-three, so one operation cannot be told from one command
   Why: Observed by the acceptance run over the channel: thirty-nine steps of one batch moved
