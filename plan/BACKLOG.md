@@ -737,6 +737,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X127** the model guesses the placement shape and builds one box from nine bodies
+  Why: A request for one cube spent the turn's calls on four refusals (`size_um`, missing
+   `placement`, missing `rotation`, a map where an array belongs, length 3 where 4 belongs),
+   then created nine bodies and hit the 12-call limit. The request held the static guide but
+   not the shape of a `placement`, and the prompt did not say a box is one body.
+  Shape: The guide gains a `placements` row with the object shape, both arrays, the identity
+   and the rule that it is not a bare array; the system prompt states the same and that one box
+   is one `object.cuboid.create`, never one body per face. Tests hold the guide shape and the
+   prompt line.
+  Done: The guide and the system message state the placement object and the one-box rule; a box
+   no longer needs a guessed schema; the prompt line is asserted in the request test; `cargo
+   xtask ci` is green.
+  `files: crates/engine/src/guide.rs,crates/mcp/src/openai.rs` — `c0d5a63`
+
+- `[x]` **X126** the panel cannot copy the conversation, and Stop leaves the answer in flight
+  Why: The owner could not stop a turn and could not hand the conversation to a reader without
+   retyping it. The panel had a Stop in the field, but OpenAI inherited the trait's no-op
+   cancel, so the worker answer was still the turn's; the transcript had no copy affordance and
+   the working line did not say which request was in flight.
+  Shape: A Copy button beside Send puts the transcript in the system clipboard with each
+   speaker named; the working line names the request number; OpenAi implements cancel by
+   dropping the answer in flight, so the turn ends on the frame the person presses Stop. The
+   copy sits in the field row, so the panel keeps the height it opens at.
+  Done: Stop ends the turn on the next frame and the in-flight answer is discarded; the panel
+   shows the request number; Copy writes a speaker-labelled transcript; a test proves the
+   copied text and the cancellation; `cargo xtask ci` is green.
+  `files: app/src/chat.rs,crates/mcp/src/openai.rs,crates/text/src/messages.rs` — `c0d5a63`
+
 - `[x]` **X125** the model asks for an id and units the window already knows, and the person gets questions instead of a cube
   Why: The model asked the owner for the root id, for the side order and about micrometres
    before it would create a cube. The request held the static guide and no live scene, and the
