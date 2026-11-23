@@ -57,6 +57,7 @@ pub fn guide() -> Value {
         "units": units(),
         "sides": sides(),
         "placements": placements(),
+        "checks": checks(),
     })
 }
 
@@ -189,9 +190,12 @@ fn steps() -> Value {
             "says": "Every part is a panel created in one of the three stances below, with a class \
                      that names its role. Width, depth and height are solved from the frame: a part \
                      is placed by a length the caller computed, and the program keeps the number it \
-                     was given rather than deriving it. The command names the piece it writes in; \
-                     the interface offers creation only inside the piece the person has open \
-                     (ADR 0098, ADR 0226).",
+                     was given rather than deriving it. A panel's `nominal_size` names only the two \
+                     sides its stance measures — length along the stance's length axis and width \
+                     along its width — and its third side is the board's thickness, which comes from \
+                     the material's record and never from the command. The command names the piece it \
+                     writes in; the interface offers creation only inside the piece the person has \
+                     open (ADR 0098, ADR 0226).",
         },
         {
             "order": 3,
@@ -208,6 +212,36 @@ fn steps() -> Value {
                      hanging rail is 20.06, so a caller knows what the piece is called, but the only \
                      way to put one in the scene today is to build it as a body in the geometry \
                      world — or to leave it out until the hardware family lands.",
+        },
+    ])
+}
+
+/// The two doors that check a build, and the question each one answers.
+///
+/// They are not two answers to one question: the rules' findings are the seven mistakes a build can
+/// carry — a part outside its product's envelope included — and the panel diagnostics are the
+/// problems a panel's own derivation resolves. A caller that reads the wrong one concludes the
+/// scene is clean, which is exactly what an acceptance run did before this section existed (X116).
+fn checks() -> Value {
+    json!([
+        {
+            "question": "inspect",
+            "says": "The seven mistakes the rules can prove, in severity order: a part outside the \
+                     product's envelope (`envelope_out`), two bodies sharing volume \
+                     (`body_overlap`), a shelf that does not fit its opening (`shelf_fit`), a rail \
+                     where the workshop does not hang it (`rail_place`), an exposed edge with no band \
+                     (`edge_band`), a door gap that is not the gap the class asks for (`door_gap`), \
+                     and a part that leaves its sheet (`sheet_fit`). Each finding names the ids it \
+                     blames and the commands that would fix it. `inspect` writes nothing and runs on \
+                     the open document.",
+        },
+        {
+            "question": "diagnostics",
+            "says": "One row per panel with the problems its own derivation resolves: a material the \
+                     catalogue no longer carries, a core that vanished, a machining outside the \
+                     core, a blind depth no shorter than the thickness. It answers about a panel, \
+                     not about the piece: a part that stands outside its product is `envelope_out`, \
+                     which `inspect` answers.",
         },
     ])
 }
