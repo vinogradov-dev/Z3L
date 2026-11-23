@@ -13,6 +13,10 @@
 //! working (the words under the conversation and a Stop where Send was), and what the last answer
 //! did to the document (the turn's own note line, which says *plan* or *one undo entry*).
 //!
+//! A backend that owns the model loop reports its work as it happens — the tool it called and what
+//! came back — so those lines are drawn between the messages, dim and marked, instead of being
+//! folded into the answer's own words (ADR 0230).
+//!
 //! It is a `Window`, like Settings and Home: the panel is not a document surface, it opens over the
 //! scene and closes without touching it. Its one row in `HOST_OWNERS` is the surface it draws
 //! (`xtask/src/ui_rules.rs`).
@@ -309,6 +313,11 @@ impl Chat {
                 }
                 Speaker::Agent => {
                     ui.label(line.text.as_str());
+                }
+                Speaker::Tool => {
+                    // Work, not speech: the marker says the agent did something, and the dim ink
+                    // keeps it out of the conversation's own rhythm (ADR 0230).
+                    ui.label(RichText::new(format!("· {}", line.text)).color(theme::text_dim(ui)));
                 }
                 Speaker::Note => {
                     ui.label(RichText::new(line.text.as_str()).italics().color(theme::text_dim(ui)));

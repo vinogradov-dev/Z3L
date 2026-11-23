@@ -44,6 +44,13 @@ pub enum Speaker {
     Person,
     /// The model.
     Agent,
+    /// A tool call the agent made, in the agent's own words for it.
+    ///
+    /// It exists because a backend that owns the model loop does not answer with a batch of ours:
+    /// the process decides which tool to call and calls it over the channel itself, so the panel
+    /// can only report what the process said it was doing (ADR 0230). The panel draws it quieter
+    /// than a message, because it is work and not speech.
+    Tool,
     /// The turn's own report: what a batch did, why it was refused, why the turn stopped.
     ///
     /// It is the shell's voice, so it is a [`Message`] like every other word of the interface.
@@ -79,6 +86,14 @@ impl Conversation {
         self.lines.push(Line { speaker, text: text.into() });
     }
 
+    /// Adds lines the backend already wrote, in their own order.
+    ///
+    /// A backend that speaks a protocol of its own reports what it said and what it did as lines of
+    /// this conversation, so the panel draws one transcript whichever backend is behind it.
+    pub fn extend(&mut self, lines: Vec<Line>) {
+        self.lines.extend(lines);
+    }
+
     /// Every line, oldest first.
     pub fn lines(&self) -> &[Line] {
         &self.lines
@@ -109,6 +124,18 @@ pub struct Reply {
     pub calls: Vec<BatchStep>,
     /// The steps the model says it is working through, shown beside the conversation.
     pub checklist: Vec<String>,
+    /// Lines that are not the model speaking: a tool call it made and what came of it.
+    ///
+    /// A backend that owns the model loop reports its work through these instead of through
+    /// [`Self::calls`], because the tools are the server's and the process calls them itself
+    /// (ADR 0230). They are appended after [`Self::text`] and in the order the agent said them.
+    pub lines: Vec<Line>,
+    /// Whether this is part of an answer still being spoken rather than the answer.
+    ///
+    /// A streaming backend hands a chunk over as soon as it arrives, so the person watches the
+    /// agent talk instead of a spinner. The request it answers stays in flight, which is what keeps
+    /// [`Turn`] from asking again: only the last reply of an answer ends anything.
+    pub more: bool,
 }
 
 impl Reply {
@@ -120,6 +147,11 @@ impl Reply {
     /// An answer that asks for one batch.
     pub fn calling(calls: Vec<BatchStep>) -> Self {
         Self { calls, ..Self::default() }
+    }
+
+    /// One more piece of an answer still arriving: the lines it said since the last piece.
+    pub fn part(lines: Vec<Line>) -> Self {
+        Self { lines, more: true, ..Self::default() }
     }
 }
 
@@ -160,6 +192,13 @@ pub trait ChatBackend: fmt::Debug + Send {
     fn waiting(&self) -> bool {
         true
     }
+
+    /// Tells the backend to abandon the request in flight, at its next safe point.
+    ///
+    /// A backend that owns the model loop runs work this side cannot interrupt, so the person's
+    /// stop has to travel: the process is asked to cancel and answers with what it had already
+    /// done. A backend that answers one request at a time needs nothing.
+    fn cancel(&mut self) {}
 }
 
 /// A backend that answers from a fixed script, so a whole turn runs in a test without a network.
@@ -294,6 +333,7 @@ impl Turn {
             return;
         }
         if self.stopped {
+            backend.cancel();
             conversation.push(Speaker::Note, Message::AssistantStoppedLine.text(lang));
             self.done = true;
             return;
@@ -325,6 +365,9 @@ impl Turn {
     }
 
     /// Takes one answer: its words, its checklist and, when it names commands, its one batch.
+    ///
+    /// A piece of an answer still arriving appends what it says and leaves the request in flight,
+    /// which is how a process that streams its work is watched instead of waited for (ADR 0230).
     fn receive(
         &mut self,
         reply: Reply,
@@ -334,6 +377,11 @@ impl Turn {
     ) {
         if !reply.text.trim().is_empty() {
             conversation.push(Speaker::Agent, reply.text);
+        }
+        conversation.extend(reply.lines);
+        if reply.more {
+            self.asked = true;
+            return;
         }
         self.checklist = reply.checklist;
         if reply.calls.is_empty() {
@@ -542,6 +590,104 @@ mod tests {
         assert_eq!(name(&session, panel).as_deref(), Some("Side"), "the budget stopped the second answer");
         session.undo().expect("the fixture's own creation is the entry under it");
         assert!(name(&session, panel).is_none());
+    }
+
+    /// A backend that answers one request in pieces, like a process that streams its work.
+    ///
+    /// It records the cancellation, because the person's stop has to reach a loop this side does
+    /// not run (ADR 0230).
+    #[derive(Debug, Default)]
+    struct Streaming {
+        pieces: std::collections::VecDeque<Reply>,
+        cancelled: bool,
+    }
+
+    impl ChatBackend for Streaming {
+        fn ask(&mut self, _transcript: &Conversation) {}
+
+        fn take(&mut self) -> Option<Result<Reply, BackendError>> {
+            self.pieces.pop_front().map(Ok)
+        }
+
+        fn waiting(&self) -> bool {
+            self.pieces.is_empty()
+        }
+
+        fn cancel(&mut self) {
+            self.cancelled = true;
+        }
+    }
+
+    fn line(speaker: Speaker, text: &str) -> Line {
+        Line { speaker, text: text.to_owned() }
+    }
+
+    #[test]
+    fn a_piece_of_an_answer_is_drawn_and_the_request_stays_in_flight() {
+        // A process that owns the model loop reports work as it happens: the words, the tool it
+        // called and what came back are lines the panel draws between one frame and the next, and
+        // the turn neither asks again nor ends until the last piece arrives (ADR 0230).
+        let (mut session, _panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Streaming {
+            pieces: std::collections::VecDeque::from(vec![
+                Reply::part(vec![line(Speaker::Tool, "command_batch · node.rename")]),
+                Reply::part(vec![line(Speaker::Note, "refused: the document is in plan")]),
+                Reply::default(),
+            ]),
+            cancelled: false,
+        };
+        let mut conversation = Conversation::new();
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 2);
+        assert!(turn.is_asking(), "the first piece leaves the request in flight");
+        assert_eq!(turn.calls(), 1, "a piece is not a second request");
+        assert_eq!(conversation.lines().len(), 1, "the tool call is drawn at once");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_asking(), "the refusal is another piece of the same answer");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_done(), "the last piece ends the turn");
+        assert_eq!(turn.calls(), 1, "one message, one request");
+        let drawn: Vec<(Speaker, &str)> =
+            conversation.lines().iter().map(|line| (line.speaker, line.text.as_str())).collect();
+        assert_eq!(
+            drawn,
+            vec![
+                (Speaker::Tool, "command_batch · node.rename"),
+                (Speaker::Note, "refused: the document is in plan")
+            ]
+        );
+        assert!(!backend.cancelled, "a turn that finished was never cancelled");
+    }
+
+    #[test]
+    fn the_person_stop_reaches_a_process_that_owns_the_loop() {
+        // A backend that runs the model loop cannot be stopped by not asking again: the stop has to
+        // travel to it, and the turn says the person stopped it instead of pretending the answer
+        // finished (ADR 0230).
+        let (mut session, _panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Streaming {
+            pieces: std::collections::VecDeque::from(vec![Reply::part(vec![line(Speaker::Tool, "query")])]),
+            cancelled: false,
+        };
+        let mut conversation = Conversation::new();
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_asking());
+        turn.stop();
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+
+        assert!(backend.cancelled, "the process was told to stop");
+        assert!(turn.is_done());
+        assert_eq!(
+            conversation.lines().last().map(|line| line.text.as_str()),
+            Some(Message::AssistantStoppedLine.text(Lang::En))
+        );
     }
 
     #[test]
