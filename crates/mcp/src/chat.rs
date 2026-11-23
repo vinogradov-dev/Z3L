@@ -414,15 +414,15 @@ fn describe(report: &BatchReport, lang: Lang) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use engine::{AgentMode, BatchOptions, EditScope, Session};
     use model::{Id, Node};
     use serde_json::json;
     use testkit::{sample_catalog, sample_product_project};
 
-    /// A session with one panel the tests can rename.
-    fn session() -> (Session, Id) {
+    /// A session with one panel the tests can rename, shared with the wire's own tests.
+    pub(crate) fn session() -> (Session, Id) {
         let (project, product) = sample_product_project();
         let mut session = Session::with_directory(project, sample_catalog());
         assert!(session.open_product(product), "the fixture product opens");

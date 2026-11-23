@@ -42,6 +42,7 @@ pub mod acp;
 pub mod channel;
 pub mod chat;
 pub mod inspect;
+pub mod openai;
 pub mod preview;
 mod report;
 pub mod server;
@@ -57,6 +58,7 @@ pub use acp::{Acp, PROTOCOL_VERSION, Program, Scripted as ScriptedProcess, Spawn
 pub use channel::{Answering, BridgeError, Call, Channel, ChannelError, Mailbox, Pending, Wake, bridge, queued};
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
+pub use openai::{Endpoint, KEY_ENV, KEY_FILE, OpenAi, key};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
 pub use report::PLAN_NOTE;
 pub use server::{CommandServer, Door, asking, dispatch, findings, listing, preview, serve_session, undo};

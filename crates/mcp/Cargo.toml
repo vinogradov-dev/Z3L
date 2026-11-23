@@ -17,6 +17,9 @@ text = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true }
 schemars = { workspace = true }
+# The assistant's one blocking HTTP client, in this crate only: the window is never waited on, so a
+# turn asks a worker thread and takes its answer a frame later (ADR 0189, ADR 0186).
+ureq = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
