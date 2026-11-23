@@ -306,6 +306,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: One batch of thirty-nine steps leaves the revision one higher than it found it, and the
    answer says one entry (one unit test on Session::batch).
   `files: crates/engine/src/batch.rs,crates/engine/src/session.rs,crates/mcp/src/report.rs`
+- `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
+  Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
+   of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
+   file that lost half of them reads as a shorter file. Expected: a reference file that is
+   append-only refuses a body that drops an entry already in it. Suspected cause: validates the
+   body it is given and never compares it with what it replaces, so the only evidence of a
+   deletion is a diff nobody was shown.
+  Shape: A reference file the plan calls append-only (debt, and questions alongside it) is
+   written only when every entry it holds is in the new body; a refusal names the entries that
+   would leave, and a whole-file rewrite stays the reset a person asks for with a flag.
+  Done: A body that omits an entry the file already holds is refused with that entry's opening
+   words, and a body that adds one is written (one unit test over ).
+  `files: state-contract/src/cli/write.rs,plan/debt.md`
 
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
