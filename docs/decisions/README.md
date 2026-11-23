@@ -234,6 +234,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0227](0227-a-released-build-carries-its-words-on-the-surface.md) | A released build carries its words on the surface | Accepted; states the units clause of 0185 with an annotation, refuses the side-vocabulary half of X118 |
 | [0228](0228-the-tool-server-asks-for-a-picture-it-is-handed.md) | The tool server asks for a picture it is handed | Accepted; states the screenshot channel 0028 left open |
 | [0230](0230-an-agent-process-owns-the-model-loop.md) | An agent process owns the model loop, and the bridge is what it holds | Accepted |
+| [0231](0231-the-list-is-short-rows-and-a-schema-is-read-by-id.md) | The list is short rows, and a schema is read one id at a time | Accepted; amends the `command_list` answer of 0185 and the dictionary clause of 0227 |
 
 ## Format
 
