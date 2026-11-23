@@ -660,15 +660,84 @@ impl Default for AssistantSettings {
     }
 }
 
+/// Why a typed base URL cannot be used as one endpoint.
+///
+/// The wire appends `/chat/completions` to whatever the field holds, so an address that is not one
+/// absolute `http(s)` URL produces a request to a path nobody serves — the owner met this as a plain
+/// HTTP 404 after a URL was pasted into a URL that was already in the field. The settings page says
+/// which clause is wrong before a message leaves; [`AssistantSettings::endpoint_to_ask`] stops the
+/// request while the clause stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointProblem {
+    /// A second `http://` or `https://` inside the address: a URL pasted into a URL.
+    Doubled,
+    /// The address does not start with `http://` or `https://`.
+    Scheme,
+    /// Nothing between the scheme and the first `/`, `?` or `#`.
+    Host,
+    /// A space or a line break, which no address carries.
+    Space,
+    /// The completion path is already there; the client appends it and a second one is a 404.
+    Completion,
+}
+
+impl EndpointProblem {
+    /// The clause the settings page and the panel read, never a sentence of its own.
+    pub fn message(self) -> Message {
+        match self {
+            Self::Doubled => Message::AssistantEndpointDoubled,
+            Self::Scheme => Message::AssistantEndpointNeedsScheme,
+            Self::Host => Message::AssistantEndpointNoHost,
+            Self::Space => Message::AssistantEndpointSpace,
+            Self::Completion => Message::AssistantEndpointHasCompletion,
+        }
+    }
+}
+
+/// The problem with `endpoint`, or `None` when it is usable or empty.
+///
+/// Empty is not a problem: a workspace with no endpoint is a workspace that asks nothing, and the
+/// page says how to name one rather than calling the empty field wrong.
+fn endpoint_problem(endpoint: &str) -> Option<EndpointProblem> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+    if endpoint.chars().any(char::is_whitespace) {
+        return Some(EndpointProblem::Space);
+    }
+    let Some(rest) = endpoint.strip_prefix("https://").or_else(|| endpoint.strip_prefix("http://")) else {
+        return Some(EndpointProblem::Scheme);
+    };
+    if rest.contains("://") {
+        return Some(EndpointProblem::Doubled);
+    }
+    if endpoint.trim_end_matches('/').ends_with("/chat/completions") {
+        return Some(EndpointProblem::Completion);
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if host.is_empty() {
+        return Some(EndpointProblem::Host);
+    }
+    None
+}
+
 impl AssistantSettings {
+    /// The reason the typed address cannot be sent to, or `None` when it can or is empty.
+    pub fn endpoint_problem(&self) -> Option<EndpointProblem> {
+        endpoint_problem(&self.endpoint)
+    }
+
     /// The endpoint a message would go to, or `None` when no model is configured.
     ///
     /// It answers with the endpoint as the person typed it, trimmed, so the consent list and the
-    /// request name the same string. The agent process is not an endpoint and is not asked here.
+    /// request name the same string. An address the client cannot use is not an endpoint: the page
+    /// names the wrong clause and no request leaves. The agent process is not an endpoint and is not
+    /// asked here.
     pub fn endpoint_to_ask(&self) -> Option<String> {
         let endpoint = self.endpoint.trim();
         let model = self.model.trim();
-        (!endpoint.is_empty() && !model.is_empty()).then(|| endpoint.to_owned())
+        (endpoint_problem(endpoint).is_none() && !endpoint.is_empty() && !model.is_empty()).then(|| endpoint.to_owned())
     }
 
     /// Whether the person has agreed to send a conversation to `endpoint`.
@@ -929,7 +998,7 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
     let mut outcome = SettingsOutcome::default();
     let lang = settings.appearance.language.lang();
     let response = Modal::new(Id::unique("settings_window")).show(ctx, |ui| {
-        ui.set_width(640.0);
+        ui.set_width(760.0);
         ui.horizontal(|ui| {
             ui.heading(crate::text(ui.ctx(), Message::SettingsTitle));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -948,8 +1017,8 @@ pub fn show(ctx: &Context, settings: &mut Settings, section: &mut SettingsSectio
             });
             ui.separator();
             ui.vertical(|ui| {
-                ui.set_min_width(430.0);
-                ui.set_min_height(320.0);
+                ui.set_min_width(540.0);
+                ui.set_min_height(420.0);
                 outcome.changed |= match *section {
                     SettingsSection::Appearance => appearance_ui(ui, settings, lang),
                     SettingsSection::Viewport => viewport_ui(ui, settings, lang),
@@ -1095,36 +1164,56 @@ fn swatch(ui: &mut Ui, fill: egui::Color32) {
 /// panel has asked once per endpoint.
 fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     ui.heading(Message::SectionAssistant.text(lang));
+    ui.label(Message::AssistantWays.text(lang));
+
+    // The address first: it is the path a person without an agent installation takes, and the
+    // process is the advanced one. A single field per line and a full-width box keep a pasted URL
+    // visible, which is where the doubled address of J22 came from.
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(egui::RichText::new(Message::AssistantByAddress.text(lang)).strong());
+    ui.label(Message::AssistantEndpoint.text(lang));
     let mut changed = ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.endpoint)
+                .hint_text(Message::AssistantEndpointHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
+        .changed();
+    if let Some(problem) = settings.assistant.endpoint_problem() {
+        let sentence = Message::AssistantEndpointProblem.with(lang, [problem.message().text(lang)]);
+        ui.label(egui::RichText::new(sentence).color(theme::warn(ui)));
+    } else {
+        ui.label(egui::RichText::new(Message::AssistantEndpointHint.text(lang)).small().color(theme::text_dim(ui)));
+    }
+    ui.label(Message::AssistantModel.text(lang));
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.model)
+                .hint_text(Message::AssistantModelHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
+        .changed();
+    ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantWhatNext.text(lang)).small().color(theme::text_dim(ui)));
+
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(egui::RichText::new(Message::AssistantByProcess.text(lang)).strong());
+    changed |= ui
         .checkbox(&mut settings.assistant.attach, Message::AttachChannel.text(lang))
         .on_hover_text(Message::AttachChannelHint.text(lang))
         .changed();
     ui.label(egui::RichText::new(Message::AttachChannelHint.text(lang)).small().color(theme::text_dim(ui)));
-    ui.add_space(theme::STEP);
     ui.label(Message::AgentCommand.text(lang));
     changed |= ui
-        .add(egui::TextEdit::singleline(&mut settings.assistant.agent).hint_text(Message::AgentCommandHint.text(lang)))
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.agent)
+                .hint_text(Message::AgentCommandHint.text(lang))
+                .desired_width(ui.available_width()),
+        )
         .changed();
     ui.label(egui::RichText::new(Message::AgentCommandHint.text(lang)).small().color(theme::text_dim(ui)));
-
-    ui.add_space(theme::STEP * 2.0);
-    ui.label(Message::AssistantEndpoint.text(lang));
-    changed |= ui
-        .add(
-            egui::TextEdit::singleline(&mut settings.assistant.endpoint)
-                .hint_text(Message::AssistantEndpointHint.text(lang)),
-        )
-        .changed();
-    ui.label(egui::RichText::new(Message::AssistantEndpointHint.text(lang)).small().color(theme::text_dim(ui)));
-    ui.label(Message::AssistantModel.text(lang));
-    changed |= ui
-        .add(
-            egui::TextEdit::singleline(&mut settings.assistant.model).hint_text(Message::AssistantModelHint.text(lang)),
-        )
-        .changed();
-    ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
     ui.label(egui::RichText::new(Message::AssistantProcessWins.text(lang)).small().color(theme::text_dim(ui)));
-    ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
 
     ui.add_space(theme::STEP * 2.0);
     ui.label(Message::AssistantConsentList.text(lang));
@@ -1603,6 +1692,34 @@ mod tests {
             Some("https://api.example.com/v1"),
             "the endpoint is the string the consent list holds, trimmed"
         );
+    }
+
+    #[test]
+    fn an_address_the_program_cannot_use_is_named_before_a_request() {
+        // J22: the owner pasted a URL into the URL that was already in the field and the only answer
+        // was the endpoint's 404. The field now names the clause before a message leaves, and an
+        // address with a problem is not an endpoint at all.
+        let mut assistant = AssistantSettings::default();
+        assert_eq!(assistant.endpoint_problem(), None, "an empty field is not wrong");
+        assistant.model = "a-model".to_owned();
+        assistant.endpoint =
+            "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+        assert_eq!(assistant.endpoint_problem(), Some(EndpointProblem::Doubled), "the owner's address");
+        assert_eq!(assistant.endpoint_to_ask(), None, "and it is never asked");
+
+        for (endpoint, problem) in [
+            ("api.example.com/v1", EndpointProblem::Scheme),
+            ("https://", EndpointProblem::Host),
+            ("https://api example.com/v1", EndpointProblem::Space),
+            ("https://api.example.com/v1/chat/completions", EndpointProblem::Completion),
+        ] {
+            assistant.endpoint = endpoint.to_owned();
+            assert_eq!(assistant.endpoint_problem(), Some(problem), "{endpoint}");
+        }
+
+        assistant.endpoint = "http://127.0.0.1:11434/v1".to_owned();
+        assert_eq!(assistant.endpoint_problem(), None, "a server on this machine is a valid address");
+        assert_eq!(assistant.endpoint_to_ask().as_deref(), Some("http://127.0.0.1:11434/v1"));
     }
 
     #[test]

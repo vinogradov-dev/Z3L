@@ -964,7 +964,14 @@ impl App {
     fn apply_assistant(&mut self) {
         let assistant = self.settings.assistant.clone();
         let program = mcp::Program::parse(&assistant.agent);
+        // A process wins the loop, so a wrong address matters only while no process is named: the
+        // panel then answers the clause the settings page would have shown (ADR 0189).
+        let problem = match (&program, assistant.endpoint_problem()) {
+            (None, Some(problem)) => Some(problem.message()),
+            _ => None,
+        };
         self.chat.apply_agent(program.clone(), self.channel.is_some());
+        self.chat.apply_problem(problem);
         let endpoint = match (program, assistant.endpoint_to_ask()) {
             (None, Some(base_url)) => Some(mcp::Endpoint::new(base_url, assistant.model.trim())),
             _ => None,

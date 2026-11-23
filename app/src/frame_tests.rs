@@ -7095,6 +7095,41 @@ fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again(
     assert_eq!(harness.app.chat.consent_pending(), Some(url.as_str()), "a cleared consent asks again");
 }
 
+#[test]
+fn a_message_to_a_typed_but_unusable_address_answers_the_clause_and_sends_nothing() {
+    // J22: a URL pasted into the URL that was already in the field is not an endpoint. The panel
+    // names the clause instead of saying "no model", and no backend is installed to ask anything.
+    let (mut harness, _panel) = chat_fixture("frame-chat-endpoint-problem");
+    harness.app.chat.open = true;
+    harness.app.settings.assistant.endpoint =
+        "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+    harness.app.settings.assistant.model = "a-model".to_owned();
+    harness.settle();
+    assert!(!harness.app.chat.asks_an_endpoint(), "an unusable address installs no backend");
+
+    harness.app.chat.input = "hello".to_owned();
+    harness.settle();
+    let send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(send, egui::PointerButton::Primary);
+    harness.frame();
+    let sentence = Message::AssistantEndpointInvalid.with(Lang::En, [Message::AssistantEndpointDoubled.text(Lang::En)]);
+    assert!(harness.drew(&sentence), "the panel names the doubled address");
+}
+
+#[test]
+fn the_settings_page_names_the_wrong_clause_beside_the_address() {
+    // The same rule, in the place the person fixes it: a sentence under the field before the panel
+    // has to say anything.
+    let (mut harness, _panel) = chat_fixture("frame-settings-endpoint-problem");
+    harness.app.settings.assistant.endpoint =
+        "https://opencode.ai/inference/openaihttps://opencode.ai/inference/openai/v1/v1".to_owned();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let sentence = Message::AssistantEndpointProblem.with(Lang::En, [Message::AssistantEndpointDoubled.text(Lang::En)]);
+    assert!(harness.drew(&sentence), "the page names the doubled address beside the field");
+}
+
 /// The Send buttons the last frame drew, topmost first.
 ///
 /// The consent card sits above the field, so the card's own Send is the first one while the card is
