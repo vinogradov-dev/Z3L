@@ -7130,6 +7130,28 @@ fn the_settings_page_names_the_wrong_clause_beside_the_address() {
     assert!(harness.drew(&sentence), "the page names the doubled address beside the field");
 }
 
+#[test]
+fn a_remembered_address_is_one_click_away_from_the_settings_page() {
+    // The beginner help that needs no provider name in code (ADR 0189): the workspace already holds
+    // the addresses it agreed to, so a mistyped field is repaired from the list instead of retyped.
+    let (mut harness, _panel) = chat_fixture("frame-settings-use-again");
+    let remembered = "https://api.example.com/v1".to_owned();
+    harness.app.settings.assistant.endpoint = "https://api.example".to_owned();
+    harness.app.settings.assistant.consent = vec![remembered.clone()];
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let point = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantConsentUse.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the remembered list draws *Use again*");
+    harness.click(point, egui::PointerButton::Primary);
+    harness.frame();
+    assert_eq!(harness.app.settings.assistant.endpoint, remembered, "the remembered address is back in the field");
+}
+
 /// The Send buttons the last frame drew, topmost first.
 ///
 /// The consent card sits above the field, so the card's own Send is the first one while the card is
