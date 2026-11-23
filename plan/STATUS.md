@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X122 state=idle base=1dcca49 updated=2026-11-24
+STATE: milestone=M7 phase=T task=X129 state=idle base=d05b1f6 updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -56,7 +56,7 @@ started from plus one (X128, ADR 0234).
 
 ## Next
 
-X122 stops the turn from the panel while the agent works, so a running answer can be stopped.
+X129 makes the plan tool refuse a body that drops entries from an append-only reference file.
 
 ## Index
 

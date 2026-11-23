@@ -104,28 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
-  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
-   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
-   `App::gesture_in_flight()` is false in the same frame. `App::assistant`
-   (`app/src/main.rs:926`) passes `gesture_in_flight()` as the `busy` the panel reads,
-   `Chat::field` picks the Stop button from that flag, and `Chat::body` draws the working line
-   from `is_busy()`, so the two halves of the panel disagree about what is happening. The row
-   says Send exactly while the turn runs, and pressing it does nothing because `Chat::begin`
-   refuses a second turn, while Stop appears only while a piece is carried or a question waits,
-   which is when `serve_chat` has already paused the turn. ADR 0187 puts the stop between calls
-   and the module comment says Stop stands where Send was while the agent works; the screen
-   shows neither.
-  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was and
-   disables the field while a turn is in flight, so the panel has one meaning at a time. A
-   gesture still pauses the turn at the frame boundary, but it no longer decides what the row
-   offers.
-  Done: A frame test holds a turn in flight with a backend that never answers, asserts the
-   panel draws Stop and not Send, the field stays typable, and pressing Stop ends the turn and
-   draws the stopped line; a second assertion covers a carried piece with no turn in flight,
-   which still draws Send; a test opens the panel and asserts the caret stands in the field, so
-   the first key typed reaches it.
-  `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
 - `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
   Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
    of accepted debt with thirty-eight; the gate passed, because an entry is free text and a
@@ -572,6 +550,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
+  Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
+   frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
+   `App::gesture_in_flight()` is false in the same frame. `App::assistant` passed
+   `gesture_in_flight()` as the `busy` the panel read, `Chat::field` picked the Stop button
+   from that flag, and `Chat::body` drew the working line from `is_busy()`, so the two halves
+   of the panel disagreed about what was happening; the row said Send exactly while the turn
+   ran, and pressing it did nothing because `Chat::begin` refuses a second turn. Measured again
+   2026-11-23: `7b9007f` made the row follow the turn, and what the entry still owed was its
+   caret clause, an assertion that the field stays typable while a turn runs and a test that
+   presses the panel's own Stop.
+  Shape: The row follows the turn, not the gesture: `is_busy()` chooses Stop where Send was, and a
+   gesture only postpones the next message without ever choosing the button. The field stays
+   enabled while a turn runs — the owner's decision of 2026-11-23, so a person composes the next
+   message instead of waiting for the answer — and it takes the caret the frame the panel opens,
+   so the first key typed is the message and not a viewport shortcut. The assistant's own key
+   still closes the panel while the field owns the keyboard.
+  Done: A frame test opens the panel on `Ctrl+J`, asserts the caret stands in the field, that the first
+   key typed reaches it and that the same key closes the panel; a backend that never answers
+   holds a turn in flight, the panel draws Stop and not Send, the field stays typable, and a
+   click on Stop ends the turn and draws the stopped line; a carried piece with no turn in flight
+   still draws Send. `cargo xtask ci` is green.
+  `files: app/src/chat.rs,app/src/main.rs,app/src/shortcuts.rs,app/src/frame_tests.rs` — `d05b1f6`
 
 - `[x]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
   Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
