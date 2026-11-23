@@ -171,8 +171,9 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "file",
-        usage: "file <plan/map.md|plan/debt.md|…> (--body <text>|--stdin) [--dry-run]",
-        summary: "write one reference file of the plan through the gate, so two sessions never fight",
+        usage: "file <plan/map.md|plan/debt.md|…> (--body <text>|--stdin) [--replace] [--dry-run]",
+        summary: "write one reference file of the plan through the gate, so two sessions never fight; \
+                  an append-only one refuses a body that drops an entry unless `--replace` asks",
         run: |global, _, args| write::file(&global.root, args, &ProcessGit::new(&global.root)),
     },
 ];

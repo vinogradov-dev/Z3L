@@ -1197,11 +1197,21 @@ const REFERENCE_FILES: &[&str] = &[
     "plan/SESSION.template.md",
 ];
 
-/// `file <path> (--body <text>|--stdin) [--dry-run]`: one reference file, written through the gate.
+/// The reference files the plan calls append-only: their entries accumulate, so a body that drops
+/// one is refused by [`file`] unless the person asks for a whole-file rewrite with `--replace`.
+const APPEND_ONLY: &[&str] = &["plan/debt.md", "plan/questions.md"];
+
+/// `file <path> (--body <text>|--stdin) [--replace] [--dry-run]`: one reference file, written through
+/// the gate.
 ///
 /// `plan/BACKLOG.md`, `plan/STATUS.md` and `plan/SESSION.md` are not on the list: the `task` and
 /// `state` verbs own their lines, and a whole-file rewrite would lose the entry formatting their
 /// splices preserve.
+///
+/// An append-only file ([`APPEND_ONLY`]) is written only when every entry it holds is in the new
+/// body: the body a session passes is usually its own text plus the entries it read, and a body that
+/// forgot one destroys it without a diff anybody was shown (X129). `--replace` is the reset — an
+/// entry leaves `plan/debt.md` when the fix lands, and that is a whole-file rewrite by design.
 pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let options = Options::parse(args, &["body"])?;
     let lock = Lock::acquire(root)?;
@@ -1229,7 +1239,49 @@ pub fn file(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     }
     let mut text = body.trim_end().to_owned();
     text.push('\n');
+    if APPEND_ONLY.contains(&path.as_str()) && !options.flag("replace") {
+        let old = std::fs::read_to_string(root.join(path)).ok();
+        let left = dropped_entries(old.as_deref().unwrap_or_default(), &text);
+        if !left.is_empty() {
+            return Err(format!(
+                "`{path}` is append-only: this body drops {} entr{} it holds — {}; pass `--replace` to \
+                 rewrite the whole file",
+                left.len(),
+                if left.len() == 1 { "y" } else { "ies" },
+                left.join("; ")
+            ));
+        }
+    }
     apply(root, Changes::new(root).with(path, text), &options, git, &lock)
+}
+
+/// The entries `body` leaves out of `old`, each quoted by its opening words.
+///
+/// An entry is a top-level `- ` bullet with its wrapped lines joined onto it (the same reading the
+/// task report and the debt selection use), so re-wrapping a body at another column leaves its
+/// entries present, while a reworded entry counts as gone: append-only means the text stays.
+fn dropped_entries(old: &str, body: &str) -> Vec<String> {
+    let mut held = crate::parse::markdown_bullets(body);
+    let mut dropped: Vec<String> = Vec::new();
+    for entry in crate::parse::markdown_bullets(old) {
+        if let Some(at) = held.iter().position(|candidate| *candidate == entry) {
+            held.remove(at);
+        } else {
+            dropped.push(opening_words(&entry));
+        }
+    }
+    dropped
+}
+
+/// The first words of an entry, enough for a person to find it in the file, and an ellipsis when
+/// there is more. The inline-code backticks are dropped, so an entry's own quoting cannot nest inside
+/// the quotes the refusal puts around it.
+fn opening_words(entry: &str) -> String {
+    const WORDS: usize = 12;
+    let mut words = entry.split_whitespace();
+    let opening: Vec<&str> = words.by_ref().take(WORDS).map(|word| word.trim_matches('`')).collect();
+    let quoted = opening.join(" ");
+    if words.next().is_some() { format!("\"{quoted} …\"") } else { format!("\"{quoted}\"") }
 }
 
 #[cfg(test)]
@@ -2191,6 +2243,67 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         let error = file(&root, &["plan/debt.md".to_owned(), "--body".to_owned(), "   \n".to_owned()], &FakeGit)
             .expect_err("an empty file says nothing");
         assert!(error.contains("would be empty"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_append_only_reference_file_refuses_a_body_that_drops_an_entry() {
+        // X129: a session appending one entry passes the whole body, and the body it built held only
+        // the entries it had in hand — the write then deleted every other one, and the gate saw a
+        // shorter file that is still legal.
+        let root = project("file-append", STATUS, BACKLOG, None);
+        let write =
+            |path: &str, body: &str| file(&root, &[path.to_owned(), "--body".to_owned(), body.to_owned()], &FakeGit);
+        let debt = |entries: &str| {
+            format!(
+                "# Known debt\n\nGaps accepted for now.\n\nTags: `[engine]` commands, `[render]` lighting, `[plan]` the plan tool.\n\n{entries}"
+            )
+        };
+        let first = debt(
+            "- `[engine]` the first gap, in the words a person reads\n  and it wraps onto a second line.\n\n\
+             - `[render]` the second gap.\n",
+        );
+        write("plan/debt.md", &first).expect("the file a command owns may be created");
+
+        let before = snapshot(&root);
+        let dropped = debt("- `[render]` the second gap.\n\n- `[engine]` a gap that arrived today.\n");
+        let error = write("plan/debt.md", &dropped).expect_err("an entry the file holds would leave");
+        assert!(error.contains("append-only"), "the refusal names the rule: {error}");
+        assert!(
+            error.contains("[engine] the first gap, in the words a person reads"),
+            "the refusal quotes the entry's opening words: {error}"
+        );
+        assert!(error.contains("--replace"), "the refusal names the flag that resets it: {error}");
+        assert_eq!(snapshot(&root), before, "a refusal writes nothing");
+
+        // The same body lands when a person asks for the whole-file rewrite: that is how an entry
+        // leaves once its fix is in.
+        file(
+            &root,
+            &["plan/debt.md".to_owned(), "--body".to_owned(), dropped.clone(), "--replace".to_owned()],
+            &FakeGit,
+        )
+        .expect("--replace rewrites the whole file");
+        assert!(!text(&root, "plan/debt.md").contains("the first gap"), "the entry left");
+
+        // A body that adds an entry while keeping every one the file holds lands: re-wrapping an
+        // entry at another column is the same entry, so the guard does not cry wolf over a reflow.
+        let added = debt(
+            "- `[render]` the second gap.\n\n- `[engine]` a gap that arrived today.\n\n\
+             - `[plan]` one more, wrapped\n  somewhere else.\n",
+        );
+        write("plan/debt.md", &added).expect("an entry added to a file is written");
+        assert!(
+            text(&root, "plan/debt.md").contains("one more, wrapped\n  somewhere else."),
+            "the entry is there, in the wrapping the body asked for"
+        );
+
+        // `plan/questions.md` is the second append-only file, and it carries the same guard.
+        write("plan/questions.md", "# Open questions\n\n- A question the owner answers.\n")
+            .expect("the first body creates the file");
+        let error = write("plan/questions.md", "# Open questions\n\n- Another question.\n")
+            .expect_err("a question the file holds would leave");
+        assert!(error.contains("A question the owner answers."), "{error}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
