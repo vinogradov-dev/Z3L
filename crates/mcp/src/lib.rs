@@ -52,7 +52,7 @@ use model::Project;
 use rmcp::ServerHandler;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, Wake, queued};
+pub use channel::{Answering, BridgeError, Call, Channel, ChannelError, Mailbox, Pending, Wake, bridge, queued};
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};

@@ -61,6 +61,7 @@ usage: z3l                 open the editor
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
        z3l mcp serve [<scene.z3l>] [--product <node>] [--attach]
+       z3l mcp bridge    carry this process's standard streams into the open window's channel
        z3l inspect <scene.z3l> [--product <node>]
        z3l query --resources
        z3l query <scene.z3l> tree|box|bounds|parts|diagnostics|niche [--id <node>] [--at <x,y,z>]
@@ -115,6 +116,13 @@ document lives in memory and every answer says nothing was written.
                      an ephemeral port, a token minted for this run and written into the settings
                      folder, and `ui_inspect` beside the five tools. The channel stops when standard
                      input closes, and that is how a parent ends it.
+
+mcp bridge carries this process's standard input and output into the control channel the open
+window published, and back. It is the command an agent process is handed as one of its MCP servers:
+the program speaks the protocol on its own stdio, the bridge presents the run token from the settings
+folder and copies bytes, and every call still lands in the window at a frame boundary. It prints
+nothing on standard output, because that stream is the protocol's, and it stops when either side
+closes. The token is never in the bridge's own arguments.
 
 query reads the scene and prints one JSON answer; it never writes:
   tree         every node with its id, kind, name and children
@@ -172,6 +180,11 @@ pub enum Command {
     Run(RunArgs),
     /// Serve the tools over the standard streams and exit when the client closes them.
     Mcp(McpArgs),
+    /// Carry this process's standard streams into the open window's control channel and back.
+    ///
+    /// It is the MCP server an agent process is handed: the process speaks the protocol on its own
+    /// stdio, and the door it reaches is the one window a person is looking at (ADR 0188, ADR 0230).
+    McpBridge,
     /// Read the scene and print one JSON report.
     Query(QueryArgs),
     /// Run the inspector's rules over a saved scene and print what they prove.
@@ -554,22 +567,30 @@ fn run_args(args: &[String]) -> Result<Command, CliError> {
     Ok(Command::Run(RunArgs { scene, commands, out, product, dry_run }))
 }
 
-/// Reads the words after `mcp`: the one subcommand `serve`, an optional scene, the product and
-/// whether the local channel is the door.
+/// Reads the words after `mcp`: the two subcommands `serve` and `bridge`, and `serve`'s own scene,
+/// product and channel switch.
 ///
-/// One subcommand is the whole surface today, and `serve` is spelled out rather than implied so a
-/// later `mcp client` or `mcp attach` cannot silently change what a line does.
+/// Every subcommand is spelled out rather than implied so a later verb cannot silently change what
+/// a line does.
+///
+/// `bridge` takes no argument at all: it finds the window through the file the window published in
+/// the settings folder, so the token never travels in an agent's command line or environment.
 fn mcp_args(args: &[String]) -> Result<Command, CliError> {
     let mut words = args.iter();
     match words.next().map(String::as_str) {
         Some("-h" | "--help") => return Ok(Command::Help(USAGE)),
+        Some("bridge") => return bridge_args(words),
         Some("serve") => {}
         Some(other) => {
             return Err(CliError::Usage(format!(
-                "`mcp {other}` is not a subcommand; run `z3l mcp serve [<scene.z3l>]`"
+                "`mcp {other}` is not a subcommand; run `z3l mcp serve [<scene.z3l>]` or `z3l mcp bridge`"
             )));
         }
-        None => return Err(CliError::Usage("`mcp` needs a subcommand: `z3l mcp serve [<scene.z3l>]`".to_owned())),
+        None => {
+            return Err(CliError::Usage(
+                "`mcp` needs a subcommand: `z3l mcp serve [<scene.z3l>]` or `z3l mcp bridge`".to_owned(),
+            ));
+        }
     }
     let mut scene: Option<PathBuf> = None;
     let mut product: Option<Id> = None;
@@ -589,6 +610,17 @@ fn mcp_args(args: &[String]) -> Result<Command, CliError> {
         }
     }
     Ok(Command::Mcp(McpArgs { scene, product, attach }))
+}
+
+/// Reads the words after `mcp bridge`: nothing, because the window is found in the settings folder.
+fn bridge_args(mut words: std::slice::Iter<'_, String>) -> Result<Command, CliError> {
+    match words.next().map(String::as_str) {
+        None => Ok(Command::McpBridge),
+        Some("-h" | "--help") => Ok(Command::Help(USAGE)),
+        Some(other) => Err(CliError::Usage(format!(
+            "`mcp bridge` takes no argument, and `{other}` is one; it finds the window in the settings folder"
+        ))),
+    }
 }
 
 /// Reads the words after `inspect`: one scene and an optional product.
@@ -765,6 +797,10 @@ pub fn run(command: &Command) -> Option<i32> {
             Err(error) => fail(&error, EXIT_FAILED),
         }),
         Command::Mcp(args) => Some(match served::perform(args) {
+            Ok(()) => EXIT_OK,
+            Err(error) => fail(&error, EXIT_FAILED),
+        }),
+        Command::McpBridge => Some(match served::bridge() {
             Ok(()) => EXIT_OK,
             Err(error) => fail(&error, EXIT_FAILED),
         }),

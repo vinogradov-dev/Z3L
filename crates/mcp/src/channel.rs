@@ -77,6 +77,9 @@ const PROBE_DEADLINE: Duration = Duration::from_millis(250);
 const ACCEPTED: &[u8] = b"ok\n";
 const REFUSED: &[u8] = b"refused\n";
 
+/// The same good answer as the bridge reads it back, without the newline it was read with.
+const ACCEPTED_TEXT: &str = "ok";
+
 /// The sentence a call answers with when the host has gone away between the queue and the answer.
 const GONE: &str = "the window is gone: the channel outlived the document it served";
 
@@ -342,6 +345,101 @@ impl fmt::Display for ChannelError {
 }
 
 impl std::error::Error for ChannelError {}
+
+/// Why a bridge could not carry the window's channel.
+///
+/// Every sentence says which of the three facts the caller needs: no window answers, the window
+/// refused this run's token, or the pipe itself failed. It never carries a token (ADR 0188).
+#[derive(Debug)]
+pub enum BridgeError {
+    /// No window is reachable at the port the settings folder names.
+    NoWindow(PathBuf),
+    /// A window answered and refused the token: the file belongs to another run.
+    Refused(PathBuf),
+    /// The runtime, the socket or the pipe failed, with the reason.
+    Failed(String),
+}
+
+impl fmt::Display for BridgeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoWindow(file) => write!(
+                formatter,
+                "no Z3L window answers on the channel `{}` names: open the window and switch the local \
+                 channel on in Settings",
+                file.display()
+            ),
+            Self::Refused(file) => write!(
+                formatter,
+                "a Z3L window refused the token in `{}`: the file belongs to another run, so open the \
+                 window again",
+                file.display()
+            ),
+            Self::Failed(reason) => write!(formatter, "the channel could not be carried: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for BridgeError {}
+
+/// Carries this process's standard streams into the window's channel and back, until either ends.
+///
+/// This is the fourth use of one door rather than a new one (ADR 0188): a program that speaks MCP
+/// over its own stdio — an agent process the person already runs, handed the channel as one of its
+/// MCP servers — is given `z3l mcp bridge` as that server's command, and every call it makes still
+/// becomes a [`Call`] the window answers at a frame boundary. The bridge speaks no protocol of its
+/// own: it presents the run token and then copies bytes, so it cannot grant a tool, refuse one, or
+/// read a document.
+///
+/// The token comes from the file the window publishes, which is the way ADR 0188 says a client
+/// learns the port: the process being bridged never sees the token in its own arguments or
+/// environment.
+pub fn bridge(directory: &Path) -> Result<(), BridgeError> {
+    let runtime = crate::make_runtime().map_err(|error| BridgeError::Failed(error.to_string()))?;
+    runtime.block_on(bridge_stream(directory, tokio::io::stdin(), tokio::io::stdout()))
+}
+
+/// [`bridge`] over one pair of streams, which is what a test hands in.
+pub async fn bridge_stream<R, W>(directory: &Path, mut reader: R, mut writer: W) -> Result<(), BridgeError>
+where
+    R: AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let file = Channel::file(directory);
+    let published = read_published(&file).ok_or_else(|| BridgeError::NoWindow(file.clone()))?;
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, published.port));
+    let mut socket = tokio::net::TcpStream::connect(address).await.map_err(|_| BridgeError::NoWindow(file.clone()))?;
+    let presented = format!("{}\n", published.token);
+    socket
+        .write_all(presented.as_bytes())
+        .await
+        .map_err(|error| BridgeError::Failed(format!("present the token: {error}")))?;
+    let answer = read_line(&mut socket).await.map_err(|error| BridgeError::Failed(error.to_string()))?;
+    if answer != ACCEPTED_TEXT {
+        return Err(BridgeError::Refused(file));
+    }
+    let (mut from_window, mut to_window) = socket.into_split();
+    let up = async move {
+        let carried = tokio::io::copy(&mut reader, &mut to_window).await;
+        // The window reads until this end closes, so the end of the local input is said out loud.
+        let _ = to_window.shutdown().await;
+        carried
+    };
+    let down = async move {
+        let carried = tokio::io::copy(&mut from_window, &mut writer).await;
+        let _ = writer.flush().await;
+        carried
+    };
+    tokio::pin!(up, down);
+    // One side closing ends the bridge: a process that has finished its answer closes its own end,
+    // and a window that has gone must not leave the process waiting on a pipe that will never move.
+    let carried = tokio::select! {
+        carried = &mut up => carried,
+        carried = &mut down => carried,
+    };
+    carried.map_err(|error| BridgeError::Failed(error.to_string()))?;
+    Ok(())
+}
 
 /// One running channel: its port, its token, its thread and the file that publishes it.
 pub struct Channel {
@@ -802,6 +900,111 @@ mod tests {
         let _answered = mailbox.post(Call::Inspect).expect("a second call queues");
         assert_eq!(rung.load(Ordering::SeqCst), 2, "and every call after that rings at once");
         channel.shutdown();
+    }
+
+    /// A window of the test's own: a socket that demands the token and then echoes one frame.
+    ///
+    /// It is the handshake and the pipe in one place, with no rmcp and no document, so what the
+    /// bridge is asserted for is exactly what it is: it presents the token and copies bytes.
+    fn toy_window(listener: std::net::TcpListener, answer: &'static [u8]) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+
+            let (mut stream, _) = listener.accept().expect("the bridge connects");
+            let mut reader = BufReader::new(stream.try_clone().expect("the socket clones for reading"));
+            let mut seen = String::new();
+            reader.read_line(&mut seen).expect("the token line");
+            stream.write_all(answer).expect("the answer to the token");
+            stream.flush().expect("flush");
+            if answer == REFUSED {
+                return seen;
+            }
+            let mut frame = [0u8; 6];
+            reader.read_exact(&mut frame).expect("one frame");
+            stream.write_all(&frame).expect("the echo");
+            stream.flush().expect("flush");
+            seen
+        })
+    }
+
+    /// A settings folder publishing one loopback port and token, as a window does.
+    fn publish_to(directory: &Path, port: u16, token: &str) {
+        std::fs::create_dir_all(directory).expect("the folder");
+        let body = json!({ "port": port, "token": token }).to_string();
+        std::fs::write(Channel::file(directory), body).expect("the file");
+    }
+
+    #[test]
+    fn the_bridge_presents_the_token_and_then_carries_bytes_both_ways() {
+        // The program an agent process is handed speaks MCP over its own stdio; the window speaks it
+        // over one loopback socket behind a run token. The bridge is the pipe between the two, and
+        // it reads the token from the file the window published, so the token never enters the
+        // bridged process's arguments or environment (ADR 0188).
+        let runtime = crate::make_runtime().expect("a runtime");
+        let directory = testkit::scratch_dir("channel-bridge");
+        let token = mint().expect("the operating system gives bytes");
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
+        let port = listener.local_addr().expect("the bound port").port();
+        publish_to(&directory, port, &token);
+        let window = toy_window(listener, ACCEPTED);
+
+        let (mut local, far) = tokio::io::duplex(64);
+        let (reader, writer) = tokio::io::split(far);
+        let (carried, echoed) = runtime.block_on(async move {
+            let local_end = async move {
+                local.write_all(b"hello\n").await.expect("a frame goes out");
+                let mut echoed = [0u8; 6];
+                local.read_exact(&mut echoed).await.expect("the answer comes back");
+                drop(local);
+                echoed
+            };
+            tokio::join!(bridge_stream(&directory, reader, writer), local_end)
+        });
+        carried.expect("the bridge carried the bytes");
+
+        assert_eq!(&echoed, b"hello\n", "a frame crossed the bridge whole");
+        let seen = window.join().expect("the window finished");
+        assert_eq!(seen.trim_end(), token, "the bridge presented the published token");
+    }
+
+    #[test]
+    fn a_folder_that_names_no_window_is_told_to_open_one() {
+        // A stale file is the ordinary way this fails: the window closed and removed the token it
+        // published, or the file names a port that answers nothing. The sentence says what to do
+        // rather than naming a socket error (ADR 0188).
+        let runtime = crate::make_runtime().expect("a runtime");
+        let directory = testkit::scratch_dir("channel-bridge-none");
+        let (first, second) = tokio::io::duplex(8);
+        publish_to(&directory, 1, &mint().expect("a token"));
+        let error =
+            runtime.block_on(bridge_stream(&directory, first, second)).expect_err("nothing answers on port 1");
+        assert!(matches!(error, BridgeError::NoWindow(_)), "{error:?}");
+        assert!(error.to_string().contains("open the window"), "{error}");
+
+        let empty = testkit::scratch_dir("channel-bridge-empty");
+        let (first, second) = tokio::io::duplex(8);
+        let error = runtime
+            .block_on(bridge_stream(&empty, first, second))
+            .expect_err("a folder with no file names no window");
+        assert!(matches!(error, BridgeError::NoWindow(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_window_that_refuses_the_token_is_named_rather_than_retried() {
+        let runtime = crate::make_runtime().expect("a runtime");
+        let directory = testkit::scratch_dir("channel-bridge-refused");
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
+        let port = listener.local_addr().expect("the bound port").port();
+        publish_to(&directory, port, &mint().expect("a token"));
+        let window = toy_window(listener, REFUSED);
+
+        let (first, second) = tokio::io::duplex(8);
+        let error = runtime
+            .block_on(bridge_stream(&directory, first, second))
+            .expect_err("a refused token ends the bridge");
+        window.join().expect("the window finished");
+        assert!(matches!(error, BridgeError::Refused(_)), "{error:?}");
+        assert!(error.to_string().contains("refused the token"), "{error}");
     }
 
     #[cfg(unix)]
