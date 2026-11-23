@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X120 state=idle base=64edc50 updated=2026-11-23
+STATE: milestone=M7 phase=T task=X121 state=idle base=47da4f4 updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -55,8 +55,7 @@ batch started from plus one (X128, ADR 0234).
 
 ## Next
 
-X120 is next: switching an orthographic view to perspective can drop the camera at the distance cap,
-and the wheel cannot bring it back
+X121 centres the standard views on the scene, so top and side show the model instead of a corner.
 
 ## Index
 
