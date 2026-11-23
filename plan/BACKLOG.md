@@ -104,6 +104,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
+- `[~]` **J25** the program knows its providers and lists their models instead of asking the person for a header
+  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
+   preset fills the address, a Go endpoint routes by model family, and the model list comes
+   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
+   product surface instead of a free-text endpoint.
+  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
+   address) with base URLs and the Go protocol table by model family; a model list from `GET
+   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
+   provider names are data and one wire still serves the ordinary case; the protocol matrix is
+   derived from the model name, not a second adapter per provider.
+  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
+   model reaches its family's wire; the person never types a header; the key is not in
+   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
+  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
+
 ## Bugs
 - `[ ]` **O15** no workshop row carries an 18 mm board with a 1 mm edge, so the recipe needs its own catalogue
   Why: Measured 2026-11-21: the workshop directory this machine reads
@@ -675,20 +690,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-- `[ ]` **J25** the program knows its providers and lists their models instead of asking the person for a header
-  Why: The owner asked the program to know its providers and models, as SolidCraft does: a
-   preset fills the address, a Go endpoint routes by model family, and the model list comes
-   from the endpoint. X124 removed the raw header field; this task makes the knowledge a
-   product surface instead of a free-text endpoint.
-  Shape: A provider preset table (OpenCode Go, DeepSeek, OpenAI, Ollama, LM Studio, a custom
-   address) with base URLs and the Go protocol table by model family; a model list from `GET
-   {base}/models` with a picker; the key keeps its two homes. ADR 0231 amends ADR 0189:
-   provider names are data and one wire still serves the ordinary case; the protocol matrix is
-   derived from the model name, not a second adapter per provider.
-  Done: A preset fills the address and a model is chosen from the endpoint list; an OpenCode Go
-   model reaches its family's wire; the person never types a header; the key is not in
-   settings; a test covers the preset table and the list parser; `cargo xtask ci` is green.
-  `files: crates/mcp/src/openai.rs,crates/ui/src/settings.rs,crates/text/src/messages.rs,app/src/chat.rs`
 - `[ ]` **J26** a simple request feels long because nothing says what the agent is doing
   Why: The owner says a simple request takes long and the panel does not say what the agent is
    doing. The OpenAI backend waits for one whole completion, the panel shows one static
