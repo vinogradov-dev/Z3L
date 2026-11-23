@@ -15,7 +15,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use engine::{BatchOptions, BatchStep, CommandRegistry, EditScope, Query, Session};
+use engine::{AgentMode, BatchOptions, BatchStep, CommandRegistry, EditScope, Query, Session};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
@@ -31,7 +31,7 @@ use crate::preview::{MAX_BYTES, PreviewSize, Previewer, base64};
 use crate::report::{self, Write};
 use crate::tools::{
     Answer, BatchRequest, CommandListRequest, FindingsRequest, PreviewRequest, RunRequest, StepRequest, TOOL_BATCH,
-    TOOL_FINDINGS, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, parse,
+    TOOL_FINDINGS, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, TOOL_UNDO, UndoRequest, parse,
 };
 
 /// What the server tells a client about the vocabulary it is about to use.
@@ -46,7 +46,9 @@ commands that cannot run in this session with the sentence that says why. Dispat
 one undo entry, and by default a refusal takes back every step before it. A step names what it \
 creates with `as` and a later step refers to that name as `{\"$ref\": \"<name>\"}`, so a part and \
 the machining on it are one call. A furniture part is born only inside the open product, so name one with `product` when the scene holds several: opening it \
-is a view operation and not an undo entry, and the answer says which product the batch ran in. Read \
+is a view operation and not an undo entry, and the answer says which product the batch ran in. Call \
+`undo` to take back the last entry a turn landed — the document returns to exactly what it held \
+before it — and read the revision the answer reports rather than assuming one. Read \
 the scene with `query` and never guess a number: a length is integer micrometres, a placement's \
 translation is floating-point millimetres, and an angle is integer millidegrees — every schema \
 annotates the `unit` of each such field, and every answer names it (`size_um`, `origin_mm`). Call \
@@ -130,6 +132,15 @@ impl CommandServer {
         asking(&session, query)
     }
 
+    /// The `undo` answer: one entry taken back, or the sentence that says why none was.
+    pub fn undo(&self) -> Answer {
+        let mut session = match self.session.lock() {
+            Ok(session) => session,
+            Err(_) => return Answer::refused(BUSY),
+        };
+        undo(&mut session)
+    }
+
     /// Performs one tool call, naming the tool in the sentence a malformed request answers with.
     fn call(&self, name: &str, arguments: Option<Map<String, Value>>) -> Result<Answer, ErrorData> {
         match name {
@@ -149,6 +160,10 @@ impl CommandServer {
                 let query = parse::<Query>(TOOL_QUERY, arguments).map_err(tool_error)?;
                 Ok(self.ask(query))
             }
+            TOOL_UNDO => {
+                let _: UndoRequest = parse(TOOL_UNDO, arguments).map_err(tool_error)?;
+                Ok(self.undo())
+            }
             TOOL_FINDINGS => {
                 let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
                 Ok(self.findings())
@@ -160,7 +175,7 @@ impl CommandServer {
             other => Err(ErrorData::invalid_params(
                 format!(
                     "no tool is named `{other}`; this server offers {TOOL_LIST}, {TOOL_RUN}, {TOOL_BATCH}, \
-                     {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
+                     {TOOL_UNDO}, {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
                 ),
                 None,
             )),
@@ -303,6 +318,29 @@ pub(crate) fn step_of(step: &StepRequest) -> BatchStep {
     match &step.name {
         Some(name) => engine_step.named(name.clone()),
         None => engine_step,
+    }
+}
+
+/// The `undo` answer: the document took back one entry, and what it holds now.
+///
+/// It is a tool and not a command because a command is a step of a batch, and a batch is one undo
+/// entry: taking one back from inside the entry it would be taking back is a contradiction. So the
+/// history answers for itself, and the answer says the revision the document holds and whether
+/// another entry is left, which is how a caller knows it undid exactly the turn it meant to.
+///
+/// [`AgentMode::Plan`] refuses it for the same reason it refuses a batch: undoing is a write, and plan
+/// and build are the person's switch (ADR 0190). The sentence is the batch's own [`PLAN_NOTE`],
+/// because a caller that reads it once should not have to learn a second wording for the same switch.
+pub fn undo(session: &mut Session) -> Answer {
+    if session.agent_mode() == AgentMode::Plan {
+        return Answer::refused(report::PLAN_NOTE);
+    }
+    match session.undo() {
+        Ok(()) => Answer::ok(json!({
+            "revision": session.project().revision().get(),
+            "can_undo": session.can_undo(),
+        })),
+        Err(error) => Answer::refused(error.to_string()),
     }
 }
 

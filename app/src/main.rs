@@ -904,6 +904,10 @@ impl App {
         match call {
             mcp::Call::List => mcp::Answer::ok(mcp::listing(&self.tabs.active().session)),
             mcp::Call::Ask(query) => mcp::asking(&self.tabs.active().session, *query),
+            // Undoing is the person's own Ctrl+Z, performed by the tab whose history holds the entry
+            // a caller is taking back; the session's dirty marker follows it, so the tab row says the
+            // document moved (ADR 0190, ADR 0230).
+            mcp::Call::Undo => mcp::undo(&mut self.tabs.active_mut().session),
             mcp::Call::Findings => mcp::Answer::ok(mcp::findings(&self.tabs.active().session)),
             mcp::Call::Inspect => match serde_json::to_value(self.window_state()) {
                 Ok(value) => mcp::Answer::ok(value),

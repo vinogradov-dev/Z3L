@@ -131,6 +131,7 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
                     mcp::dispatch(&mut session, request, mcp::Door::Headless { sink: sink.as_deref() })
                 }
                 mcp::Call::Preview(request) => mcp::preview(&session, request, previewer.as_deref()),
+                mcp::Call::Undo => mcp::undo(&mut session),
                 mcp::Call::Inspect => mcp::Answer::refused(NO_WINDOW),
             };
             pending.answer(answer);

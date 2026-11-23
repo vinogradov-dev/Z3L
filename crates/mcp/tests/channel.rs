@@ -70,6 +70,7 @@ fn answer(session: &mut Session, call: &Call) -> Answer {
         Call::List => Answer::ok(listing(session)),
         Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None, scope: None }),
         Call::Ask(query) => mcp::asking(session, *query),
+        Call::Undo => mcp::undo(session),
         Call::Findings => Answer::ok(mcp::findings(session)),
         Call::Preview(request) => mcp::preview(session, request, None),
         Call::Inspect => Answer::ok(json!(mcp::Window::default())),
@@ -114,7 +115,8 @@ async fn a_token_reaches_the_commands_and_a_request_without_one_never_does() {
     assert!(names.contains(&TOOL_INSPECT), "an attached window reports on itself: {names:?}");
     assert!(names.contains(&mcp::TOOL_FINDINGS), "and it inspects the document: {names:?}");
     assert!(names.contains(&mcp::TOOL_PREVIEW), "and it draws the picture it owns the device for: {names:?}");
-    assert_eq!(names.len(), 7, "the coarse tools and the window report");
+    assert!(names.contains(&mcp::TOOL_UNDO), "and it takes back the last entry: {names:?}");
+    assert_eq!(names.len(), 8, "the coarse tools and the window report");
 
     // `command_list` is answered by the host, at the moment a frame would answer it.
     let body = called(&mut client, CallToolRequestParams::new(TOOL_LIST), &mut mailbox, &mut session).await;

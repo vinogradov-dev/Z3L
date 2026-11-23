@@ -59,10 +59,10 @@ pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, S
 pub use inspect::{Tab, Window};
 pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
 pub use report::PLAN_NOTE;
-pub use server::{CommandServer, Door, asking, dispatch, findings, listing, preview, serve_session};
+pub use server::{CommandServer, Door, asking, dispatch, findings, listing, preview, serve_session, undo};
 pub use tools::{
     Answer, BatchRequest, CommandListRequest, FindingsRequest, InspectRequest, PreviewRequest, RunRequest, StepRequest,
-    TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN,
+    TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, TOOL_UNDO, UndoRequest,
 };
 
 /// Where a served session writes the document a batch changed.

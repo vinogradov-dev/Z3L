@@ -8,9 +8,10 @@
 //! `CommandError`'s display already is.
 //!
 //! The tools are coarse and few on purpose. `command_list` is the discovery surface, `command_run`
-//! is one step, `command_batch` is a list of steps that lands in one undo entry, `query` is the
-//! read model, `inspect` is the mistakes the rules prove and `render_preview` is the scene as one
-//! picture. Two tools per command id would be a hundred names for no gain.
+//! is one step, `command_batch` is a list of steps that lands in one undo entry, `undo` takes one
+//! entry back, `query` is the read model, `inspect` is the mistakes the rules prove and
+//! `render_preview` is the scene as one picture. Two tools per command id would be a hundred names
+//! for no gain.
 
 use std::sync::Arc;
 
@@ -28,6 +29,8 @@ pub const TOOL_LIST: &str = "command_list";
 pub const TOOL_RUN: &str = "command_run";
 /// The tool that dispatches a list of commands as one operation.
 pub const TOOL_BATCH: &str = "command_batch";
+/// The tool that takes back the last undo entry.
+pub const TOOL_UNDO: &str = "undo";
 /// The tool that asks the scene a question and writes nothing.
 pub const TOOL_QUERY: &str = "query";
 /// The tool that reports the mistakes the rules can prove, and writes nothing.
@@ -76,6 +79,14 @@ const fn default_height() -> u32 {
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindingsRequest {}
+
+/// The arguments of `undo`: none.
+///
+/// Taking back the last entry is one act with no parameter: which entry it is is the history's
+/// answer, and a caller that wants two entries back calls it twice.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UndoRequest {}
 
 /// The arguments of `command_list`: none.
 ///
@@ -330,6 +341,17 @@ pub fn headless_definitions() -> Vec<Tool> {
             object_schema::<BatchRequest>(),
         ),
         Tool::new(
+            TOOL_UNDO,
+            "Take back the last undo entry of this session, so a turn that landed something wrong is 
+             corrected instead of pushed further: the document returns to exactly what it held before 
+             that entry, and the answer reports the revision it now holds and whether another entry is 
+             left to take back. One message of a chat turn is one entry (ADR 0187), so this takes back 
+             a whole message rather than one call of it. A session in plan mode refuses: plan and 
+             build are the switch a person turns in the assistant panel, and undoing is a write. A 
+             session with nothing to undo refuses with that sentence.",
+            object_schema::<UndoRequest>(),
+        ),
+        Tool::new(
             TOOL_QUERY,
             "Ask the scene one question and write nothing: `tree`, `box`, `bounds`, `parts`, \
              `diagnostics` or `niche`. The answer is the report the command line prints, so a caller \
@@ -459,12 +481,12 @@ mod tests {
         }
         let headless = headless_definitions();
         let names: Vec<&str> = headless.iter().map(|tool| tool.name.as_ref()).collect();
-        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
+        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_UNDO, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
         let offered = attached_definitions();
         let attached: Vec<&str> = offered.iter().map(|tool| tool.name.as_ref()).collect();
         assert_eq!(
             attached,
-            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW, TOOL_INSPECT],
+            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_UNDO, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW, TOOL_INSPECT],
             "an attached channel adds the window's own report to the same tools"
         );
     }

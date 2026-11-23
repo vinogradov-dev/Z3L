@@ -49,7 +49,7 @@ use crate::ServeError;
 use crate::server::{result, tool_error};
 use crate::tools::{
     Answer, BatchRequest, CommandListRequest, FindingsRequest, PreviewRequest, RunRequest, TOOL_BATCH, TOOL_FINDINGS,
-    TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, attached_definitions, parse,
+    TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, TOOL_UNDO, UndoRequest, attached_definitions, parse,
 };
 
 /// The file the channel publishes its port and token in, inside the settings folder.
@@ -107,6 +107,8 @@ pub enum Call {
     Dispatch(BatchRequest),
     /// `query`: one question the read model already answers.
     Ask(Query),
+    /// `undo`: one entry of a person's history taken back.
+    Undo,
     /// `inspect`: the mistakes the rules can prove, in the document a person is looking at.
     Findings,
     /// `render_preview`: the scene as one picture, drawn by the host that owns the device.
@@ -122,6 +124,7 @@ impl Call {
             Self::List => "listing",
             Self::Dispatch(_) => "batch",
             Self::Ask(_) => "query",
+            Self::Undo => "undo",
             Self::Findings => "inspection",
             Self::Preview(_) => "preview",
             Self::Inspect => "window report",
@@ -801,6 +804,10 @@ fn intent(name: &str, arguments: Option<Map<String, Value>>) -> Result<Call, Err
             Call::Dispatch(request)
         }
         TOOL_QUERY => Call::Ask(parse::<Query>(TOOL_QUERY, arguments).map_err(tool_error)?),
+        TOOL_UNDO => {
+            let _: UndoRequest = parse(TOOL_UNDO, arguments).map_err(tool_error)?;
+            Call::Undo
+        }
         TOOL_FINDINGS => {
             let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
             Call::Findings
@@ -811,7 +818,7 @@ fn intent(name: &str, arguments: Option<Map<String, Value>>) -> Result<Call, Err
             return Err(ErrorData::invalid_params(
                 format!(
                     "no tool is named `{other}`; a window offers {TOOL_INSPECT}, {TOOL_LIST}, {TOOL_RUN}, \
-                     {TOOL_BATCH}, {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
+                     {TOOL_BATCH}, {TOOL_UNDO}, {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
                 ),
                 None,
             ));
