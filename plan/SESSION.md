@@ -7,8 +7,8 @@ goal: a panel placed by a command can hang its origin above its own geometry, an
 steps:
   [ ] starting the task
 
-now: starting the task
+now: the design is on paper; the first edit is model::PanelType
 blocked: nothing
-run: cargo xtask task X117
+run: cargo test -p model --lib panel_type
 resume: read the first `files:` path and its callers
 ```
