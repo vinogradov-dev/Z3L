@@ -175,17 +175,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
    against the default directory rather than a fixture copy.
   `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
-- `[ ]` **X131** the assistant window cannot be made taller, so a long answer stays cut off
-  Why: Owner report 2026-11-23: «окно чата невозможно изменить по вертикали» — the assistant
-   window's height does not follow a drag, so a long answer stays cut off inside a short panel
-   and the person cannot read the whole of it without scrolling a strip the height of
-   TRANSCRIPT_HEIGHT.
-  Shape: The panel's height is the person's: the transcript takes whatever the window has and
-   the window keeps the size the drag gave it, so a taller window shows a taller transcript and
-   a short one keeps its minimum.
-  Done: A frame test drags the window's bottom edge, asserts the height grows, and asserts the
-   transcript's drawn height follows it while the window's own width stays as it was.
-  `files: app/src/chat.rs`
 - `[ ]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
   Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
    scenario starts from — still builds its standard parts from a raw `panel.create` with a
@@ -603,6 +592,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X131** the assistant window cannot be made taller, so a long answer stays cut off
+  Why: Owner report 2026-11-23: «окно чата невозможно изменить по вертикали» — the assistant
+   window's height does not follow a drag, so a long answer stays cut off inside a short panel
+   and the person cannot read the whole of it without scrolling a strip the height of
+   TRANSCRIPT_HEIGHT.
+  Shape: The panel's height is the person's: the transcript takes whatever the window has and
+   the window keeps the size the drag gave it, so a taller window shows a taller transcript and
+   a short one keeps its minimum.
+  Done: A frame test drags the window's bottom edge, asserts the height grows, and asserts the
+   transcript's drawn height follows it while the window's own width stays as it was.
+  `files: app/src/chat.rs` — `1e58c34`
 
 - `[x]` **J26** a simple request feels long because nothing says what the agent is doing
   Why: The owner says a simple request takes long and the panel does not say what the agent is
