@@ -632,6 +632,31 @@ mod tests {
     }
 
     #[test]
+    fn the_environment_names_the_first_home() {
+        // `std::env::set_var` is unsafe in edition 2024 and this crate forbids `unsafe`, so the
+        // variable's home is proved by re-running this binary with the variable set: the child reads
+        // a real environment through [`key`] itself, which is the path a person's shell takes.
+        let binary = std::env::current_exe().expect("the test binary's own path");
+        let child = std::process::Command::new(binary)
+            .args(["openai::tests::environment_home_probe", "--exact", "--ignored"])
+            .env(KEY_ENV, "env-key")
+            .output()
+            .expect("a child of the same test binary");
+        assert!(
+            child.status.success(),
+            "a child with `{KEY_ENV}` set finds the key: {}{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "run by `the_environment_names_the_first_home` in a child process"]
+    fn environment_home_probe() {
+        assert_eq!(key(None).expect("the environment names the key"), "env-key");
+    }
+
+    #[test]
     fn a_key_file_others_can_read_is_refused_before_it_is_used() {
         if !cfg!(unix) {
             return;
