@@ -290,6 +290,16 @@ fn a_cabinet_is_built_from_one_recipe_in_one_turn() {
 
     let steps = Client::steps("wardrobe-800x460x2200.jsonl");
     assert_eq!(steps.len(), 38, "the recipe is the 38 commands the fixture records");
+    // The carcass boards name their type and their base corner instead of a hand-written quaternion,
+    // so the recipe a model reads carries the word the typed create takes. The two doors are class
+    // `10.20` — no stance of the three — so they stay a raw `panel.create` with their turn written out
+    // (X132).
+    let named = |command: &str| steps.iter().filter(|step| step["command"] == json!(command)).count();
+    assert_eq!(
+        (named("panel.create.standard"), named("panel.create")),
+        (12, 2),
+        "the recipe names the boards it places: {steps:?}"
+    );
     let batch = json!({"steps": steps, "save": true});
     let turn = play(&mut client, &[("command_batch", batch)]);
     assert!(turn.refusals.is_empty(), "no step refused: {:?}", turn.refusals);

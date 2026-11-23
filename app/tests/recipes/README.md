@@ -47,7 +47,8 @@ depth includes the overlaid fronts, so the carcass is 442 deep and the back shee
 
 **The two units of one command.** A recipe line carries `nominal_size` as `Length` — integer
 micrometres — and `placement.translation` as `[f64; 3]` **millimetres** (`crates/model/src/placement.rs`
-is where placement coordinates meet floating-point millimetres). The JSON schema states neither, so a
+is where placement coordinates meet floating-point millimetres); the typed create spells the same pair
+`length` and `width` in micrometres and `at` in millimetres. The JSON schema states neither, so a
 recipe that writes micrometres in both is a wardrobe a thousand times its size: measured on
 2026-11-21, 2200 mm became 2 200 000 mm, `query diagnostics` said nothing (X116) and the render asked
 for a 3 585 601 mm camera distance. Every recipe here writes sizes in micrometres and positions in
@@ -71,13 +72,16 @@ opening between two surfaces, not a pitch between centres: 1646 mm of space over
 274, and the last cell takes the 2 mm the division leaves.
 
 A panel's local frame has its zero at the minimum corner, the plate in XY and the thickness along
-`+Z`, so a part stands up by being placed with a quarter turn. The turns are the model's own stances
-(`crates/model/src/project/fill.rs`, ADR 0105): the post is `rotation_y(-90°)` — `[0, -s, 0, s]` —
-which puts the board's zero corner at the **bottom** and its thickness along `+X`; a `+90°` turn
-hangs the origin at the top of the board instead (X117). The wall — the back and the doors — is
-`[-0.5, -0.5, -0.5, 0.5]`: length up, width across `+X`, thickness along `+Y`. `RectEdge::Top` —
-edge 3, the `+Y` edge — is the one a maker sees on a carcass board, so that is the edge banded; the
-doors are banded on all four.
+`+Z`, so a part stands up by a turn of that frame. The twelve carcass boards do not write that turn:
+they name their type and their base corner — `panel.create.standard` — and the command answers the
+stance of the class (`crates/model/src/panel_type.rs`, ADR 0105): `shelf` is the horizontal board
+under the frame it carries, `post` the upright whose thickness runs along `+X` (`rotation_y(-90°)`,
+which puts the board's zero corner at the **bottom**; a `+90°` turn hangs the origin at the top of
+the board instead, X117), and `wall` the board in the frontal plane. The three are classes `10.11`,
+`10.10` and `10.12`; the doors are `10.20`, which is no stance of the three, so they stay a raw
+`panel.create` with `[-0.5, -0.5, -0.5, 0.5]`: length up, width across `+X`, thickness along `+Y`.
+`RectEdge::Top` — edge 3, the `+Y` edge — is the one a maker sees on a carcass board, so that is the
+edge banded; the doors are banded on all four.
 
 **Left is `+X`.** The front view looks from `+Y`, so what a person standing in front of the piece
 sees on their left lies at `+X` (`crates/model/src/side.rs`): the shelves are the right-hand section

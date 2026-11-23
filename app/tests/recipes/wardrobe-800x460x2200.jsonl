@@ -1,26 +1,26 @@
-{"command": "panel.create", "as": "bottom", "params": {"parent": 2, "name": "Дно опорное", "nominal_size": {"length": 800000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [0, 4, 50], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "bottom", "params": {"parent": 2, "name": "Дно опорное", "material": "1-2", "type": "shelf", "at": [0, 4, 50], "length": 800000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "bottom"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "side-right", "params": {"parent": 2, "name": "Стойка правая", "nominal_size": {"length": 2114000, "width": 438000}, "material": "1-2", "class": 101000, "placement": {"translation": [18, 4, 68], "rotation": [0.0, -0.7071067811865476, 0.0, 0.7071067811865476]}}}
+{"command": "panel.create.standard", "as": "side-right", "params": {"parent": 2, "name": "Стойка правая", "material": "1-2", "type": "post", "at": [18, 4, 68], "length": 2114000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "side-right"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "side-left", "params": {"parent": 2, "name": "Стойка левая", "nominal_size": {"length": 2114000, "width": 438000}, "material": "1-2", "class": 101000, "placement": {"translation": [800, 4, 68], "rotation": [0.0, -0.7071067811865476, 0.0, 0.7071067811865476]}}}
+{"command": "panel.create.standard", "as": "side-left", "params": {"parent": 2, "name": "Стойка левая", "material": "1-2", "type": "post", "at": [800, 4, 68], "length": 2114000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "side-left"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "top", "params": {"parent": 2, "name": "Крыша накладная", "nominal_size": {"length": 800000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [0, 4, 2182], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "top", "params": {"parent": 2, "name": "Крыша накладная", "material": "1-2", "type": "shelf", "at": [0, 4, 2182], "length": 800000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "top"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "divider", "params": {"parent": 2, "name": "Перегородка", "nominal_size": {"length": 1736000, "width": 438000}, "material": "1-2", "class": 101000, "placement": {"translation": [409, 4, 68], "rotation": [0.0, -0.7071067811865476, 0.0, 0.7071067811865476]}}}
+{"command": "panel.create.standard", "as": "divider", "params": {"parent": 2, "name": "Перегородка", "material": "1-2", "type": "post", "at": [409, 4, 68], "length": 1736000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "divider"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "pantry-shelf", "params": {"parent": 2, "name": "Антресольная полка", "nominal_size": {"length": 764000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 1804], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "pantry-shelf", "params": {"parent": 2, "name": "Антресольная полка", "material": "1-2", "type": "shelf", "at": [18, 4, 1804], "length": 764000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "pantry-shelf"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "shelf-1", "params": {"parent": 2, "name": "Полка 1", "nominal_size": {"length": 373000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 342], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "shelf-1", "params": {"parent": 2, "name": "Полка 1", "material": "1-2", "type": "shelf", "at": [18, 4, 342], "length": 373000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "shelf-1"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "shelf-2", "params": {"parent": 2, "name": "Полка 2", "nominal_size": {"length": 373000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 634], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "shelf-2", "params": {"parent": 2, "name": "Полка 2", "material": "1-2", "type": "shelf", "at": [18, 4, 634], "length": 373000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "shelf-2"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "shelf-3", "params": {"parent": 2, "name": "Полка 3", "nominal_size": {"length": 373000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 926], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "shelf-3", "params": {"parent": 2, "name": "Полка 3", "material": "1-2", "type": "shelf", "at": [18, 4, 926], "length": 373000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "shelf-3"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "shelf-4", "params": {"parent": 2, "name": "Полка 4", "nominal_size": {"length": 373000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 1218], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "shelf-4", "params": {"parent": 2, "name": "Полка 4", "material": "1-2", "type": "shelf", "at": [18, 4, 1218], "length": 373000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "shelf-4"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "shelf-5", "params": {"parent": 2, "name": "Полка 5", "nominal_size": {"length": 373000, "width": 438000}, "material": "1-2", "class": 101100, "placement": {"translation": [18, 4, 1510], "rotation": [0.0, 0.0, 0.0, 1.0]}}}
+{"command": "panel.create.standard", "as": "shelf-5", "params": {"parent": 2, "name": "Полка 5", "material": "1-2", "type": "shelf", "at": [18, 4, 1510], "length": 373000, "width": 438000}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "shelf-5"}, "edge": 3, "material": "1-103", "included_in_size": true}}
-{"command": "panel.create", "as": "back", "params": {"parent": 2, "name": "Задняя стенка", "nominal_size": {"length": 2150000, "width": 800000}, "material": "1-3", "class": 101200, "placement": {"translation": [0, 0, 50], "rotation": [-0.5, -0.5, -0.5, 0.5]}}}
+{"command": "panel.create.standard", "as": "back", "params": {"parent": 2, "name": "Задняя стенка", "material": "1-3", "type": "wall", "at": [0, 0, 50], "length": 2150000, "width": 800000}}
 {"command": "panel.create", "as": "door-right", "params": {"parent": 2, "name": "Дверь правая", "nominal_size": {"length": 2150000, "width": 399000}, "material": "1-2", "class": 102000, "placement": {"translation": [0, 442, 50], "rotation": [-0.5, -0.5, -0.5, 0.5]}}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "door-right"}, "edge": 1, "material": "1-103", "included_in_size": true}}
 {"command": "panel.edge_banding.set", "params": {"panel": {"$ref": "door-right"}, "edge": 2, "material": "1-103", "included_in_size": true}}
