@@ -85,9 +85,15 @@ pub fn stub_endpoint_status(status: u16, body: impl Into<String>) -> (String, Re
     stub_seen(status, body.into())
 }
 
-/// What the stub read from one request: the JSON body and every header, names lowercased.
+/// What the stub read from one request: the path it asked for, the JSON body and every header,
+/// names lowercased.
 #[derive(Debug)]
 pub struct Request {
+    /// The path of the request line, as the client sent it (`/v1/models`).
+    ///
+    /// It is what a wire that reads a different endpoint is proved by: the base URL decides the
+    /// path, and a stub that answered whatever came in would hide a client that asked the wrong one.
+    pub path: String,
     /// The JSON body the client sent.
     pub body: Value,
     /// The headers in the order the client sent them, each name lowercased.
@@ -140,7 +146,16 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
             })
             .unwrap_or(0);
         if raw.len() >= head_end + length {
-            let body = serde_json::from_slice(&raw[head_end..head_end + length]).ok()?;
+            // A request with no body — a `GET` — carries no `Content-Length` and reads as `Null`,
+            // so a listing is served by the same stub a completion is.
+            let body = match length {
+                0 => Value::Null,
+                _ => serde_json::from_slice(&raw[head_end..head_end + length]).ok()?,
+            };
+            // The request line is `METHOD SP request-target SP HTTP-version`; the target carries the
+            // query a GET may use, so the whole of it is kept.
+            let path =
+                head.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or_default().to_owned();
             let headers = head
                 .lines()
                 .skip(1)
@@ -149,7 +164,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
                     Some((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
                 })
                 .collect();
-            return Some(Request { body, headers });
+            return Some(Request { path, body, headers });
         }
     }
 }

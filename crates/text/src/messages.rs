@@ -1469,6 +1469,28 @@ messages! {
         "The model name the endpoint answers with, spelled the way the endpoint spells it.",
         "Имя модели, которым отвечает адрес, ровно так, как его пишет сам адрес."
     ],
+    AssistantProvider = ["Provider", "Провайдер"],
+    AssistantProviderHint = [
+        "A known address fills the field below; the field stays yours to type in, and *Other address* keeps whatever is already there.",
+        "Известный адрес заполнит поле ниже; поле остаётся вашим, и «Другой адрес» оставляет в нём то, что уже введено."
+    ],
+    AssistantProviderOpenCodeGo = ["OpenCode Go", "OpenCode Go"],
+    AssistantProviderOpenCode = ["OpenCode", "OpenCode"],
+    AssistantProviderDeepSeek = ["DeepSeek", "DeepSeek"],
+    AssistantProviderOpenAi = ["OpenAI", "OpenAI"],
+    AssistantProviderOllama = ["Ollama (this computer)", "Ollama (этот компьютер)"],
+    AssistantProviderLmStudio = ["LM Studio (this computer)", "LM Studio (этот компьютер)"],
+    AssistantProviderCustom = ["Other address", "Другой адрес"],
+    AssistantModelsList = ["List models", "Показать модели"],
+    AssistantModelsListHint = [
+        "Asks the endpoint which models it answers and puts them beside the field. Nothing is sent but the request.",
+        "Спросит у адреса, какими моделями он отвечает, и покажет их рядом с полем. Ничего, кроме запроса, не отправляется."
+    ],
+    AssistantModelsListing = ["Asking the endpoint for its models…", "Запрашиваю у адреса список моделей…"],
+    AssistantModelsNone = ["The endpoint lists no models.", "Адрес не сообщил ни одной модели."],
+    AssistantModelsFailed = ["The models could not be listed: {}", "Не удалось получить список моделей: {}"],
+    AssistantModelsPick = ["Choose a model the endpoint listed", "Выберите модель из списка адреса"],
+    AssistantModelNamed = ["{} ({})", "{} ({})"],
     AssistantProcessWins = [
         "An agent process named here runs the loop itself; the model address above is used while that command is empty.",
         "Процесс агента, названный здесь, ведёт работу сам; адрес модели выше используется, пока эта команда пуста."

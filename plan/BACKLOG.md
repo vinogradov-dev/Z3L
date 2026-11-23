@@ -215,10 +215,11 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    disables the field while a turn is in flight, so the panel has one meaning at a time. A
    gesture still pauses the turn at the frame boundary, but it no longer decides what the row
    offers.
-  Done: A frame test holds a backend that never answers so the turn stays in flight, asserts
-   the panel draws Stop and not Send and that the field is disabled, presses Stop and asserts
-   the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
-   no turn in flight, which still draws Send.
+  Done: A frame test holds a turn in flight with a backend that never answers, asserts the
+   panel draws Stop and not Send, the field stays typable, and pressing Stop ends the turn and
+   draws the stopped line; a second assertion covers a carried piece with no turn in flight,
+   which still draws Send; a test opens the panel and asserts the caret stands in the field, so
+   the first key typed reaches it.
   `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
 - `[ ]` **X129** file rewrites a whole reference file, so an append-only body that lost entries destroys them without a word
   Why: Observed: a body handed to held three entries, and the write replaced five hundred lines
@@ -249,6 +250,18 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    banding, with thickness read from the row; the wardrobe recipe in `app/tests/recipes` runs
    against the default directory rather than a fixture copy.
   `files: crates/catalog/src/starter.rs,app/tests/recipes/catalogue`
+- `[ ]` **X131** the assistant window cannot be made taller, so a long answer stays cut off
+  Why: Owner report 2026-11-23: «окно чата невозможно изменить по вертикали» — the assistant
+   window's height does not follow a drag, so a long answer stays cut off inside a short panel
+   and the person cannot read the whole of it without scrolling a strip the height of
+   TRANSCRIPT_HEIGHT.
+  Shape: The panel's height is the person's: the transcript takes whatever the window has and
+   the window keeps the size the drag gave it, so a taller window shows a taller transcript and
+   a short one keeps its minimum.
+  Done: A frame test drags the window's bottom edge, asserts the height grows, and asserts the
+   transcript's drawn height follows it while the window's own width stays as it was.
+  `files: app/src/chat.rs`
+
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
