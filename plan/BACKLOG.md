@@ -104,26 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
-  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
-   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
-   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
-   landed at the top of the board (z = 2182) and the part grew downward. The model states the
-   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
-   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
-   `panel.create` takes a placement as it is, and neither the schema nor any check says which
-   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
-  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
-   created by a command has its origin at a corner of its base face, decided once for every
-   command that creates a part, so the horizontal and the upright placement cannot disagree
-   about which end is the origin. The fill stance then stops being the only place the rule is
-   written.
-  Done: A test creates each of the three types by command and asserts its zero corner sits at
-   the point, its class is the type's and the world box's lowest point is that corner's height;
-   a test asserts each type's length axis is never turned downwards; a panel built by the typed
-   command and one built by the fill tool name the same rotation, because both read one stance
-   table.
-  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs`
 - `[ ]` **X119** the view is fitted once on an empty scene, so a build is framed from 1.2 m at its corner and the orbit pivots off the model
   Why: Owner report 2026-11-21: "когда вращаю сцену, она вращается странно, словно ось камеры
    смотрит куда-то, но не в центр, ощущение, что сцена убегает от маленького поворота", and
@@ -678,6 +658,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
+  Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
+   угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
+   about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
+   landed at the top of the board (z = 2182) and the part grew downward. The model states the
+   other rule in three places - ADR 0082, ADR 0083 and the fill stance in
+   `crates/model/src/project/fill.rs` (`from_rotation_y(-FRAC_PI_2)`, base face first) - but
+   `panel.create` takes a placement as it is, and neither the schema nor any check says which
+   corner of the finished board the origin is. The rule therefore lives only in the fill tool.
+  Shape: The anchor rule is a property of the part, not of the tool that made it: a panel
+   created by a command has its origin at a corner of its base face, decided once for every
+   command that creates a part, so the horizontal and the upright placement cannot disagree
+   about which end is the origin. The fill stance then stops being the only place the rule is
+   written.
+  Done: A test creates each of the three types by command and asserts its zero corner sits at
+   the point, its class is the type's and the world box's lowest point is that corner's height;
+   a test asserts each type's length axis is never turned downwards; a panel built by the typed
+   command and one built by the fill tool name the same rotation, because both read one stance
+   table.
+  `files: crates/engine/src/panel_cmds,crates/model/src/project/fill.rs,crates/model/src/placement.rs` — `b685681`
 
 - `[x]` **J25** the program knows its providers and lists their models instead of asking the person for a header
   Why: The owner asked the program to know its providers and models, as SolidCraft does: a

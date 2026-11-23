@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=X117 state=doing base=577232e updated=2026-11-23
+STATE: milestone=M7 phase=T task=X119 state=idle base=cfdbd1a updated=2026-11-23
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -55,8 +55,8 @@ batch started from plus one (X128, ADR 0234).
 
 ## Next
 
-X117 is next: a panel placed by a command can hang its origin above its own geometry, and the anchor
-rule lives only in the fill tool
+X119 is next: the view is fitted once on an empty scene, so a build is framed from 1.2 m at its
+corner and the orbit pivots off the model
 
 ## Index
 
