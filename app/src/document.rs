@@ -193,6 +193,14 @@ impl Display {
 /// window answers input in between. A cheap scene never shows the message at all.
 pub(crate) const SLOW_REBUILD: Duration = Duration::from_millis(250);
 
+/// How long the status bar says that a view fitted itself to the scene.
+///
+/// A camera that moves with no hand on it has to say why (X119). The sentence is a fact about the
+/// last few seconds rather than about the view's state, so it expires instead of joining the
+/// readouts the bar keeps up to date: long enough to be read after a build lands, short enough to
+/// leave the row to the tool that comes next.
+pub(crate) const FIT_NOTICE: Duration = Duration::from_secs(6);
+
 /// What the last rebuild cost, and whether the pending one has announced itself yet.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Rebuild {
@@ -309,6 +317,11 @@ pub(crate) struct Document {
     /// World-space bounds of the latest evaluation, so *Frame all* fits the objects the scene has
     /// now instead of the ones it had when the file opened.
     scene_bounds: Bounds,
+    /// When the view was last fitted by itself, while it is saying so in the status bar (X119).
+    ///
+    /// A view nobody has framed follows the scene (X119), and a camera that moved on its own has to
+    /// say so: the bar carries the sentence for [`FIT_NOTICE`] after the fit, then drops it.
+    fit_notice: Option<Instant>,
     scene_revision: Revision,
     /// The editor's visibility revision the frame was built from. A hidden subtree changes the
     /// frame without touching the document revision, so the rebuild watches both (ADR 0065).
@@ -516,6 +529,7 @@ impl Document {
             scene,
             layout,
             scene_bounds,
+            fit_notice: None,
             target,
             file: FileMenu::new(),
             extra,
@@ -983,6 +997,17 @@ impl Document {
         &self.layout
     }
 
+    /// Whether a view fitted itself to the scene a moment ago, and the bar still owes the sentence.
+    pub(crate) fn fitted_recently(&self) -> bool {
+        self.fit_notice.is_some()
+    }
+
+    /// The world bounds of the latest evaluation, for a test that checks what a fit framed.
+    #[cfg(test)]
+    pub(crate) fn scene_bounds(&self) -> Bounds {
+        self.scene_bounds
+    }
+
     /// Whether the status bar should say «Перестроение…» on this frame.
     ///
     /// The shell asks before it syncs, so the frame that announces a heavy rebuild is the one that
@@ -1025,6 +1050,11 @@ impl Document {
         viewport: &ViewportSettings,
         colors: SceneColors,
     ) -> Result<(), String> {
+        self.age_fit_notice(ctx);
+        // A view nobody has framed follows the scene, on this frame rather than on the rebuild
+        // alone: the fit that has to happen is the one the person is about to see, and the hand may
+        // have let go of its tool since the last rebuild (X119).
+        self.fit_left_behind();
         let previous = self.display;
         self.display = Display::of(viewport, colors);
         if self.display.repaints(previous) {
@@ -1041,6 +1071,79 @@ impl Document {
             return Ok(());
         }
         self.refresh()
+    }
+
+    /// Fits every view a person has not framed while the model is outside it.
+    ///
+    /// The camera of a tab is fitted once, when it opens, and an empty scene has no bounds to fit:
+    /// the view starts 1.2 m from the document's corner, so a wardrobe built afterwards is drawn
+    /// from its base corner and the orbit turns about a point that is not the model. A view nobody
+    /// has navigated therefore follows the scene — it is fitted again on the first frame that finds
+    /// the model outside its frame — and the bar says so, so a camera that moved with no hand on it
+    /// never reads as one that moves by itself (X119). *Frame all*, an orbit, a pan, a zoom, a look
+    /// or a roll claims the view for the person, and from then on it is left alone.
+    ///
+    /// The fit waits while a gesture or an armed tool is reading the scene: a camera that moved under
+    /// a pointer that is placing a point, pulling a height or carrying a piece would land the next
+    /// click somewhere else than the screen showed (X119). The wait is not a loss — the next frame
+    /// after the hand lets go fits the view on the same bounds.
+    fn fit_left_behind(&mut self) {
+        if self.scene_in_hand() || !self.layout.follows_the_scene() {
+            return;
+        }
+        let Some(corners) = self.scene_bounds.corners() else {
+            // An empty scene has nothing to frame, and no centre to orbit about either.
+            return;
+        };
+        let Ok(fit) = home_camera(self.scene_bounds) else {
+            return;
+        };
+        if self.layout.fit_left_behind(fit, &corners, self.scene_rect) == 0 {
+            return;
+        }
+        self.fit_notice = Some(Instant::now());
+        self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
+    }
+
+    /// Whether a gesture or an armed tool is reading the scene right now.
+    ///
+    /// The automatic fit and this question meet at one rule: the picture may not move under a hand
+    /// that is working in it. Every state that owns the pointer is named here once — the editor's
+    /// drafts and arms, the gizmos that drag, the piece in hand and the session's preview — so a new
+    /// tool adds itself to this list in the same change (X119).
+    fn scene_in_hand(&self) -> bool {
+        let editor = &self.editor;
+        editor.drawing().is_some()
+            || editor.contour_edit().is_some()
+            || editor.box_draft().is_some()
+            || editor.fill_arm().is_some()
+            || editor.measure().is_some()
+            || editor.void_armed()
+            || editor.area_pull().is_some()
+            || editor.boolean_arm().is_some()
+            || editor.mesh_edit().is_some()
+            || self.preview().is_some()
+            || self.extrude_gizmo.is_dragging()
+            || self.box_grips.is_dragging()
+            || self.contour_gizmo.is_dragging()
+            || self.gizmo.is_dragging()
+            || self.layout.dragging_axis().is_some()
+    }
+
+    /// Drops the fit's sentence once it is old enough that the bar owes it to nobody.
+    ///
+    /// The bar is drawn every frame, so the notice needs no repaint of its own to disappear — but a
+    /// window that idles would keep it on screen, so the frame after the expiry is asked for here.
+    fn age_fit_notice(&mut self, ctx: &egui::Context) {
+        let Some(since) = self.fit_notice else {
+            return;
+        };
+        let elapsed = since.elapsed();
+        if elapsed >= FIT_NOTICE {
+            self.fit_notice = None;
+        } else {
+            ctx.request_repaint_after(FIT_NOTICE - elapsed);
+        }
     }
 
     /// Re-evaluates the scene when the document revision, the visibility or the preview moved.
@@ -3838,6 +3941,10 @@ impl Document {
     /// Divides the workspace into `kind`, keeping the cameras the views already have.
     pub(crate) fn set_layout(&mut self, kind: LayoutKind) {
         self.layout.set_kind(kind);
+        // The layout that was just shown may never have been on screen, so its views are still the
+        // ones the document opened with: an unframed view among them follows the scene at once
+        // instead of after the next rebuild (X119).
+        self.fit_left_behind();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
     }
 

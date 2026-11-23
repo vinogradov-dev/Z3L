@@ -1994,6 +1994,39 @@ mod tests {
     }
 
     #[test]
+    fn a_camera_holds_a_box_while_every_corner_is_inside_its_frame() {
+        // X119 asks this before it moves a view nobody framed: the corners of the model either fit in
+        // the picture or they do not, and the answer has to be the one the projection gives.
+        let corners = |centre: DVec3, half: DVec3| -> Vec<DVec3> {
+            (0..8u8)
+                .map(|bits| {
+                    let axis = |bit: u8, value: f64| if bits & bit == 0 { -value } else { value };
+                    centre + DVec3::new(axis(1, half.x), axis(2, half.y), axis(4, half.z))
+                })
+                .collect()
+        };
+        let camera = Camera::new(DVec3::ZERO, 1000.0).expect("a camera");
+        let aspect = 16.0 / 9.0;
+        assert!(camera.holds(&corners(DVec3::ZERO, DVec3::splat(100.0)), aspect), "a small box is inside the frame");
+        assert!(camera.holds(&[], aspect), "and there is nothing to hold when there is no box");
+
+        assert!(
+            !camera.holds(&corners(DVec3::ZERO, DVec3::new(5000.0, 100.0, 100.0)), aspect),
+            "off the side is not held"
+        );
+        let behind = camera.eye() + (camera.eye() - camera.target());
+        assert!(!camera.holds(&corners(behind, DVec3::splat(10.0)), aspect), "nor is a box behind the eye");
+
+        // The orthographic view has its own height, so a camera that stands back does not widen it.
+        let tall = corners(DVec3::ZERO, DVec3::new(10.0, 1500.0, 10.0));
+        let mut flat = camera;
+        flat.set_orthographic();
+        let far = Camera::new(DVec3::ZERO, 10_000.0).expect("a camera that stands back");
+        assert!(!flat.holds(&tall, aspect), "an orthographic frame holds only its own height");
+        assert!(far.holds(&tall, aspect), "a perspective frame widens with the distance it stands at");
+    }
+
+    #[test]
     fn ray_closest_point_on_an_axis_line_is_a_drag_parameter() {
         let ray = Ray::new(DVec3::new(5.0, 10.0, 0.0), -DVec3::Y).expect("ray");
         let parameter = ray.closest_parameter_on_line(DVec3::ZERO, DVec3::X).expect("line");

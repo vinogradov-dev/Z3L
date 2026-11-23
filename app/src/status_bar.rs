@@ -39,6 +39,8 @@ struct StatusInfo {
     error: Option<String>,
     /// Why the workspace defaults were used instead of the saved settings, if they were.
     notice: Option<crate::settings_store::Notice>,
+    /// Whether a view fitted itself to the scene just now, and the bar still owes the sentence.
+    fitted: bool,
     /// The live contour edit: its segment count, whether it differs from the document and whether
     /// a corner drag follows the contour.
     contour: Option<(usize, bool, bool)>,
@@ -252,6 +254,12 @@ fn status_command_ui(ui: &mut egui::Ui, info: &StatusInfo, center: f32) {
         // A workspace that fell back to its defaults is a fact, not a failure: it uses the quiet
         // text colour and keeps the rest of the bar usable.
         hint(ui, &notice.text(lang), center);
+        theme::divider(ui);
+    } else if info.fitted {
+        // A camera that moved with no hand on it says why (X119). The fit is a fact of the last few
+        // seconds and not a failure, so it takes the quiet colour too, and the armed tool's own
+        // sentence still follows it on the same row.
+        hint(ui, Message::StatusFitted.text(lang), center);
         theme::divider(ui);
     }
     if let Some((segments, dirty, along)) = info.contour {
@@ -610,6 +618,7 @@ impl Document {
         StatusInfo {
             error: self.last_error.clone(),
             notice: notice.cloned(),
+            fitted: self.fitted_recently(),
             contour: self
                 .editor
                 .contour_edit()
@@ -656,6 +665,7 @@ mod tests {
         StatusInfo {
             error: None,
             notice: None,
+            fitted: false,
             contour: None,
             drawing: None,
             preview_error: None,

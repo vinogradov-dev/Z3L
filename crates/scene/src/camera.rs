@@ -17,7 +17,7 @@
 //! It does not own the frame, the grid or the picking result: [`Camera::ray_ndc`] produces a
 //! [`Ray`], and picking itself lives in [`crate::ray`].
 //!
-//! The surface is over B6's 25 public items because it is one type's: a [`Camera`]'s constructor,
+//! The surface is over B6's 26 public items because it is one type's: a [`Camera`]'s constructor,
 //! accessors, navigation calls and projection conversions change together with [`Projection`], and
 //! every one of them is a question about the same value.
 //!
@@ -479,6 +479,18 @@ impl Camera {
         let ndc = clip.truncate() / clip.w;
         let ndc = DVec2::new(ndc.x, ndc.y);
         ndc.is_finite().then_some(ndc)
+    }
+
+    /// Whether every one of `corners` lands inside the frame of a view `aspect` wide.
+    ///
+    /// This is the question the automatic fit asks before it moves a view nobody has framed: a
+    /// camera that answers `false` no longer holds the model, because a corner is off the side of
+    /// the picture, behind the near plane, or outside an orthographic view's own height (X119). An
+    /// empty list is held by every camera, because there is nothing to hold.
+    pub fn holds(self, corners: &[DVec3], aspect: f64) -> bool {
+        corners
+            .iter()
+            .all(|corner| self.project_ndc(*corner, aspect).is_some_and(|ndc| ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0))
     }
 
     /// World millimetres covered by one viewport point at `depth` millimetres from the eye.

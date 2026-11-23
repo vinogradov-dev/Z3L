@@ -105,6 +105,10 @@ messages! {
     StatusBanding = ["edge {}", "кромка {}"],
     StatusReady = ["Ready", "Готово"],
     StatusRebuilding = ["Rebuilding…", "Перестроение…"],
+    StatusFitted = [
+        "The view was fitted to the scene · F frames it again and leaves it to you",
+        "Вид подогнан под сцену · F подгоняет снова, и дальше он ваш"
+    ],
     StatusScale = ["{} %", "{} %"],
     UnlockHint = [
         "Unlock it in the scene tree to move or delete it",

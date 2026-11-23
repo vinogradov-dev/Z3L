@@ -3359,6 +3359,13 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
             )
             .expect("add a post");
     }
+    // The two posts stand outside the frame the tab opened on, so the view fitted itself to them.
+    // The maker then looks into the niche from the front: a standard view is orthographic, so its
+    // rays are parallel and the pointer names the same cell and the same place down the section
+    // whatever the fit did to the distance (X119).
+    harness.app.tabs.active_mut().apply_view_preset(ui::display::OpeningView::Front);
+    harness.settle();
+    let document = harness.app.tabs.active();
     let project = document.session.project();
     let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
     let size = geom::DVec3::new(
@@ -3366,7 +3373,11 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
         envelope.y().millimetres_f64(),
         envelope.z().millimetres_f64(),
     );
-    let centre = project.world_placement(product).expect("a frame").transform_point(size * 0.5);
+    // The pointer aims at the middle of the frame, which the front view enters through the back
+    // wall: a pointer names the cell it *enters* the frame by, so the aim is the space the maker
+    // means rather than the face the eye can see over (X119).
+    let aim = geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.5);
+    let centre = project.world_placement(product).expect("a frame").transform_point(aim);
     let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
     let pointer = gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen");
     assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
@@ -7883,4 +7894,126 @@ fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() 
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo takes it back");
     harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
     assert!(panel_name(&harness, panel).is_none(), "the dead turn left no second entry");
+}
+
+/// A session with a root and a catalogue and nothing built, so a tab opens on an empty scene.
+///
+/// It is the scene the owner's report starts from: the fit has no bounds to work with, so the view
+/// opens 1.2 m from the document's corner and cannot know where the model will be (X119).
+fn empty_session() -> engine::Session {
+    let root = model::Container::new(Id::new(1).expect("an id"), "Root", model::Placement::IDENTITY, Vec::new());
+    let project = model::Project::new(root).expect("an empty project");
+    engine::Session::with_directory(project, testkit::sample_catalog())
+}
+
+/// Builds one board whose base corner stands at `at` millimetres, through the typed create.
+///
+/// The command is the maker's own door (`panel.create.standard`), so the part arrives the way the
+/// ribbon's build arrives: one revision, one rebuild and no gesture in flight (X119).
+fn build_a_board(session: &mut engine::Session, name: &str, at: [f64; 3]) {
+    let mm = testkit::millimetres;
+    session
+        .dispatch(
+            engine::panel_cmds::CREATE_STANDARD_ID,
+            &serde_json::json!({
+                "parent": session.project().root().id(),
+                "name": name,
+                "material": testkit::sample_material_id(),
+                "type": "wall",
+                "at": at,
+                "length": mm(600),
+                "width": mm(720),
+            }),
+        )
+        .expect("the typed create builds the board");
+}
+
+/// The world centre of everything the last rebuild drew.
+fn scene_centre(harness: &Harness) -> geom::DVec3 {
+    harness.app.tabs.active().scene_bounds().center().expect("the scene has geometry")
+}
+
+/// The cluster's own *Frame all* cell, which floats over the scene, not the View tab's copy.
+fn cluster_frame_all(harness: &Harness) -> egui::Pos2 {
+    let scene = harness.scene();
+    harness
+        .faces
+        .iter()
+        .filter(|(name, _)| name.starts_with(Message::ToolFrameAll.text(Lang::En)))
+        .map(|(_, rect)| rect.center())
+        .find(|at| scene.contains(*at))
+        .unwrap_or_else(|| panic!("the view cluster offers Frame all: {:?}", harness.faces))
+}
+
+#[test]
+fn a_view_nobody_framed_follows_the_model_it_was_built_into() {
+    // X119, the owner's report: the view is fitted once, when the tab opens, and an empty scene has
+    // no bounds — so a wardrobe built afterwards is drawn from 1.2 m at its base corner and the
+    // orbit turns about a point that is not the model. A view nobody has framed follows the scene,
+    // and the bar says that it moved.
+    let mut harness = Harness::with_session("frame-fit-follows", empty_session());
+    harness.settle();
+    let opened = harness.camera();
+    assert_eq!(opened.target(), geom::DVec3::ZERO, "an empty scene opens at the document's corner");
+    assert!((opened.distance() - 1_200.0).abs() < 1.0e-6, "from the default 1.2 m: {}", opened.distance());
+    assert!(!harness.drew(Message::StatusFitted.text(Lang::En)), "and nothing was fitted, so the bar is quiet");
+
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [5_000.0, 0.0, 0.0]);
+    harness.settle();
+
+    let fitted = harness.camera();
+    let centre = scene_centre(&harness);
+    assert_ne!(fitted, opened, "the view followed the part built far outside it");
+    assert!((fitted.target() - centre).length() < 1.0, "the orbit target is the framed centre: {fitted:?}");
+    assert!(fitted.distance() > 1_200.0, "and the camera stands back far enough to hold it: {}", fitted.distance());
+    assert!(
+        harness.drew(Message::StatusFitted.text(Lang::En)),
+        "the bar says the view was fitted: {:?}",
+        harness.drawn
+    );
+}
+
+#[test]
+fn a_view_the_person_framed_is_left_alone_until_frame_all_asks_again() {
+    // The other half of X119: the following fit is the tool's, not the person's. An orbit, a pan, a
+    // zoom or *Frame all* makes the view theirs, and a part built outside it thereafter is drawn
+    // from where they left the camera. *Frame all* stays the explicit act, reachable from the view
+    // cluster and by its key.
+    let mut harness = Harness::with_session("frame-fit-claimed", empty_session());
+    harness.settle();
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Side", [5_000.0, 0.0, 0.0]);
+    harness.settle();
+    let fitted = harness.camera();
+    assert!(fitted.distance() > 1_200.0, "the view followed the first part: {}", fitted.distance());
+
+    // A middle drag orbits, which is the person's own act and claims the view.
+    harness.drag(harness.scene().center(), egui::vec2(80.0, 0.0), egui::PointerButton::Middle);
+    let orbited = harness.camera();
+    assert_ne!(orbited, fitted, "the drag orbited the view");
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Back", [5_000.0, 4_000.0, 0.0]);
+    harness.settle();
+    assert_eq!(harness.camera(), orbited, "a part built outside a claimed view does not move it");
+
+    // The key is the explicit act: it fits the claimed view on the whole scene, keeping the
+    // direction the person left it in.
+    harness.press(egui::Key::F, egui::Modifiers::NONE);
+    let keyed = harness.camera();
+    let centre = scene_centre(&harness);
+    assert_ne!(keyed, orbited, "F reframed the claimed view");
+    assert!((keyed.target() - centre).length() < 1.0, "on the scene's centre: {keyed:?}");
+    assert!((keyed.yaw() - orbited.yaw()).abs() < 1.0e-9, "and kept the direction the drag left");
+
+    // The cluster's own cell is the same act, so the control a person looks for among the view
+    // controls is the one the key runs.
+    harness.drag(harness.scene().center(), egui::vec2(-60.0, 20.0), egui::PointerButton::Middle);
+    let turned = harness.camera();
+    build_a_board(&mut harness.app.tabs.active_mut().session, "Top", [5_000.0, 4_000.0, 3_000.0]);
+    harness.settle();
+    assert_eq!(harness.camera(), turned, "the claimed view still does not follow");
+    let cell = cluster_frame_all(&harness);
+    harness.click(cell, egui::PointerButton::Primary);
+    let clicked = harness.camera();
+    assert_ne!(clicked, turned, "the cluster's Frame all reframed the view");
+    let centre = scene_centre(&harness);
+    assert!((clicked.target() - centre).length() < 1.0, "on the scene's centre: {clicked:?}");
 }

@@ -44,6 +44,13 @@ pub(crate) const MAX_LEAVES: usize = render::MAX_VIEWS;
 /// The ratio a fresh split takes.
 const DEFAULT_RATIO: f32 = 0.5;
 
+/// The aspect a view is measured against before the first frame has given it a rectangle.
+///
+/// The automatic fit asks one question — is a corner of the model inside this view's picture — and
+/// before the window has laid the views out there is no rectangle to ask it about. A generous ratio
+/// answers the same question closely enough that a headless run and a window agree (X119).
+const FIT_ASPECT: f64 = 1.6;
+
 /// A stable identity for one view; the cameras are keyed by it, so a drag or a relayout never
 /// swaps one view's camera for another's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -281,6 +288,14 @@ pub(crate) struct Leaf {
     /// The strength and the colour are the workspace's; only the switch is the view's, so one cell of
     /// a split draws the shadow while its neighbour does not.
     shadows: bool,
+    /// Whether a person has framed or navigated this view, which makes it theirs.
+    ///
+    /// A view nobody has touched follows the scene: a rebuild that leaves the model outside its
+    /// frame fits it again, so a part built far from the empty scene's corner is still framed and
+    /// the orbit turns about the model (`Layout::fit_left_behind`, X119). The first *Frame all*, the
+    /// first orbit, pan, zoom, look or roll claims the view, and the automatic fit never moves it
+    /// again.
+    framed: bool,
 }
 
 impl Leaf {
@@ -325,14 +340,35 @@ impl Leaf {
         self.preset = Some(preset);
     }
 
-    /// Fits the leaf on the whole scene, keeping the direction it was looking from.
+    /// Fits the leaf on the whole scene, which makes the view the person's.
+    ///
+    /// This is *Frame all*: the cluster's cell, the View tab's cell and `F` all end here, and a press
+    /// on it makes the view the person's (X119). The automatic fit goes to [`Leaf::place`] instead,
+    /// because a view that fits itself has not been framed by anybody.
+    pub(crate) fn frame(&mut self, fit: Camera) {
+        self.framed = true;
+        self.place(fit);
+    }
+
+    /// Whether a person has framed or navigated this view, so the automatic fit leaves it alone.
+    pub(crate) fn is_framed(&self) -> bool {
+        self.framed
+    }
+
+    /// Whether this view's frame holds every world `corner`, in a view of `aspect`.
+    pub(crate) fn holds(&self, corners: &[geom::DVec3], aspect: f64) -> bool {
+        self.camera.holds(corners, aspect)
+    }
+
+    /// Places the leaf on a fit camera without claiming it for the person, keeping the direction it
+    /// was looking from.
     ///
     /// `fit` is the camera [`crate::scene_build::home_camera`] computes for the scene's bounds. A
     /// leaf that still sits in a preset keeps that preset's direction; a leaf the user has orbited
     /// keeps its own. The projection is kept as it was: a perspective view stays perspective, and
     /// an orthographic view stays orthographic with the height the fit distance shows, so framing
     /// never changes the mode (ADR 0049).
-    pub(crate) fn frame(&mut self, fit: Camera) {
+    fn place(&mut self, fit: Camera) {
         let projection = self.camera.projection();
         match self.preset {
             Some(preset) => {
@@ -360,10 +396,11 @@ impl Leaf {
         self.apply_preset(OpeningView::Axonometric);
     }
 
-    /// Orbits the leaf, which leaves its preset name.
+    /// Orbits the leaf, which leaves its preset name and makes the view the person's.
     pub(crate) fn orbit(&mut self, delta_yaw: f64, delta_pitch: f64) {
         self.camera.orbit(delta_yaw, delta_pitch);
         self.preset = None;
+        self.framed = true;
     }
 
     /// Looks from an arbitrary direction, which leaves its preset name.
@@ -378,6 +415,7 @@ impl Leaf {
             self.camera.set_orthographic();
         }
         self.preset = None;
+        self.framed = true;
     }
 
     /// Rolls the view about its own axis, which leaves its preset name.
@@ -387,17 +425,20 @@ impl Leaf {
     pub(crate) fn roll_to(&mut self, radians: f64) {
         self.camera.roll_to(radians);
         self.preset = None;
+        self.framed = true;
     }
 
     /// Turns the view about its own axis by `radians`, which leaves its preset name.
     pub(crate) fn roll_by(&mut self, radians: f64) {
         self.camera.roll_by(radians);
         self.preset = None;
+        self.framed = true;
     }
 
     /// Pans the leaf; the view direction and its preset name are untouched.
     pub(crate) fn pan_pixels(&mut self, delta_x: f64, delta_y: f64, viewport_height: f64) {
         self.camera.pan_pixels(delta_x, delta_y, viewport_height);
+        self.framed = true;
     }
 
     /// Zooms the leaf about a world point, which keeps that point where it is on screen.
@@ -407,6 +448,7 @@ impl Leaf {
     /// only needs the frame — passes `None` and gets the plain zoom about the target.
     pub(crate) fn zoom_about(&mut self, factor: f64, anchor: Option<geom::DVec3>) {
         self.camera.zoom_about(factor, anchor);
+        self.framed = true;
     }
 
     /// Switches the projection, which is not a change of direction.
@@ -518,7 +560,14 @@ impl LayoutState {
         let mut state = Self { root: Node::Leaf(LeafId(1)), leaves: Vec::new(), active: LeafId(1), next: 1 };
         for index in 0..kind.leaves() {
             let id = state.allocate();
-            let mut leaf = Leaf { id, camera: fit, preset: None, style, shadows: ContactShadows::default().visible };
+            let mut leaf = Leaf {
+                id,
+                camera: fit,
+                preset: None,
+                style,
+                shadows: ContactShadows::default().visible,
+                framed: false,
+            };
             leaf.apply_preset(kind.standard_view(index, opening));
             state.leaves.push(leaf);
         }
@@ -641,6 +690,14 @@ impl Layout {
         self.current_mut().active_leaf_mut()
     }
 
+    /// Whether some view of the shown layout is still following the scene.
+    ///
+    /// The one question the shell asks every frame before it looks for the scene's bounds: a
+    /// workspace whose views are all claimed costs a scan of at most four flags (X119).
+    pub(crate) fn follows_the_scene(&self) -> bool {
+        self.current().leaves.iter().any(|leaf| !leaf.framed)
+    }
+
     /// The preset a leaf is in, if it has not been orbited since.
     pub(crate) fn preset(&self, id: LeafId) -> Option<OpeningView> {
         self.leaf(id).and_then(|leaf| leaf.preset)
@@ -719,6 +776,43 @@ impl Layout {
         let mut regions = Vec::with_capacity(self.current().leaves.len());
         self.current().root.regions(area, &mut regions);
         regions
+    }
+
+    /// Fits every view a person has not claimed on `fit` while the model is outside its frame.
+    ///
+    /// This is what keeps a view on the scene: a tab's camera is fitted once, when the document
+    /// opens, and an empty scene has no bounds, so a part built afterwards would be drawn from 1.2 m
+    /// at the document's corner, with an orbit pivot that is not on the model (X119). A view the
+    /// person has framed or navigated is never touched, and `fit` keeps each view's direction and
+    /// projection exactly as *Frame all* does, so a standard view stays standard.
+    ///
+    /// `area` is the workspace's rectangle, which gives each view its own aspect; `None` before the
+    /// first frame, which measures every view against [`FIT_ASPECT`]. Answers how many views moved.
+    pub(crate) fn fit_left_behind(&mut self, fit: Camera, corners: &[geom::DVec3], area: Option<egui::Rect>) -> usize {
+        if corners.is_empty() {
+            return 0;
+        }
+        let regions = area.map(|area| self.regions(area)).unwrap_or_default();
+        let mut fitted = 0usize;
+        let state = self.current_mut();
+        for leaf in &mut state.leaves {
+            if leaf.is_framed() {
+                continue;
+            }
+            // The views tile the workspace, so a view's own rectangle is the frame it draws into:
+            // a corner outside it is a corner outside the picture the person is looking at.
+            let aspect = regions
+                .iter()
+                .find(|(id, _)| *id == leaf.id)
+                .map(|(_, rect)| f64::from(rect.width().max(1.0)) / f64::from(rect.height().max(1.0)))
+                .unwrap_or(FIT_ASPECT);
+            if leaf.holds(corners, aspect) {
+                continue;
+            }
+            leaf.place(fit);
+            fitted = fitted.saturating_add(1);
+        }
+        fitted
     }
 
     /// Every border between two views of the shown layout.
@@ -948,6 +1042,106 @@ mod tests {
             matches!(second.camera.projection(), scene::Projection::Perspective { .. }),
             "a free perspective view stays perspective"
         );
+    }
+
+    #[test]
+    fn a_view_nobody_framed_follows_the_scene_and_a_framed_one_stays() {
+        // X119: the following fit belongs to the views a person has not touched, and the first
+        // *Frame all*, orbit, pan, zoom, look or roll makes a view theirs for good.
+        let fit = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 900.0).expect("camera");
+        let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
+        let area = area();
+        let small = corners(geom::DVec3::new(10.0, 20.0, 30.0), 100.0);
+        assert_eq!(layout.fit_left_behind(fit, &small, Some(area)), 0, "a view already holding the scene stays");
+        assert!(!layout.active_leaf().is_framed());
+
+        let grown = corners(geom::DVec3::new(10.0, 20.0, 30.0), 4_000.0);
+        let further = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 3_000.0).expect("camera");
+        assert_eq!(layout.fit_left_behind(further, &grown, Some(area)), 1, "a view left behind follows the scene");
+        assert_eq!(layout.active_leaf().camera().target(), further.target(), "on the framed centre");
+        assert!(!layout.active_leaf().is_framed(), "and it still follows: nobody has framed it");
+
+        // The person's own acts claim the view, and no automatic fit touches it afterwards.
+        for claim in [Claim::Frame, Claim::Orbit, Claim::Pan, Claim::Zoom, Claim::Look, Claim::Roll] {
+            let fit = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 900.0).expect("camera");
+            let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
+            let id = layout.active();
+            let leaf = layout.leaf_mut(id).expect("the active leaf");
+            claim.apply(leaf, fit);
+            assert!(leaf.is_framed(), "{claim:?} claims the view");
+            let before = leaf.camera();
+            let further = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 3_000.0).expect("camera");
+            assert_eq!(layout.fit_left_behind(further, &grown, Some(area)), 0, "{claim:?}: and it stays");
+            assert_eq!(layout.active_leaf().camera(), before, "{claim:?}: the camera is the person's");
+        }
+    }
+
+    #[test]
+    fn a_fit_left_behind_reaches_every_view_that_has_not_been_claimed() {
+        // A split workspace: an untouched neighbour follows the scene as the active view does, and the
+        // fit keeps every view's own direction and projection (X119).
+        let fit = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 900.0).expect("camera");
+        let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
+        layout.set_kind(LayoutKind::TwoColumns);
+        let ids: Vec<LeafId> = layout.current().leaves.iter().map(|leaf| leaf.id).collect();
+        layout.leaf_mut(ids[0]).expect("first").apply_preset(OpeningView::Top);
+        layout.leaf_mut(ids[1]).expect("second").orbit(0.3, 0.1);
+
+        let grown = corners(geom::DVec3::new(10.0, 20.0, 30.0), 4_000.0);
+        let further = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 3_000.0).expect("camera");
+        assert_eq!(layout.fit_left_behind(further, &grown, Some(area())), 1, "the preset view was not claimed");
+        let first = layout.leaf(ids[0]).expect("first");
+        assert_eq!(first.camera.target(), further.target(), "it took the fit");
+        assert_eq!(first.preset, Some(OpeningView::Top), "and kept its preset");
+        assert!(
+            matches!(first.camera.projection(), scene::Projection::Orthographic { .. }),
+            "so a standard view stays orthographic"
+        );
+        assert_eq!(layout.leaf(ids[1]).expect("second").camera().target(), fit.target(), "the orbited one stayed");
+    }
+
+    #[test]
+    fn a_fit_left_behind_lets_the_hand_that_is_working_alone() {
+        // The layout's own half of the rule: nothing is fitted when there is nothing to frame.
+        let fit = Camera::new(geom::DVec3::new(10.0, 20.0, 30.0), 900.0).expect("camera");
+        let mut layout = Layout::new(fit, OpeningView::Axonometric, ShadingStyle::default());
+        assert_eq!(layout.fit_left_behind(fit, &[], Some(area())), 0, "an empty scene has no corners to hold");
+    }
+
+    /// One of the six acts that claim a view for the person (X119).
+    #[derive(Clone, Copy, Debug)]
+    enum Claim {
+        /// *Frame all*.
+        Frame,
+        Orbit,
+        Pan,
+        Zoom,
+        Look,
+        Roll,
+    }
+
+    impl Claim {
+        /// Performs the act on `leaf`, as the shell's own gesture does.
+        fn apply(self, leaf: &mut Leaf, fit: Camera) {
+            match self {
+                Self::Frame => leaf.frame(fit),
+                Self::Orbit => leaf.orbit(0.2, 0.1),
+                Self::Pan => leaf.pan_pixels(20.0, 10.0, 600.0),
+                Self::Zoom => leaf.zoom_about(1.2, None),
+                Self::Look => leaf.look_from(geom::DVec3::new(0.3, 1.0, 0.4)),
+                Self::Roll => leaf.roll_by(0.2),
+            }
+        }
+    }
+
+    /// The eight corners of a world box, which is what the automatic fit asks about.
+    fn corners(centre: geom::DVec3, half: f64) -> Vec<geom::DVec3> {
+        (0..8u8)
+            .map(|bits| {
+                let axis = |bit: u8| if bits & bit == 0 { -half } else { half };
+                centre + geom::DVec3::new(axis(1), axis(2), axis(4))
+            })
+            .collect()
     }
 
     #[test]
