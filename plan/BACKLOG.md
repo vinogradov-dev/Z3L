@@ -104,7 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
+- `[~]` **X117** a panel placed by a command can hang its origin above its own geometry, and the anchor rule lives only in the fill tool
   Why: Owner report 2026-11-21: "почему у вертикальных панелей ось находится вверху? первый
    угол это низ". Measured: the first wardrobe placed every upright panel with a quarter turn
    about +Y (`[0, s, 0, s]`), which maps the panel local +X onto world -Z, so the zero corner
