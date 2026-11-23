@@ -124,7 +124,7 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
     while !stopping.load(std::sync::atomic::Ordering::SeqCst) {
         for pending in mailbox.drain() {
             let answer = match pending.call() {
-                mcp::Call::List => mcp::Answer::ok(mcp::listing(&session)),
+                mcp::Call::List(request) => mcp::listing(&session, request.command.as_deref()),
                 mcp::Call::Ask(query) => mcp::asking(&session, *query),
                 mcp::Call::Findings => mcp::Answer::ok(mcp::findings(&session)),
                 mcp::Call::Dispatch(request) => {
