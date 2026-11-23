@@ -500,3 +500,11 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 - `[assistant]` The assistant panel lists six findings and an "and N more" line; a row selects no
   node and a suggested fix is not a button. The tool answer carries every finding and every command,
   so the model can act on the list a person cannot yet click (J9).
+
+- `[plan]` A task that has been started cannot go back into the order: `task defer` refuses a `[~]`
+  entry, `task reopen` takes only a done one, and `task drop` deletes the entry with its note, so a
+  session that starts a task and finds it blocked (J12, 2026-11-23, whose premise the owner retired in
+  the same turn) can only close it as done — which is a lie — or move the marker by hand, which the
+  gate validates and does not see. Add the verb that returns a started task to `## Next`: one marker
+  write, the entry moved like `defer` moves it, its `plan/SESSION.<key>.md` removed, in one gated
+  write.
