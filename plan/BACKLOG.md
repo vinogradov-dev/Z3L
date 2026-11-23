@@ -45,6 +45,19 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **J16** a parameter refusal repeats the payload and never says what shape to send
+  Why: Measured 2026-11-21: a `params` value that arrived as a JSON string was answered
+   `invalid parameters for product.create: invalid type: string, expected struct
+   ProductCreate`. The sentence repeats the payload, names a Rust type a caller cannot see, and
+   never says that `params` must be an object. The tool schema declares `params` as free-form,
+   so a caller may legitimately send a string and be told nothing it can act on.
+  Shape: The refusal names the field and the shape to send, in the words the caller used, and
+   the schema for `params` states that it is an object whose keys a command own schema
+   describes.
+  Done: A test sends a string where an object belongs and asserts the refusal names the field
+   and the shape; a test sends an object with an unknown key and asserts the key is named.
+  `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
+
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -658,18 +671,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
    `cargo xtask ci` is green.
   `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
-- `[ ]` **J16** a parameter refusal repeats the payload and never says what shape to send
-  Why: Measured 2026-11-21: a `params` value that arrived as a JSON string was answered
-   `invalid parameters for product.create: invalid type: string, expected struct
-   ProductCreate`. The sentence repeats the payload, names a Rust type a caller cannot see, and
-   never says that `params` must be an object. The tool schema declares `params` as free-form,
-   so a caller may legitimately send a string and be told nothing it can act on.
-  Shape: The refusal names the field and the shape to send, in the words the caller used, and
-   the schema for `params` states that it is an object whose keys a command own schema
-   describes.
-  Done: A test sends a string where an object belongs and asserts the refusal names the field
-   and the shape; a test sends an object with an unknown key and asserts the key is named.
-  `files: crates/mcp/src/report.rs,crates/mcp/src/tools.rs`
 - `[ ]` **Y6** the Render place shows the image as it is traced, and keeps the last one
   Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
   step by step where that is possible, and the render grows step by step toward a product a
