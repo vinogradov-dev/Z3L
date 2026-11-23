@@ -86,6 +86,12 @@ impl Models {
     pub(crate) fn listed(&self) -> &ListedModels {
         &self.listed
     }
+
+    /// Hands the page an answer, so a frame test draws a listing without a wire.
+    #[cfg(test)]
+    pub(crate) fn land(&mut self, listed: ListedModels) {
+        self.listed = listed;
+    }
 }
 
 /// One listing, on the worker's thread.
@@ -124,6 +130,38 @@ mod tests {
         assert!(!models.listed().listing, "the worker answered");
         let _ = address;
         models.listed().clone()
+    }
+
+    /// The address the preset writes is the address the wire routes on: a Go gateway is known by its
+    /// address and needs the session header, and no person types one (X124, ADR 0234).
+    ///
+    /// This is the one test that can hold both halves, because `ui` may not see `mcp` and `mcp` may
+    /// not see `ui`: the shell sees both, so the agreement between the page's table and the wire's
+    /// predicate is asserted here.
+    #[test]
+    fn the_go_preset_is_the_address_the_wire_routes_on() {
+        let go = ui::settings::PRESETS
+            .iter()
+            .find(|preset| preset.name == text::Message::AssistantProviderOpenCodeGo)
+            .expect("the page offers the Go tier");
+        assert!(mcp::go_gateway(go.base_url), "the preset is the gateway the wire recognises: {}", go.base_url);
+        assert_eq!(
+            mcp::Endpoint::new(go.base_url, "deepseek-v4.1-flash").chat_url(),
+            "https://opencode.ai/inference/go/v1/chat/completions",
+            "one completion, at the family the address names"
+        );
+        let plain = ui::settings::PRESETS
+            .iter()
+            .find(|preset| preset.name == text::Message::AssistantProviderOpenCode)
+            .expect("the page offers the plain tier too");
+        assert!(!mcp::go_gateway(plain.base_url), "the plain tier is another address: {}", plain.base_url);
+        for preset in ui::settings::PRESETS {
+            assert!(
+                mcp::Endpoint::new(preset.base_url, "model").chat_url().ends_with("/chat/completions"),
+                "every preset is the one OpenAI-compatible wire: {}",
+                preset.base_url
+            );
+        }
     }
 
     #[test]

@@ -1729,6 +1729,42 @@ mod tests {
 
     use super::*;
 
+    /// ADR 0234: the assistant section is the address, the model, the process, the channel switch and
+    /// the addresses a person agreed to — and nothing else. A header field, a pinned provider or a key
+    /// would have to appear here first, which is what makes this a test rather than a remark.
+    #[test]
+    fn the_assistant_section_carries_no_header_and_no_key() {
+        let json = serde_json::to_value(AssistantSettings::default()).expect("the section serializes");
+        let mut keys: Vec<&str> =
+            json.as_object().expect("a section is an object").keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["agent", "attach", "consent", "endpoint", "model"], "the section names no secret: {json}");
+    }
+
+    /// Every preset is one base URL the page accepts, and the row is derived from the field rather
+    /// than remembered beside it, so what a person sees is what a request would use (ADR 0234).
+    #[test]
+    fn every_preset_is_one_address_the_page_accepts() {
+        assert_eq!(PRESETS.len(), 6, "the table the owner asked for, and no more");
+        for preset in PRESETS {
+            let url = preset.base_url;
+            assert!(url.starts_with("http://") || url.starts_with("https://"), "{url}");
+            assert!(
+                !url.ends_with('/'),
+                "the client appends `/chat/completions`, so a trailing slash is a doubled one: {url}"
+            );
+            assert!(endpoint_problem(url).is_none(), "a preset is an address the page itself accepts: {url}");
+            assert!(!preset.name.text(Lang::En).is_empty(), "every preset is named");
+        }
+        // *Other address* is the person's own field: a typed address is no preset, and the row says so
+        // without touching what was typed.
+        let typed =
+            AssistantSettings { endpoint: "https://api.example.com/v1".to_owned(), ..AssistantSettings::default() };
+        assert_eq!(typed.preset(), None, "a typed address is not a preset");
+        let chosen = AssistantSettings { endpoint: PRESETS[0].base_url.to_owned(), ..AssistantSettings::default() };
+        assert_eq!(chosen.preset(), Some(0), "a preset address is recognised with the row");
+    }
+
     fn custom() -> Settings {
         Settings {
             version: SETTINGS_VERSION,

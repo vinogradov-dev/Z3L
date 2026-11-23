@@ -7338,6 +7338,108 @@ fn a_remembered_address_is_one_click_away_from_the_settings_page() {
     assert_eq!(harness.app.settings.assistant.endpoint, remembered, "the remembered address is back in the field");
 }
 
+#[test]
+fn a_provider_preset_fills_the_address_and_the_field_stays_the_persons() {
+    // ADR 0234: a preset writes one base URL and nothing else. The field is still typed by hand, and
+    // *Other address* keeps whatever is in it, so a workshop with an address nobody lists is not
+    // pushed out by the table.
+    let (mut harness, _panel) = chat_fixture("frame-settings-preset");
+    harness.app.settings.assistant.endpoint.clear();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let combo = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantProviderCustom.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the provider row shows what the field holds");
+    harness.click(combo, egui::PointerButton::Primary);
+    let row = harness
+        .drawn_rects
+        .iter()
+        .find(|(rect, text)| {
+            text == Message::AssistantProviderOpenCodeGo.text(Lang::En) && combo.distance(rect.center()) > 4.0
+        })
+        .map(|(rect, _)| rect.center())
+        .expect("the presets are listed under the row");
+    harness.click(row, egui::PointerButton::Primary);
+    assert_eq!(
+        harness.app.settings.assistant.endpoint,
+        ui::settings::PRESETS[0].base_url,
+        "the preset filled the address"
+    );
+    harness.app.settings.assistant.endpoint = "https://api.example.com/v1".to_owned();
+    harness.settle();
+    assert!(harness.drew(Message::AssistantProviderCustom.text(Lang::En)), "a typed address reads as the person's own");
+    assert_eq!(harness.app.settings.assistant.endpoint, "https://api.example.com/v1", "and it is still there");
+}
+
+#[test]
+fn a_model_the_endpoint_listed_fills_the_model_field() {
+    // The picker is the endpoint's answer, so a person chooses an id they cannot misspell. The field
+    // keeps what was typed until a row is chosen (ADR 0234).
+    let (mut harness, _panel) = chat_fixture("frame-settings-models");
+    let address = "https://api.example.com/v1";
+    harness.app.settings.assistant.endpoint = address.to_owned();
+    harness.app.settings.assistant.model = "typed-model".to_owned();
+    harness.app.assistant_models.land(ui::settings::ListedModels {
+        address: address.to_owned(),
+        rows: vec![
+            ui::settings::ModelRow { id: "gpt-6-luna".to_owned(), name: "GPT 6 Luna".to_owned() },
+            ui::settings::ModelRow { id: "glm-5.3".to_owned(), name: "glm-5.3".to_owned() },
+        ],
+        ..ui::settings::ListedModels::default()
+    });
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let picker = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantModelsPick.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the picker is drawn once the endpoint answered");
+    harness.click(picker, egui::PointerButton::Primary);
+    // A row that names its model shows both: the word a person reads and the id a request sends.
+    let named = Message::AssistantModelNamed.with(Lang::En, ["GPT 6 Luna".to_owned(), "gpt-6-luna".to_owned()]);
+    let row = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == &named)
+        .map(|(rect, _)| rect.center())
+        .expect("every listed model is a row");
+    harness.click(row, egui::PointerButton::Primary);
+    assert_eq!(harness.app.settings.assistant.model, "gpt-6-luna", "the id a request sends is what was chosen");
+}
+
+#[test]
+fn the_list_models_button_asks_the_address_and_the_page_reads_the_answer() {
+    // The whole path of ADR 0234 in one frame test: the button reports the address, the shell asks it
+    // off the frame, and the page draws what came back. A closed port answers at once, so the test is
+    // a refusal — the sentence a workshop reads when an address is down — and no network is touched.
+    let (mut harness, _panel) = chat_fixture("frame-settings-list-models");
+    harness.app.settings.assistant.endpoint = "http://127.0.0.1:1/v1".to_owned();
+    harness.app.settings_open = true;
+    harness.app.settings_section = ui::settings::SettingsSection::Assistant;
+    harness.settle();
+    let button = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == Message::AssistantModelsList.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the page offers the button beside the model field");
+    harness.click(button, egui::PointerButton::Primary);
+    for _ in 0..200 {
+        harness.frame();
+        if harness.drew("The models could not be listed") {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the answer reached the page: {:?}", harness.drawn);
+}
+
 /// The Send buttons the last frame drew, topmost first.
 ///
 /// The consent card sits above the field, so the card's own Send is the first one while the card is
