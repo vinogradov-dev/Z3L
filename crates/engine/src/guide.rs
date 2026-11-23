@@ -16,7 +16,9 @@
 //!
 //! Changes when: the world model, the order of a build, the stance table or a unit changes.
 
-use model::{ClassCode, Envelope, Footprint, Level, Placement, Supply, registry};
+use std::fmt::Write as _;
+
+use model::{ClassCode, Envelope, Footprint, Level, Node, Placement, Supply, registry};
 use serde_json::{Value, json};
 use text::Lang;
 use units::Length;
@@ -55,6 +57,68 @@ pub fn guide() -> Value {
         "units": units(),
         "sides": sides(),
     })
+}
+
+/// How many nodes a scene brief lists before it counts the rest.
+pub const SCENE_BRIEF_NODES: usize = 80;
+
+/// How deep a scene brief walks before it counts the rest.
+const SCENE_BRIEF_DEPTH: usize = 12;
+
+/// The live scene as a model reads it: the root id, the open product and the nodes it holds.
+///
+/// The static guide says what the program is; this says *which* nodes this session holds. A model
+/// that is not given the root id asks the person for one instead of creating a free body, and one
+/// that is not told what is in the scene guesses or asks. The read walks at most
+/// [`SCENE_BRIEF_NODES`] nodes and [`SCENE_BRIEF_DEPTH`] levels, folds a name to one line and writes
+/// nothing.
+pub fn scene_brief(session: &crate::Session) -> String {
+    let project = session.project();
+    let root = project.root();
+    let mut text = String::new();
+    let _ = writeln!(text, "The scene right now (a command takes these ids as `parent` or `node`):");
+    let _ = writeln!(text, "- root container id = {}", root.id().get());
+    match session.active_product() {
+        Some(id) => {
+            let _ = writeln!(text, "- open product id = {}", id.get());
+        }
+        None => text.push_str("- open product = none\n"),
+    }
+    text.push_str("- nodes (id, kind, name):\n");
+    let mut listed = 0usize;
+    let mut rest = 0usize;
+    for child in root.children() {
+        walk_brief(child, 0, &mut listed, &mut rest, &mut text);
+    }
+    if rest > 0 {
+        let _ = writeln!(text, "  … {rest} more");
+    }
+    text.push_str("- a free body belongs under the root; a product is not required for one.\n");
+    text
+}
+
+/// One node and its children in [`scene_brief`]'s shape, bounded by the two caps.
+fn walk_brief(node: &Node, depth: usize, listed: &mut usize, rest: &mut usize, text: &mut String) {
+    if *listed >= SCENE_BRIEF_NODES || depth >= SCENE_BRIEF_DEPTH {
+        *rest = rest.saturating_add(1);
+        return;
+    }
+    *listed = listed.saturating_add(1);
+    let kind = match node {
+        Node::Container(container) if container.is_product() => "product",
+        Node::Container(_) => "container",
+        Node::Panel(_) => "panel",
+        Node::Object(_) => "body",
+        Node::Camera(_) => "camera",
+        Node::Light(_) => "light",
+    };
+    let name: String = node.name().chars().map(|ch| if ch == '\n' || ch == '\r' { ' ' } else { ch }).take(80).collect();
+    let _ = writeln!(text, "  {} {kind} \"{}\"", node.id().get(), name.trim());
+    if let Some(children) = node.children() {
+        for child in children {
+            walk_brief(child, depth + 1, listed, rest, text);
+        }
+    }
 }
 
 /// What the program is, and which reading wins when a word could mean two things.
@@ -481,6 +545,24 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn the_scene_brief_names_the_root_and_the_open_product() {
+        // X125: the model asked the person for the root id because nothing told it one. The brief is
+        // the answer: the root is always named, the open product is named, and a free body needs no
+        // product.
+        let (project, product) = testkit::sample_product_project();
+        let mut session = crate::Session::with_directory(project, testkit::sample_catalog());
+        assert!(session.open_product(product));
+
+        let brief = scene_brief(&session);
+
+        let root = session.project().root().id().get();
+        assert!(brief.contains(&format!("root container id = {root}")), "{brief}");
+        assert!(brief.contains(&format!("open product id = {}", product.get())), "{brief}");
+        assert!(brief.contains("Cabinet"), "the nodes are named: {brief}");
+        assert!(brief.contains("a free body belongs under the root"), "{brief}");
     }
 
     #[test]

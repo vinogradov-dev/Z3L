@@ -73,6 +73,10 @@ pub struct Line {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Conversation {
     lines: Vec<Line>,
+    /// The live scene the shell hands the model before it asks, empty where the backend reads the
+    /// scene itself. It is a system note, not a transcript line: the person never sees it, and it is
+    /// replaced for every message instead of growing the history.
+    brief: String,
 }
 
 impl Conversation {
@@ -102,11 +106,22 @@ impl Conversation {
     /// Forgets everything, which is what closing the tab does with it.
     pub fn clear(&mut self) {
         self.lines.clear();
+        self.brief.clear();
     }
 
     /// Whether the conversation holds nothing yet.
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
+    }
+
+    /// Names the live scene the backend should read before its next answer.
+    pub fn set_brief(&mut self, brief: impl Into<String>) {
+        self.brief = brief.into();
+    }
+
+    /// The live scene, or an empty string where the backend reads it through its own tools.
+    pub fn brief(&self) -> &str {
+        &self.brief
     }
 }
 

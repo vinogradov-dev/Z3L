@@ -50,7 +50,7 @@ pub use contour_cmds::{
 };
 pub use diagnostics::{PanelDiagnostic, diagnose_panel};
 pub use family::Family;
-pub use guide::{EXAMPLE_CORNER_RADIUS, Stance, example_frame, guide};
+pub use guide::{EXAMPLE_CORNER_RADIUS, SCENE_BRIEF_NODES, Stance, example_frame, guide, scene_brief};
 pub use inspect::{Code, Finding, Severity, SuggestedCommand, inspect};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
 pub use no_contact::NoContact;

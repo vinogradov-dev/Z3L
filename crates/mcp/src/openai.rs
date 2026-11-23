@@ -162,10 +162,10 @@ pub struct OpenAi {
     endpoint: Endpoint,
     /// The settings folder the key's second home sits in, when the workspace has one.
     folder: Option<PathBuf>,
-    /// The extra request headers the workspace names, sent with every completion. Empty in the
-    /// ordinary case; a gateway that routes on a session header is the reason the list exists, and
-    /// no provider name is in this crate (ADR 0189).
-    headers: Vec<(String, String)>,
+    /// This chat's stable id, sent as `x-opencode-session` when the endpoint is a Go gateway. The
+    /// name is the gateway's, not a setting: the person never sees it and no other provider is asked
+    /// for it (ADR 0189).
+    session: String,
     // Never printed: `ureq::Agent` has no useful `Debug` and a test that names the backend should
     // read the endpoint's own shape.
     agent: ureq::Agent,
@@ -187,14 +187,16 @@ impl OpenAi {
     /// request thread with the `rustls` feature off. `native-tls` is the provider this workspace
     /// compiles (ADR 0189).
     pub fn new(endpoint: Endpoint, folder: Option<PathBuf>) -> Self {
-        Self::with_headers(endpoint, folder, Vec::new())
+        Self::with_session(endpoint, folder, String::new())
     }
 
-    /// The same backend with the workspace's extra headers attached to every completion.
+    /// The same backend, keeping the chat's id for a gateway that routes on it.
     ///
-    /// The names and values are validated by the settings page (a header a server accepts, and not
-    /// `Authorization`, which belongs to the key's homes); the client only puts them on the wire.
-    pub fn with_headers(endpoint: Endpoint, folder: Option<PathBuf>, headers: Vec<(String, String)>) -> Self {
+    /// The id is opaque; one chat keeps one value for its whole life, so a gateway's routing and
+    /// prompt cache survive a backend rebuilt by a settings change. An empty value gets a generated
+    /// one, for a caller that did not make a chat (a test, a one-shot tool).
+    pub fn with_session(endpoint: Endpoint, folder: Option<PathBuf>, session: String) -> Self {
+        let session = if session.trim().is_empty() { default_session() } else { session };
         let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
         // The status is read by [`complete`] so the provider's own sentence reaches the panel; the
         // default would turn a 400 into a bare `StatusCode` with the body discarded.
@@ -203,7 +205,7 @@ impl OpenAi {
             .http_status_as_error(false)
             .tls_config(tls)
             .build();
-        Self { endpoint, folder, headers, agent: ureq::Agent::new_with_config(config), answer: None }
+        Self { endpoint, folder, session, agent: ureq::Agent::new_with_config(config), answer: None }
     }
 
     /// The endpoint this backend asks, for the shell's consent and the panel's words.
@@ -226,12 +228,12 @@ impl ChatBackend for OpenAi {
         let body = request_body(&self.endpoint, transcript);
         let agent = self.agent.clone();
         let endpoint = self.endpoint.clone();
-        let headers = self.headers.clone();
+        let session = self.session.clone();
         let (sender, answer) = mpsc::channel();
         let spawned = std::thread::Builder::new().name("agent-request".to_owned()).spawn(move || {
             // A send fails only when the turn dropped the request it replaces; the answer is then
             // nobody's, which is exactly what the person's stop asked for.
-            let _ = sender.send(complete(&agent, &endpoint, &key, &body, &headers));
+            let _ = sender.send(complete(&agent, &endpoint, &key, &body, &session));
         });
         self.answer = Some(match spawned {
             Ok(_) => answer,
@@ -289,7 +291,12 @@ pub struct ChecklistCall {
 
 /// The request body of one completion: the system message, the transcript and the tools.
 fn request_body(endpoint: &Endpoint, transcript: &Conversation) -> Value {
-    let mut messages = vec![json!({ "role": "system", "content": system_message() })];
+    let mut system = system_message();
+    if !transcript.brief().trim().is_empty() {
+        system.push_str("\n\nThe scene right now, live from the window; never ask the person to repeat it:\n");
+        system.push_str(transcript.brief().trim());
+    }
+    let mut messages = vec![json!({ "role": "system", "content": system })];
     messages.extend(transcript.lines().iter().map(line_message));
     json!({
         "model": endpoint.model(),
@@ -364,15 +371,43 @@ fn system_message() -> String {
     let index = Value::Object(ids);
     format!(
         "You are the assistant inside Z3L, a program a furniture maker uses to build cabinet furniture. \
-         Answer the person in their language, in words. When they ask for a change, call `{BATCH_TOOL}` \
-         once with every step of the answer: one call is one undo entry, and a refusal takes the whole \
-         call back. Use `{CHECKLIST_TOOL}` to say which steps you are working through. Ask before you \
-         guess a dimension the person did not give.\n\n\
+         Answer the person in their language, in a few sentences. When they ask for a change, call \
+         `{BATCH_TOOL}` once with every step of the answer: one call is one undo entry, and a refusal \
+         takes the whole call back. Use `{CHECKLIST_TOOL}` to say which steps you are working through.\n\n\
+         The scene brief below is live and authoritative: it names the root container, the open product \
+         and the nodes with their ids. Never ask the person for an id, a unit or a side order that the \
+         brief or the house convention answers. A free body belongs under the root and needs no product. \
+         Sizes are millimetres in width × depth × height order unless the person says otherwise; convert \
+         them to the command's micrometres yourself and never show micrometres to the person. When the \
+         person gives the numbers, act in the same turn; ask only when a required value is absent and \
+         no convention covers it. Three unequal sides are a box, not a cube: do not correct the person.\n\n\
          The program, as it describes itself:\n{guide}\n\n\
          The command ids of this build, each with its label:\n{catalogue}",
         guide = engine::guide(),
         catalogue = index,
     )
+}
+
+/// Whether `base_url` is an OpenCode Go gateway: those route on a session header the OpenAI wire
+/// does not name, and the program knows it by the address rather than asking the person (ADR 0231).
+///
+/// The predicate is the gateway's own name and path, so the `zen/go` and `inference/go/...` forms
+/// both match and no other endpoint is sent the header.
+fn is_opencode_go(base_url: &str) -> bool {
+    let url = base_url.trim().to_ascii_lowercase();
+    url.contains("opencode.ai") && url.contains("/go")
+}
+
+/// A stable id for a caller that did not make a chat, so a Go request never carries an empty header.
+fn default_session() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SESSIONS: AtomicU64 = AtomicU64::new(1);
+    let n = SESSIONS.fetch_add(1, Ordering::Relaxed);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("z3l-{t:x}-{n:x}-{:x}", std::process::id())
 }
 
 /// One completion, on the thread [`OpenAi::ask`] started.
@@ -381,14 +416,14 @@ fn complete(
     endpoint: &Endpoint,
     key: &str,
     body: &Value,
-    headers: &[(String, String)],
+    session: &str,
 ) -> Result<Reply, BackendError> {
     let mut request = agent
         .post(endpoint.chat_url())
         .header("Authorization", format!("Bearer {}", key.trim()))
         .header("Accept", "application/json");
-    for (name, value) in headers {
-        request = request.header(name.as_str(), value.as_str());
+    if is_opencode_go(endpoint.base_url()) {
+        request = request.header("x-opencode-session", session);
     }
     let mut response = request.send_json(body).map_err(|error| refusal(endpoint, &error))?;
     if !response.status().is_success() {
@@ -680,21 +715,33 @@ mod tests {
     }
 
     #[test]
-    fn extra_headers_travel_on_every_request() {
-        // J23: a gateway may route on a header the OpenAI wire does not name. It is data from the
-        // settings, so the client sends it and no provider name enters this crate (ADR 0189).
+    fn an_opencode_go_endpoint_carries_its_session_and_another_endpoint_does_not() {
+        // X124: the owner's Go gateway answered 400 MissingSessionID while the same curl worked. The
+        // gateway routes on a header the OpenAI wire does not name, so the program names it by the
+        // address and sends one stable id per chat. No header field is offered, and no other
+        // endpoint is given the header.
         let (mut session, panel) = fixture();
         let (url, requests) = testkit::stub_endpoint_request(testkit::batch_answer(panel, "Left"));
-        let headers = vec![("x-opencode-session".to_owned(), "ses_1".to_owned())];
+        // The predicate is by gateway name and path; point that shape at the loopback stub.
+        let go_url = url.replace("127.0.0.1", "opencode.ai@127.0.0.1").replace("/v1", "/go/v1");
         let mut backend =
-            OpenAi::with_headers(Endpoint::new(url, "stub-model"), Some(keyed("openai-headers")), headers);
-
+            OpenAi::with_session(Endpoint::new(go_url, "stub-model"), Some(keyed("openai-go")), "ses_1".to_owned());
         let _ = drive(&mut backend, &mut session);
-
         let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
         assert!(
             request.headers.iter().any(|(name, value)| name == "x-opencode-session" && value == "ses_1"),
-            "the header reached the wire: {:?}",
+            "the Go gateway carries the chat's id: {:?}",
+            request.headers
+        );
+
+        let (mut session, panel) = fixture();
+        let (url, requests) = testkit::stub_endpoint_request(testkit::batch_answer(panel, "Left"));
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-plain")));
+        let _ = drive(&mut backend, &mut session);
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert!(
+            !request.headers.iter().any(|(name, _)| name == "x-opencode-session"),
+            "another endpoint is not sent the gateway's header: {:?}",
             request.headers
         );
     }
@@ -720,6 +767,20 @@ mod tests {
             error.sentence()
         );
         assert!(!error.sentence().contains(KEY_TEXT), "the refusal never names the key");
+    }
+
+    #[test]
+    fn the_scene_brief_and_the_house_conventions_reach_the_system_message() {
+        // X125: a model without the root id asked the person for one. The brief is the answer, and
+        // the conventions are what keep it from asking about units or side order.
+        let mut transcript = Conversation::new();
+        transcript.set_brief("root container id = 7\n- a free body belongs under the root");
+        let body = request_body(&Endpoint::new("https://api.example.com/v1", "m"), &transcript);
+        let system = body["messages"][0]["content"].as_str().expect("a system message");
+        assert!(system.contains("root container id = 7"), "the live id reaches the model");
+        assert!(system.contains("width × depth × height"), "the side order is stated");
+        assert!(system.contains("never show micrometres"), "the person sees millimetres");
+        assert!(system.contains("Never ask the person for an id"), "and an id is never demanded");
     }
 
     #[test]
