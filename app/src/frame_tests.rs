@@ -7585,6 +7585,35 @@ fn assistant_send_points(harness: &Harness) -> Vec<egui::Pos2> {
     points
 }
 
+/// The middle of the panel's button that prints `message`.
+///
+/// The panel is a window over the scene, so the button is found where the frame drew its label
+/// instead of at a coordinate the field's row would have to repeat (X122).
+fn assistant_button(harness: &Harness, message: Message) -> egui::Pos2 {
+    let label = message.text(Lang::En);
+    harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == label)
+        .map(|(rect, _)| rect.center())
+        .unwrap_or_else(|| panic!("the panel draws no `{label}`: {:?}", harness.drawn))
+}
+
+/// A model that never answers, so a test can hold a turn in flight for as long as it looks.
+///
+/// A scripted backend that runs out answers with a sentence and ends the turn; this one leaves the
+/// request in flight, which is the state the panel's Stop and its working line are drawn for (X122).
+#[derive(Debug)]
+struct Silent;
+
+impl mcp::ChatBackend for Silent {
+    fn ask(&mut self, _transcript: &mcp::Conversation) {}
+
+    fn take(&mut self) -> Option<Result<mcp::Reply, mcp::BackendError>> {
+        None
+    }
+}
+
 /// Writes the key's second home into `folder` with owner-only permissions.
 fn write_agent_key(folder: &std::path::Path) {
     let path = folder.join(mcp::KEY_FILE);
@@ -7712,6 +7741,86 @@ fn a_stopped_turn_leaves_the_document_as_its_last_answer_did() {
     );
     harness.app.tabs.active_mut().session.undo().expect("the landed answer is one entry");
     assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "and it was all one entry");
+}
+
+#[test]
+fn the_panel_opens_with_the_caret_in_its_field() {
+    // X122: opening the panel is opening a field. The field holds the keyboard on the frame the
+    // window comes up, so the first key a person types is the message and not a viewport shortcut;
+    // and the key that opened the panel still closes it, because a field that owns the keys would
+    // otherwise leave a window only the pointer can put away.
+    let (mut harness, _panel) = chat_fixture("frame-chat-caret");
+    harness.settle();
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![mcp::Reply::saying("ok")])));
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.assistant_open, "Ctrl+J opens the panel");
+    assert!(harness.ctx.text_edit_focused(), "and the caret stands in the panel's field");
+
+    harness.run(vec![egui::Event::Text("rename the side".to_owned())]);
+    assert_eq!(harness.app.chat().input, "rename the side", "the first key typed reached the field");
+
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(!harness.app.assistant_open, "and the key that opened it closes it");
+}
+
+#[test]
+fn a_running_turn_keeps_its_field_and_a_click_on_stop_ends_it() {
+    // X122: a turn in flight draws Stop where Send was, the field stays typable — the owner's
+    // decision of 2026-11-23: a person composes the next message while the agent works — and the
+    // panel's own Stop ends the turn between two calls and says so. The backend never answers, so
+    // the turn is in flight for the whole test instead of ending on a scripted reply.
+    let (mut harness, _panel) = chat_fixture("frame-chat-stop-click");
+    harness.app.chat_mut().backend = Some(Box::new(Silent));
+    harness.press(egui::Key::J, egui::Modifiers::CTRL);
+    assert!(harness.app.assistant_open, "Ctrl+J opens the panel");
+
+    harness.run(vec![egui::Event::Text("rename the side".to_owned())]);
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(harness.app.chat().is_busy(), "Enter sent the field as one turn");
+    assert!(harness.drew(Message::AssistantStop.text(Lang::En)), "the row draws Stop: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantSend.text(Lang::En)), "Stop replaces Send, never beside it");
+
+    harness.run(vec![egui::Event::Text("the next message".to_owned())]);
+    assert_eq!(harness.app.chat().input, "the next message", "the field stays typable while the agent works");
+
+    let stop = assistant_button(&harness, Message::AssistantStop);
+    harness.click(stop, egui::PointerButton::Primary);
+    assert!(!harness.app.chat().is_busy(), "the click on Stop ended the turn");
+    assert!(
+        harness.drew(Message::AssistantStoppedLine.text(Lang::En)),
+        "and the panel says the turn was stopped: {:?}",
+        harness.drawn
+    );
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "the row offers Send again");
+}
+
+#[test]
+fn a_carried_piece_leaves_the_panel_offering_send() {
+    // X122: a gesture postpones the next message and never chooses the button. With no turn in
+    // flight, a carried piece draws Send and no Stop — the row has one meaning at a time.
+    let (session, panel) = one_wide_panel();
+    let mut harness = Harness::with_session("frame-chat-carried", session);
+    harness.settle();
+    harness.app.tabs.active_mut().frame_all();
+    harness.settle();
+    harness.app.tabs.active_mut().editor.select_node(None);
+    harness.settle();
+
+    let cell = harness.mode_cell(&TransformMode::Object.caption(Lang::En));
+    harness.click(cell, egui::PointerButton::Primary);
+    assert_eq!(harness.app.shell.mode, TransformMode::Object, "the header's cell arms the object move");
+    harness.settle();
+    let body = harness.node_point(panel);
+    harness.click(body, egui::PointerButton::Primary);
+    assert!(harness.app.tabs.active().holding_piece(), "a click on the board takes it");
+
+    harness.app.chat_mut().backend = Some(Box::new(Silent));
+    harness.app.assistant_open = true;
+    harness.settle();
+    assert!(!harness.app.chat().is_busy(), "no turn is in flight");
+    assert!(harness.drew(Message::AssistantSend.text(Lang::En)), "the row still offers Send: {:?}", harness.drawn);
+    assert!(!harness.drew(Message::AssistantStop.text(Lang::En)), "and draws no Stop");
 }
 
 #[test]

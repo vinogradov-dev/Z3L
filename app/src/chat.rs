@@ -51,6 +51,10 @@ const HEIGHT: f32 = 520.0;
 /// glance; the tool answer carries the whole list for the model.
 const FINDINGS_SHOWN: usize = 6;
 
+/// The field's own id, so the caret the shell asks for on the frame the panel opens lands in the
+/// message and in no other text edit on the screen (X122).
+const FIELD_ID: &str = "assistant_field";
+
 /// The id one chat keeps for the whole of its life, sent to an OpenCode Go gateway as
 /// `x-opencode-session`. It is opaque to the gateway and only needs to be stable for one chat, so a
 /// process counter and the wall clock make it unique without a dependency or a secret.
@@ -123,6 +127,11 @@ pub(crate) struct Chat {
     /// A waiting person reads seconds and knows the program is working; a spinner says nothing about
     /// whether an answer is near (J26).
     started: Option<std::time::Instant>,
+    /// Whether the field should take the caret the next time the panel draws.
+    ///
+    /// The shell asks once, when the window comes up, and the flag is spent in the frame that honours
+    /// it: a field that asked every frame could never give the keyboard back to the inspector (X122).
+    field_focus: bool,
     /// The rules' findings for the revision the panel last read.
     findings: Vec<Finding>,
     /// The revision [`Self::findings`] was derived from, so a frame polls the rules once.
@@ -153,6 +162,7 @@ impl Chat {
             checklist: Vec::new(),
             step: None,
             started: None,
+            field_focus: false,
             findings: Vec::new(),
             findings_revision: None,
         }
@@ -287,6 +297,14 @@ impl Chat {
     /// Whether a turn is running: the field says so and Send gives way to Stop.
     pub(crate) fn is_busy(&self) -> bool {
         self.turn.is_some()
+    }
+
+    /// Asks for the caret in the field the next time the panel draws.
+    ///
+    /// Opening the panel is opening a field: the shell calls this from the one act that shows it, so
+    /// the first key a person types is the message and not a viewport shortcut (X122).
+    pub(crate) fn focus_field(&mut self) {
+        self.field_focus = true;
     }
 
     /// Re-reads the rules when the document has moved since the last look.
@@ -600,10 +618,18 @@ impl Chat {
     /// the window for more room whenever the button is wider than the guess — «Отправить» is — and
     /// the panel then widens by itself, a little every frame (X108). The row is the height
     /// `ui.horizontal` takes, so the panel's rows keep one rhythm.
+    ///
+    /// The field takes the caret the frame the window opens, so the person types instead of finding
+    /// it: opening the panel is opening a field (X122). While a turn runs the field stays enabled — a
+    /// person composes the next message instead of waiting for the answer — and only Stop changed.
     fn field(&mut self, ui: &mut Ui, lang: Lang, held: bool, action: &mut ChatAction) {
         let working = self.is_busy();
         let enabled = self.backend.is_some() && !held;
         let ready = enabled && !working && !self.input.trim().is_empty();
+        // The caret is spent here, and only a field that takes keys takes it: a disabled field would
+        // hold the keyboard while nothing could be typed into it, and the shell stops reading its own
+        // shortcuts for a frame a focused text edit owns (X122).
+        let caret = std::mem::take(&mut self.field_focus) && enabled;
         let (entered, asked) = ui
             .allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
@@ -633,9 +659,13 @@ impl Chat {
                     let response = ui.add_enabled(
                         enabled,
                         egui::TextEdit::singleline(&mut self.input)
+                            .id(Id::unique(FIELD_ID))
                             .hint_text(Message::AssistantPlaceholder.text(lang))
                             .desired_width(ui.available_width()),
                     );
+                    if caret {
+                        response.request_focus();
+                    }
                     let entered = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     (entered, asked)
                 },
@@ -645,6 +675,10 @@ impl Chat {
             *action = asked;
         }
         if entered && ready {
+            // The person sent with Enter, and the field asks for the caret back: the next message is
+            // typed where the last one was written instead of the person clicking the field again
+            // (X122, the same act the panel's opening is).
+            self.field_focus = true;
             *action = ChatAction::Send;
         }
     }

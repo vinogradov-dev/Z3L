@@ -99,7 +99,7 @@ use crate::scene_build::empty_session_with;
 /// identity that wants reverse DNS takes its own line here and changes nothing else (ADR 0135).
 pub(crate) const APP_ID: &str = "z3l";
 use crate::settings_store::SettingsStore;
-use crate::shortcuts::take_shortcuts;
+use crate::shortcuts::{take_assistant_key, take_shortcuts};
 use crate::side_panels::{
     ANIMATION_SECONDS, Chrome, EXPANDED_WIDTH, PanelEvent, PanelHead, PanelRects, PanelSide, PanelSlot, Panels,
     STRIP_WIDTH, panel_top, scroll_body, show as show_panel,
@@ -491,9 +491,13 @@ impl App {
     ///
     /// The header's cell and `Ctrl+J` are one act, so both ask here rather than each writing the
     /// flag: a panel that opens from two doors and closes from one is the drift the inventory ends
-    /// (X106, ADR 0222).
+    /// (X106, ADR 0222). Opening asks the panel for the caret: a person who opens a field means to
+    /// type into it, and the panel is one field and one turn (X122).
     fn toggle_assistant(&mut self) {
         self.assistant_open = !self.assistant_open;
+        if self.assistant_open {
+            self.chat_mut().focus_field();
+        }
     }
 
     /// Reports a failure in the active tab's status bar.
@@ -1640,7 +1644,14 @@ impl App {
         if let Err(error) = self.tabs.active_mut().sync_selection() {
             self.failed(error);
         }
-        if !ui.ctx().text_edit_focused() && !modals {
+        // A focused field owns the keys, so typing never saves, undoes, reframes or arms a tool. The
+        // assistant's own key is the one exception: it is what opened the panel, and the field the
+        // panel takes the caret in would otherwise leave a window only the pointer can close (X122).
+        if ui.ctx().text_edit_focused() {
+            if !modals && take_assistant_key(ui.ctx()) {
+                self.toggle_assistant();
+            }
+        } else if !modals {
             let shortcuts = take_shortcuts(ui.ctx());
             if shortcuts.palette {
                 self.palette.open();
