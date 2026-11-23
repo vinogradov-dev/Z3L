@@ -222,4 +222,5 @@ table entry, and the only code it adds is its layer rules and its `ci` step list
 
 ## License
 
-MIT OR Apache-2.0.
+Apache-2.0 — [`LICENSE`](LICENSE); the attribution notices are in [`NOTICE`](NOTICE).
+Copyright 2026 Alexander Grigoryevich Vinogradov.
