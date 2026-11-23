@@ -68,7 +68,7 @@ fn session() -> Session {
 fn answer(session: &mut Session, call: &Call) -> Answer {
     match call {
         Call::List => Answer::ok(listing(session)),
-        Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None }),
+        Call::Dispatch(request) => dispatch(session, request, Door::Window { sink: None, scope: None }),
         Call::Ask(query) => mcp::asking(session, *query),
         Call::Findings => Answer::ok(mcp::findings(session)),
         Call::Preview(request) => mcp::preview(session, request, None),
@@ -232,7 +232,7 @@ async fn a_window_batch_lands_in_the_document_and_says_the_file_is_the_persons()
         dry_run: false,
         save: false,
     };
-    let answer = dispatch(&mut session, &request, Door::Window { sink: None });
+    let answer = dispatch(&mut session, &request, Door::Window { sink: None, scope: None });
     let body = answer.body();
     assert_eq!(body["effect"], json!("landed"), "{body}");
     assert_eq!(body["written"], json!(false), "a window writes nothing behind the person's back");
@@ -254,7 +254,7 @@ async fn a_save_a_scene_with_no_path_cannot_take_is_a_refusal_that_names_the_per
         dry_run: false,
         save: true,
     };
-    let answer = dispatch(&mut session, &request, Door::Window { sink: None });
+    let answer = dispatch(&mut session, &request, Door::Window { sink: None, scope: None });
     let body = answer.body();
     assert!(answer.failed(), "the ask was not honoured: {body}");
     assert_eq!(body["effect"], json!("landed"), "the document still moved: {body}");

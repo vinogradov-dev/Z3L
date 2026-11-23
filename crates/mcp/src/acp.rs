@@ -99,6 +99,17 @@ impl Program {
         self.args = args;
         self
     }
+
+    /// The command a person typed on one line: the program first, then its arguments.
+    ///
+    /// The settings keep one line because a workshop types a command the way it types one into a
+    /// shell, and a person who needs a space inside an argument needs a shell more than this field.
+    /// An empty line is no command at all, which is the state the panel says out loud.
+    pub fn parse(command: &str) -> Option<Self> {
+        let mut words = command.split_whitespace();
+        let program = words.next()?;
+        Some(Self { program: program.to_owned(), args: words.map(str::to_owned).collect() })
+    }
 }
 
 impl Spawner for Program {
@@ -770,177 +781,33 @@ fn read_frames(mut reader: Box<dyn BufRead + Send>, events: Sender<Event>) {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use std::io::BufReader;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
-
-    use serde_json::Value;
 
     use super::*;
 
     /// How long a test waits for a process before calling it hung.
     const PATIENCE: Duration = Duration::from_secs(5);
 
-    /// What a scripted process saw and what it complained about.
-    #[derive(Debug, Default)]
-    struct Seen {
-        frames: Mutex<Vec<Value>>,
-        complaint: Mutex<Option<String>>,
-    }
-
-    impl Seen {
-        fn keep(&self, frame: Value) {
-            match self.frames.lock() {
-                Ok(mut frames) => frames.push(frame),
-                Err(poisoned) => poisoned.into_inner().push(frame),
-            }
-        }
-
-        fn complain(&self, sentence: String) {
-            match self.complaint.lock() {
-                Ok(mut held) => *held = Some(sentence),
-                Err(poisoned) => *poisoned.into_inner() = Some(sentence),
-            }
-        }
-
-        fn frames(&self) -> Vec<Value> {
-            match self.frames.lock() {
-                Ok(frames) => frames.clone(),
-                Err(poisoned) => poisoned.into_inner().clone(),
-            }
-        }
-
-        /// The first frame this process saw with `method`, which is how the wire is asserted.
-        fn method(&self, method: &str) -> Option<Value> {
-            self.frames().into_iter().find(|frame| frame.get("method").and_then(Value::as_str) == Some(method))
-        }
-
-        fn complaint(&self) -> Option<String> {
-            match self.complaint.lock() {
-                Ok(held) => held.clone(),
-                Err(poisoned) => poisoned.into_inner().clone(),
-            }
-        }
-    }
-
-    /// One scripted agent process: a peer on real pipes, with the wire as its only way in.
-    struct Peer {
-        reader: BufReader<std::io::PipeReader>,
-        writer: std::io::PipeWriter,
-        seen: Arc<Seen>,
-        /// Frames read while looking for an answer, kept for whoever reads next.
-        held: std::collections::VecDeque<Value>,
-    }
-
-    impl Peer {
-        /// The next frame the client sent, or nothing when the stream ended.
-        fn read(&mut self) -> Option<Value> {
-            if let Some(frame) = self.held.pop_front() {
-                return Some(frame);
-            }
-            let mut line = String::new();
-            match std::io::BufRead::read_line(&mut self.reader, &mut line) {
-                Ok(0) => {
-                    self.seen.complain("the client closed the stream".to_owned());
-                    None
-                }
-                Ok(_) => match serde_json::from_str::<Value>(&line) {
-                    Ok(frame) => {
-                        self.seen.keep(frame.clone());
-                        Some(frame)
-                    }
-                    Err(error) => {
-                        self.seen.complain(format!("the client sent a line that is not a frame: {error}"));
-                        None
-                    }
-                },
-                Err(error) => {
-                    self.seen.complain(error.to_string());
-                    None
-                }
-            }
-        }
-
-        /// One frame to the client.
-        fn send(&mut self, frame: Value) {
-            let mut line = frame.to_string();
-            line.push('\n');
-            if let Err(error) = self.writer.write_all(line.as_bytes()).and_then(|()| self.writer.flush()) {
-                self.seen.complain(error.to_string());
-            }
-        }
-
-        /// The answer to the request `wanted`, reading past the frames in between.
-        ///
-        /// The client's own requests arrive whenever they arrive — the prompt is sent the moment
-        /// the session opens — so a script that expects one answer must be able to read past them
-        /// without losing what it read.
-        fn answer_to(&mut self, wanted: u64) -> Option<Value> {
-            let mut skipped = Vec::new();
-            let mut found = None;
-            for _ in 0..32 {
-                let Some(frame) = self.read() else { break };
-                if frame.get("method").is_none() && frame.get("id").and_then(Value::as_u64) == Some(wanted) {
-                    found = Some(frame);
-                    break;
-                }
-                skipped.push(frame);
-            }
-            // What was read past is still owed to whoever reads next, in its own order.
-            for frame in skipped.into_iter().rev() {
-                self.held.push_front(frame);
-            }
-            if found.is_none() {
-                self.seen.complain(format!("no answer to request {wanted} arrived"));
-            }
-            found
-        }
-
-        /// The answer to the request in `frame`, which is what a peer does with every request.
-        fn answer(&mut self, frame: &Value, result: Value) {
-            let id = frame.get("id").cloned().unwrap_or(Value::Null);
-            self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-        }
-
-        /// The handshake and the session, which every script does the same way.
-        fn open(&mut self) -> Option<String> {
-            let initialize = self.read()?;
-            self.answer(&initialize, json!({ "protocolVersion": PROTOCOL_VERSION }));
-            let new = self.read()?;
-            self.answer(&new, json!({ "sessionId": "s1" }));
-            Some("s1".to_owned())
-        }
-    }
-
-    /// A spawner whose process is `script`, run on a thread of its own.
-    fn process(script: impl FnOnce(&mut Peer) + Send + 'static) -> (Scripted, Arc<Seen>) {
-        let seen = Arc::new(Seen::default());
-        let script = Arc::new(Mutex::new(Some(script)));
-        let opened = Arc::clone(&seen);
+    /// A scripted agent process behind this crate's own start-of-process type.
+    ///
+    /// The peer and its pipes come from `testkit`, so a test of this backend and a test of the whole
+    /// window drive one scripted process, not two that could drift apart (ADR 0230).
+    fn process(script: impl FnOnce(&mut testkit::acp::Peer) + Send + 'static) -> (Scripted, Arc<testkit::acp::Seen>) {
+        let running = std::sync::Arc::new(std::sync::Mutex::new(testkit::acp::scripted(script)));
+        let seen = match running.lock() {
+            Ok(held) => held.seen(),
+            Err(poisoned) => poisoned.into_inner().seen(),
+        };
+        let held = std::sync::Arc::clone(&running);
         let spawner = Scripted::new(move || {
-            let (client_reads, peer_writes) = std::io::pipe().map_err(|error| BackendError::new(error.to_string()))?;
-            let (peer_reads, client_writes) = std::io::pipe().map_err(|error| BackendError::new(error.to_string()))?;
-            let mut peer = Peer {
-                reader: BufReader::new(peer_reads),
-                writer: peer_writes,
-                seen: Arc::clone(&opened),
-                held: std::collections::VecDeque::new(),
+            let mut running = match held.lock() {
+                Ok(held) => held,
+                Err(poisoned) => poisoned.into_inner(),
             };
-            let script = match script.lock() {
-                Ok(mut held) => held.take(),
-                Err(poisoned) => poisoned.into_inner().take(),
-            };
-            std::thread::spawn(move || {
-                if let Some(script) = script {
-                    script(&mut peer);
-                }
-            });
-            Ok(Started {
-                reader: Box::new(BufReader::new(client_reads)),
-                writer: Box::new(client_writes),
-                ending: Box::new(|| {}),
-            })
+            let (reader, writer) = running.start().map_err(BackendError::new)?;
+            Ok(Started { reader, writer, ending: Box::new(|| {}) })
         });
         (spawner, seen)
     }
@@ -1199,7 +1066,7 @@ mod tests {
             let Some(allowed) = peer.answer_to(91) else { return };
             // The two answers are asserted from the test's side, so the script keeps them before it
             // lets the turn finish.
-            peer.seen.keep(json!({ "refusal": refusal, "allowed": allowed }));
+            peer.seen().keep(json!({ "refusal": refusal, "allowed": allowed }));
             let Some(prompt) = peer.read() else { return };
             peer.answer(&prompt, json!({ "stopReason": "end_turn" }));
         });

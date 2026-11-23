@@ -4240,6 +4240,7 @@ dependencies = [
  "catalog",
  "model",
  "png 0.18.1",
+ "serde_json",
  "units",
 ]
 

@@ -976,16 +976,14 @@ mod tests {
         let directory = testkit::scratch_dir("channel-bridge-none");
         let (first, second) = tokio::io::duplex(8);
         publish_to(&directory, 1, &mint().expect("a token"));
-        let error =
-            runtime.block_on(bridge_stream(&directory, first, second)).expect_err("nothing answers on port 1");
+        let error = runtime.block_on(bridge_stream(&directory, first, second)).expect_err("nothing answers on port 1");
         assert!(matches!(error, BridgeError::NoWindow(_)), "{error:?}");
         assert!(error.to_string().contains("open the window"), "{error}");
 
         let empty = testkit::scratch_dir("channel-bridge-empty");
         let (first, second) = tokio::io::duplex(8);
-        let error = runtime
-            .block_on(bridge_stream(&empty, first, second))
-            .expect_err("a folder with no file names no window");
+        let error =
+            runtime.block_on(bridge_stream(&empty, first, second)).expect_err("a folder with no file names no window");
         assert!(matches!(error, BridgeError::NoWindow(_)), "{error:?}");
     }
 
@@ -999,9 +997,8 @@ mod tests {
         let window = toy_window(listener, REFUSED);
 
         let (first, second) = tokio::io::duplex(8);
-        let error = runtime
-            .block_on(bridge_stream(&directory, first, second))
-            .expect_err("a refused token ends the bridge");
+        let error =
+            runtime.block_on(bridge_stream(&directory, first, second)).expect_err("a refused token ends the bridge");
         window.join().expect("the window finished");
         assert!(matches!(error, BridgeError::Refused(_)), "{error:?}");
         assert!(error.to_string().contains("refused the token"), "{error}");

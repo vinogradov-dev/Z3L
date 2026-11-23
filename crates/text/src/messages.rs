@@ -1203,6 +1203,15 @@ messages! {
     SectionShortcuts = ["Shortcuts", "Горячие клавиши"],
     SectionAssistant = ["Assistant", "Ассистент"],
     AttachChannel = ["Let a local agent reach this window", "Разрешить локальному агенту доступ к окну"],
+    AgentCommand = ["Agent process", "Процесс агента"],
+    AgentCommandHint = [
+        "A command that speaks the Agent Client Protocol on its standard streams, for example `claude-code-acp`. The panel starts it for a message and it reaches this window through the channel above; leave it empty for no agent process.",
+        "Команда, которая говорит на Agent Client Protocol через свои стандартные потоки, например `claude-code-acp`. Панель запускает её на сообщение, и до окна она достаёт через канал выше; пустое поле — без процесса агента."
+    ],
+    AssistantNoChannel = [
+        "The local channel is switched off, so an agent process has no tools. Switch it on above.",
+        "Локальный канал выключен, поэтому у процесса агента нет инструментов. Включите его выше."
+    ],
     AttachChannelHint = [
         "An agent on this computer reaches the window through a token file in the settings folder, and the switch closes that door. Nothing is reachable from a network, and the token dies with the window.",
         "Агент на этом компьютере получает доступ к окну через файл с токеном в папке настроек, и выключатель закрывает эту дверь. Из сети окно недоступно, а токен живёт только пока открыто окно."

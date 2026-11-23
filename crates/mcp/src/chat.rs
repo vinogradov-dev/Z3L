@@ -655,10 +655,7 @@ mod tests {
             conversation.lines().iter().map(|line| (line.speaker, line.text.as_str())).collect();
         assert_eq!(
             drawn,
-            vec![
-                (Speaker::Tool, "command_batch · node.rename"),
-                (Speaker::Note, "refused: the document is in plan")
-            ]
+            vec![(Speaker::Tool, "command_batch · node.rename"), (Speaker::Note, "refused: the document is in plan")]
         );
         assert!(!backend.cancelled, "a turn that finished was never cancelled");
     }

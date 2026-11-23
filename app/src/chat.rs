@@ -75,6 +75,10 @@ pub(crate) struct Chat {
     turn: Option<Turn>,
     /// The edit scope of the turn in flight, so every answer of one message is one undo entry.
     scope: Option<EditScope>,
+    /// The agent-process command this panel installed, so a frame can tell a change from the same one.
+    agent: Option<mcp::Program>,
+    /// Whether the workspace names an agent process the window offers no channel to.
+    blocked: bool,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
     /// The rules' findings for the revision the panel last read.
@@ -99,9 +103,49 @@ impl Chat {
             backend: None,
             turn: None,
             scope: None,
+            agent: None,
+            blocked: false,
             checklist: Vec::new(),
             findings: Vec::new(),
             findings_revision: None,
+        }
+    }
+
+    /// The edit scope of the turn in flight, which is what makes a batch that arrives over the
+    /// channel part of the message the person sent (ADR 0187, ADR 0230).
+    pub(crate) fn scope(&self) -> Option<EditScope> {
+        self.scope
+    }
+
+    /// Starts the agent process the workspace names, or lets it go.
+    ///
+    /// A process is started once per command and never per frame, and a command that was cleared
+    /// ends its process. A backend this shell did not install — a test's script, a future adapter —
+    /// is left alone: only a backend this panel created is the settings' to replace.
+    ///
+    /// With no channel open the panel installs nothing and says why: a process with no door to the
+    /// document could talk and do nothing, which is worse than a sentence (ADR 0188).
+    pub(crate) fn apply_agent(&mut self, command: Option<mcp::Program>, channel_open: bool) {
+        self.blocked = command.is_some() && !channel_open;
+        let wanted = command.filter(|_| channel_open);
+        if wanted == self.agent {
+            return;
+        }
+        // A turn in flight belongs to the process that is running it: the setting takes effect when
+        // the message is finished, so nothing is cut in half.
+        if self.turn.is_some() {
+            return;
+        }
+        match wanted {
+            Some(program) => {
+                self.backend = Some(Box::new(mcp::Acp::new(program.clone())));
+                self.agent = Some(program);
+            }
+            None => {
+                if self.agent.take().is_some() {
+                    self.backend = None;
+                }
+            }
         }
     }
 
@@ -244,7 +288,12 @@ impl Chat {
             ui.label(RichText::new(Message::AssistantThinking.text(lang)).color(theme::text_dim(ui)));
         }
         if self.backend.is_none() {
-            ui.label(RichText::new(Message::AssistantNotConfigured.text(lang)).color(theme::warn(ui)));
+            let (words, ink) = if self.blocked {
+                (Message::AssistantNoChannel, theme::warn(ui))
+            } else {
+                (Message::AssistantNotConfigured, theme::warn(ui))
+            };
+            ui.label(RichText::new(words.text(lang)).color(ink));
         }
         self.field(ui, lang, busy, &mut action);
         action

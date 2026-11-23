@@ -201,8 +201,8 @@ mod tests {
         assert!(error.to_string().contains("`mcp` needs a subcommand"), "{error}");
         let error = crate::cli::parse(&["mcp".to_owned(), "nonsense".to_owned()]).expect_err("two subcommands exist");
         assert!(error.to_string().contains("`mcp nonsense` is not a subcommand"), "{error}");
-        let error =
-            crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned(), "extra".to_owned()]).expect_err("bridge takes nothing");
+        let error = crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned(), "extra".to_owned()])
+            .expect_err("bridge takes nothing");
         assert!(error.to_string().contains("`mcp bridge` takes no argument"), "{error}");
         let error =
             crate::cli::parse(&["mcp".to_owned(), "serve".to_owned(), "one.z3l".to_owned(), "two.z3l".to_owned()])
@@ -235,8 +235,8 @@ mod tests {
         let channel = crate::cli::parse(&["mcp".to_owned(), "serve".to_owned(), "--attach".to_owned()])
             .expect("the local channel is a mode of the same door");
         assert_eq!(channel, crate::cli::Command::Mcp(McpArgs { scene: None, product: None, attach: true }));
-        let bridging = crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned()])
-            .expect("the bridge is a subcommand of its own");
+        let bridging =
+            crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned()]).expect("the bridge is a subcommand of its own");
         assert_eq!(bridging, crate::cli::Command::McpBridge, "it names no scene, product or switch");
     }
 
