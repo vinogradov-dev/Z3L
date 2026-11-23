@@ -365,7 +365,12 @@ impl Chat {
     }
 
     /// Draws the panel and answers the one action it asked for.
-    pub(crate) fn show(&mut self, ctx: &Context, mode: AgentMode, lang: Lang, busy: bool) -> ChatAction {
+    ///
+    /// `held` is the shell's gesture and not the turn: a drag or a pending question pauses the turn
+    /// at the next frame boundary, so Send waits while it lasts. Whether the agent is working is the
+    /// panel's own to read ([`Self::is_busy`]) — the Stop button is the turn's state and a shell
+    /// flag anywhere else in the signature hid it for the whole life of a turn.
+    pub(crate) fn show(&mut self, ctx: &Context, mode: AgentMode, lang: Lang, held: bool) -> ChatAction {
         let mut action = ChatAction::None;
         let mut open = self.open;
         egui::Window::new(Message::SectionAssistant.text(lang))
@@ -375,7 +380,7 @@ impl Chat {
             .min_width(WIDTH)
             .resizable(true)
             .show(ctx, |ui| {
-                action = self.body(ui, mode, lang, busy);
+                action = self.body(ui, mode, lang, held);
             });
         if !open {
             action = ChatAction::Close;
@@ -387,7 +392,7 @@ impl Chat {
     }
 
     /// The panel's inside: the mode switch, the transcript, the checklist and the field.
-    fn body(&mut self, ui: &mut Ui, mode: AgentMode, lang: Lang, busy: bool) -> ChatAction {
+    fn body(&mut self, ui: &mut Ui, mode: AgentMode, lang: Lang, held: bool) -> ChatAction {
         let mut action = ChatAction::None;
         self.mode_switch(ui, mode, lang, &mut action);
         ui.add_space(theme::STEP);
@@ -423,7 +428,7 @@ impl Chat {
         if let Some(endpoint) = self.consent_pending() {
             self.consent_card(ui, endpoint, lang, &mut action);
         }
-        self.field(ui, lang, busy, &mut action);
+        self.field(ui, lang, held, &mut action);
         action
     }
 
@@ -545,20 +550,26 @@ impl Chat {
 
     /// The one field and its one button: Enter and Send are the same gesture.
     ///
+    /// The button is Send while the panel is idle and Stop while the turn runs, and both facts are
+    /// read here: `working` is the turn ([`Self::is_busy`]) and `held` is the shell's gesture, which
+    /// only delays the next message. Reading the gesture for both facts is what drew Send while a
+    /// turn ran, so the agent could not be stopped from the panel at all.
+    ///
     /// The button holds the right end of the row and the field takes what is left, so the row is
     /// measured from the button outwards. A field that leaves a guessed width for its button asks
     /// the window for more room whenever the button is wider than the guess — «Отправить» is — and
     /// the panel then widens by itself, a little every frame (X108). The row is the height
     /// `ui.horizontal` takes, so the panel's rows keep one rhythm.
-    fn field(&mut self, ui: &mut Ui, lang: Lang, busy: bool, action: &mut ChatAction) {
-        let enabled = self.backend.is_some() && !busy;
-        let ready = enabled && !self.input.trim().is_empty();
+    fn field(&mut self, ui: &mut Ui, lang: Lang, held: bool, action: &mut ChatAction) {
+        let working = self.is_busy();
+        let enabled = self.backend.is_some() && !held;
+        let ready = enabled && !working && !self.input.trim().is_empty();
         let (entered, asked) = ui
             .allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
-                    let asked = if busy {
+                    let asked = if working {
                         // The button that was Send is Stop while the agent works: one place, one meaning.
                         ui.add(egui::Button::new(Message::AssistantStop.text(lang)))
                             .clicked()

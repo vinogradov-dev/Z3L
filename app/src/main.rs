@@ -1000,7 +1000,9 @@ impl App {
     /// build ends a running turn at its next call boundary, because an answer that started while the
     /// agent could write must not keep writing after the person dropped to plan (ADR 0190). The
     /// rules' findings are re-read when the document moves, never per frame: the list is derived and
-    /// the pass walks the tree (ADR 0191).
+    /// the pass walks the tree (ADR 0191). The gesture is handed in so Send waits while a drag or a
+    /// pending question has the window; whether the turn is running is the panel's own state, which
+    /// is what draws Stop.
     fn assistant(&mut self, ctx: &egui::Context) {
         if !self.chat.open {
             return;
@@ -1008,8 +1010,8 @@ impl App {
         let lang = ui::language(ctx);
         self.chat.refresh_findings(&self.tabs.active().session);
         let mode = self.tabs.active().session.agent_mode();
-        let busy = self.gesture_in_flight();
-        match self.chat.show(ctx, mode, lang, busy) {
+        let held = self.gesture_in_flight();
+        match self.chat.show(ctx, mode, lang, held) {
             ChatAction::None => {}
             ChatAction::Send => self.send_chat(self.chat.input.trim().to_owned(), lang),
             ChatAction::Stop => self.chat.stop(),
