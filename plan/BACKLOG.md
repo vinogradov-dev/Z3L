@@ -104,26 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
-  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
-   центрируется на центр сцены". Measured: `Layout::apply_preset`
-   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
-   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
-   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
-   the same. So the target is whatever the view had before, and in this tab that is the empty
-   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
-   coming from Blender numpad or a view cube expects a standard view to centre the model, and
-   the older X119 is what put a meaningless target behind it.
-  Shape: A standard view centres the scene: the preset writes the direction, the projection and
-   the target, and the distance frames the scene bounds in that direction, keeping the size the
-   person had chosen when they had already framed this view by hand. ADR 0049 records the
-   exception it makes to "a preset moves the direction only", so the next reader does not
-   reinstate the old rule.
-  Done: A frame test asks for the top view of a model standing away from the origin and asserts
-   the model bounds are inside the frame and its centre lands on the view centre; a test
-   asserts a view the person framed by hand keeps its size through a preset; a test asserts
-   orbiting after a preset keeps the new target.
-  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs`
 - `[ ]` **X122** the panel offers Send while the agent works, so a running turn cannot be stopped
   Why: Measured 2026-11-22 while fixing X108: with a turn in flight and no gesture, a headless
    frame draws `Send` and never `Stop`, while `Chat::is_busy()` is true and
@@ -592,6 +572,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X121** a standard view does not centre the scene, so top and side show a corner instead of the model
+  Why: Owner report 2026-11-21: "когда жму на виджете вид сверху или сбоку, то вид не
+   центрируется на центр сцены". Measured: `Layout::apply_preset`
+   (`app/src/view_layout.rs:318`) writes the direction and, for a standard preset, the
+   projection - and nothing else - because ADR 0049 says a preset keeps the target, the
+   distance and the projection; the view widget path (`view_layout.rs:375`, `look_from`) does
+   the same. So the target is whatever the view had before, and in this tab that is the empty
+   scene origin, so top and side frame a corner with the wardrobe hanging out of it. A maker
+   coming from Blender numpad or a view cube expects a standard view to centre the model, and
+   the older X119 is what put a meaningless target behind it.
+  Shape: A standard view centres the scene: the preset writes the direction, the projection and
+   the target, and the distance frames the scene bounds in that direction, keeping the size the
+   person had chosen when they had already framed this view by hand. ADR 0049 records the
+   exception it makes to "a preset moves the direction only", so the next reader does not
+   reinstate the old rule.
+  Done: A frame test asks for the top view of a model standing away from the origin and asserts
+   the model bounds are inside the frame and its centre lands on the view centre; a test
+   asserts a view the person framed by hand keeps its size through a preset; a test asserts
+   orbiting after a preset keeps the new target.
+  `files: app/src/view_layout.rs,docs/decisions/0049-the-viewport-toggles-its-own-projection.md,crates/scene/src/camera.rs` — `1dcca49`
 
 - `[x]` **X131** the assistant window cannot be made taller, so a long answer stays cut off
   Why: Owner report 2026-11-23: «окно чата невозможно изменить по вертикали» — the assistant
