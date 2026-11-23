@@ -167,17 +167,10 @@ impl Picture {
 
 /// A device and a queue with no surface behind them, or the sentence that says why there is none.
 ///
-/// The upload probe in `scene_build` borrows the same device, so the shell creates one only here.
+/// The upload probe in `scene_build` and the agent's preview borrow the same device, so the shell
+/// creates one only once (`crate::preview::render_state`).
 pub(crate) fn render_state() -> Result<egui_wgpu::RenderState, String> {
-    let configuration = egui_wgpu::WgpuConfiguration::default();
-    let instance = wgpu::Instance::default();
-    pollster::block_on(egui_wgpu::RenderState::create(
-        &configuration,
-        &instance,
-        None,
-        egui_wgpu::RendererOptions::PREDICTABLE,
-    ))
-    .map_err(|error| format!("this machine has no GPU adapter to render the interface shots with: {error}"))
+    crate::preview::render_state()
 }
 
 /// Draws one cell offscreen, writes it to `path` and returns what it wrote.

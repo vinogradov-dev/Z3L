@@ -1,4 +1,4 @@
-//! The served session: one document, five tools, and the protocol over a pair of streams.
+//! The served session: one document, the coarse tools, and the protocol over a pair of streams.
 //!
 //! The server owns the one session a headless process has, behind a mutex because the protocol may
 //! poll it from any thread and a person's window may hold the same handle later (ADR 0188). Every
@@ -27,10 +27,11 @@ use serde_json::{Map, Value, json};
 use text::Lang;
 
 use crate::SceneSink;
+use crate::preview::{MAX_BYTES, PreviewSize, Previewer, base64};
 use crate::report::{self, Write};
 use crate::tools::{
-    Answer, BatchRequest, CommandListRequest, FindingsRequest, RunRequest, StepRequest, TOOL_BATCH, TOOL_FINDINGS,
-    TOOL_LIST, TOOL_QUERY, TOOL_RUN, parse,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, PreviewRequest, RunRequest, StepRequest, TOOL_BATCH,
+    TOOL_FINDINGS, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, parse,
 };
 
 /// What the server tells a client about the vocabulary it is about to use.
@@ -60,16 +61,22 @@ file it came from only \
 when a call asks with `save`, and a scene that was never saved refuses that ask: the person names \
 the file once, and every later save reaches it.";
 
-/// The one session a served process dispatches into, and where its document is written.
+/// The one session a served process dispatches into, where its document is written, and what draws
+/// its pictures.
 #[derive(Clone)]
 pub struct CommandServer {
     session: Arc<Mutex<Session>>,
     sink: Option<Arc<dyn SceneSink>>,
+    previewer: Option<Arc<dyn Previewer>>,
 }
 
 impl std::fmt::Debug for CommandServer {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("CommandServer").field("sink", &self.sink.is_some()).finish()
+        formatter
+            .debug_struct("CommandServer")
+            .field("sink", &self.sink.is_some())
+            .field("previewer", &self.previewer.is_some())
+            .finish()
     }
 }
 
@@ -82,8 +89,17 @@ impl CommandServer {
     ///
     /// `sink` is `None` for a session served without a scene: its document lives in memory, and every
     /// answer says that the file was not written rather than pretending it was.
-    pub fn new(session: Arc<Mutex<Session>>, sink: Option<Arc<dyn SceneSink>>) -> Self {
-        Self { session, sink }
+    ///
+    /// `previewer` is `None` for a process that has no device to draw with — a machine with no
+    /// adapter, or a caller that built the server without one. `render_preview` then refuses with
+    /// that sentence instead of failing the protocol, so a client learns why there is no picture
+    /// (ADR 0228).
+    pub fn new(
+        session: Arc<Mutex<Session>>,
+        sink: Option<Arc<dyn SceneSink>>,
+        previewer: Option<Arc<dyn Previewer>>,
+    ) -> Self {
+        Self { session, sink, previewer }
     }
 
     /// The `command_list` answer: every command, what it takes, and whether it can run here.
@@ -137,10 +153,14 @@ impl CommandServer {
                 let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
                 Ok(self.findings())
             }
+            TOOL_PREVIEW => {
+                let request = parse::<PreviewRequest>(TOOL_PREVIEW, arguments).map_err(tool_error)?;
+                Ok(self.preview(&request))
+            }
             other => Err(ErrorData::invalid_params(
                 format!(
                     "no tool is named `{other}`; this server offers {TOOL_LIST}, {TOOL_RUN}, {TOOL_BATCH}, \
-                     {TOOL_QUERY}, {TOOL_FINDINGS}"
+                     {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
                 ),
                 None,
             )),
@@ -151,6 +171,14 @@ impl CommandServer {
     pub fn findings(&self) -> Answer {
         match self.session.lock() {
             Ok(session) => Answer::ok(findings(&session)),
+            Err(_) => Answer::refused(BUSY),
+        }
+    }
+
+    /// The `render_preview` answer: the scene as one picture, or the sentence that says why none.
+    pub fn preview(&self, request: &PreviewRequest) -> Answer {
+        match self.session.lock() {
+            Ok(session) => preview(&session, request, self.previewer.as_deref()),
             Err(_) => Answer::refused(BUSY),
         }
     }
@@ -270,6 +298,45 @@ pub fn findings(session: &Session) -> Value {
     })
 }
 
+/// The `render_preview` answer: the picture the shell drew, or the sentence that says why there is
+/// none.
+///
+/// The bounds are checked in the order a caller pays for them: the size first, so a call asking for
+/// a wall poster costs no upload and no render, and the encoded length after, because only an
+/// encoder knows what a scene weighs. Both refuse — a clamp would answer a picture the call did not
+/// ask for with nothing saying so (ADR 0228).
+///
+/// It is a free function because the window's door and the headless one answer it, and a second
+/// reading of the caps is a second rule (§4.1 of `AGENTS.md`).
+pub fn preview(session: &Session, request: &PreviewRequest, previewer: Option<&dyn Previewer>) -> Answer {
+    let size = match PreviewSize::new(request.width, request.height) {
+        Ok(size) => size,
+        Err(sentence) => return Answer::refused(sentence),
+    };
+    let Some(previewer) = previewer else {
+        return Answer::refused(NO_DEVICE);
+    };
+    let png = match previewer.preview(session, size) {
+        Ok(png) => png,
+        Err(sentence) => return Answer::refused(sentence),
+    };
+    if png.len() > MAX_BYTES {
+        return Answer::refused(format!(
+            "the picture encodes to {} bytes, over the {MAX_BYTES}-byte cap this tool sends: ask for a smaller size, or \
+             read the scene with `query`",
+            png.len()
+        ));
+    }
+    Answer::ok(json!({
+        "revision": session.project().revision().get(),
+        "width": size.width,
+        "height": size.height,
+        "bytes": png.len(),
+        "mime_type": MIME_PNG,
+    }))
+    .with_image(png)
+}
+
 /// The `query` answer: the read model's own report, untouched.
 pub fn asking(session: &Session, query: Query) -> Answer {
     match session.read(query) {
@@ -317,6 +384,15 @@ fn write_through(sink: &dyn SceneSink, session: &Session) -> Write {
     }
 }
 
+/// The media type of the one picture this server sends.
+const MIME_PNG: &str = "image/png";
+
+/// The sentence `render_preview` answers with in a process that has no device behind it.
+///
+/// It names the machine's own answer — no adapter — because the caller's next move is either a
+/// different door or a different machine, and neither is a retry.
+const NO_DEVICE: &str = "this process has no device to draw with, so `render_preview` cannot answer: the picture is drawn by the shell, and this one has no GPU adapter. Every other tool works here";
+
 /// The sentence a tool answers with when the session cannot be locked.
 ///
 /// A poisoned lock means a call panicked while it held the document, which this tree denies; the
@@ -351,10 +427,14 @@ pub(crate) fn tool_error(answer: Answer) -> ErrorData {
     ErrorData::invalid_params(sentence, None)
 }
 
-/// The tool result a client reads: the JSON as text, and the same JSON as a structured answer.
+/// The tool result a client reads: the JSON as text, the same JSON as a structured answer, and the
+/// picture as a block of the protocol's own when the tool drew one.
 pub(crate) fn result(answer: Answer) -> CallToolResult {
     let text = answer.body().to_string();
-    let content = vec![ContentBlock::text(text)];
+    let mut content = vec![ContentBlock::text(text)];
+    if let Some(png) = answer.image() {
+        content.push(ContentBlock::image(base64(png), MIME_PNG));
+    }
     let mut result = if answer.failed() { CallToolResult::error(content) } else { CallToolResult::success(content) };
     result.structured_content = Some(answer.body().clone());
     result
@@ -388,6 +468,10 @@ impl ServerHandler for CommandServer {
 ///
 /// A convenience for a door that owns a `Session` and a way to write it, so neither the command
 /// line nor a test has to know how the server keeps them.
-pub fn serve_session(session: Session, sink: Option<Arc<dyn SceneSink>>) -> CommandServer {
-    CommandServer::new(Arc::new(Mutex::new(session)), sink)
+pub fn serve_session(
+    session: Session,
+    sink: Option<Arc<dyn SceneSink>>,
+    previewer: Option<Arc<dyn Previewer>>,
+) -> CommandServer {
+    CommandServer::new(Arc::new(Mutex::new(session)), sink, previewer)
 }

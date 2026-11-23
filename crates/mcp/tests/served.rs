@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine::Session;
-use mcp::{CommandServer, SceneSink, TOOL_BATCH, TOOL_FINDINGS, TOOL_LIST, TOOL_QUERY, TOOL_RUN};
+use mcp::{
+    CommandServer, PreviewSize, Previewer, SceneSink, TOOL_BATCH, TOOL_FINDINGS, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY,
+    TOOL_RUN,
+};
 use model::{ClassCode, Envelope, Id, Placement, Project};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
@@ -76,6 +79,41 @@ fn arguments(value: Value) -> Map<String, Value> {
     value.as_object().cloned().unwrap_or_default()
 }
 
+/// A previewer that draws no scene: it answers three marked bytes and remembers what it was asked.
+///
+/// The pixels belong to the tree's own device test (J10); what this file proves is the port's
+/// promise — the size a call named, the two caps, and the image block a client reads.
+#[derive(Debug, Default)]
+struct MarkedPreview {
+    asked: Mutex<Vec<PreviewSize>>,
+    bytes: Option<usize>,
+}
+
+impl Previewer for MarkedPreview {
+    fn preview(&self, session: &Session, size: PreviewSize) -> Result<Vec<u8>, String> {
+        self.asked.lock().map_err(|_| "the test's own lock is broken".to_owned())?.push(size);
+        assert_eq!(session.project().revision(), session.project().revision(), "the session travels");
+        match self.bytes {
+            Some(bytes) => Ok(vec![7u8; bytes]),
+            None => Ok(b"png".to_vec()),
+        }
+    }
+}
+
+/// The image content block of a tool result, when it carried one.
+fn image(result: &rmcp::model::CallToolResult) -> Option<&rmcp::model::ImageContent> {
+    result.content.iter().find_map(|block| block.as_image())
+}
+
+/// Calls one tool and answers the result, so a test reads the content blocks as a client does.
+async fn call(
+    client: &mut rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    tool: &'static str,
+    value: Value,
+) -> rmcp::model::CallToolResult {
+    client.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments(value))).await.expect("the call answers")
+}
+
 /// The structured answer of a tool call.
 fn body(result: &rmcp::model::CallToolResult) -> Value {
     result.structured_content.clone().unwrap_or(Value::Null)
@@ -101,12 +139,12 @@ async fn a_foreign_client_lists_the_commands_and_batches_two_steps_into_one_undo
     let session = Arc::new(Mutex::new(session));
     let sink = Arc::new(CountingSink::default());
     let (mut client, task) =
-        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>), None)).await;
 
-    // What the server offers: five coarse tools, not one tool per command id.
+    // What the server offers: the coarse tools, not one tool per command id.
     let tools = client.list_tools(None).await.expect("the tool list answers");
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
-    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS]);
+    assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
 
     // `command_list` names every command with the schema of its parameters.
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
@@ -188,7 +226,7 @@ async fn a_client_names_what_one_step_makes_and_the_next_step_refers_to_it() {
     let session = Arc::new(Mutex::new(session));
     let sink = Arc::new(CountingSink::default());
     let (mut client, task) =
-        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>), None)).await;
     let edge = testkit::sample_edge_material_id().to_string();
 
     let steps = json!({"steps": [
@@ -233,7 +271,7 @@ async fn a_part_is_written_in_the_product_the_request_names_even_when_none_is_op
     // open product is the window's own question rather than the command's (ADR 0098, ADR 0226).
     let (session, products) = session_with(2);
     let first = *products.first().expect("two products");
-    let server = CommandServer::new(Arc::new(Mutex::new(session)), None);
+    let server = CommandServer::new(Arc::new(Mutex::new(session)), None, None);
     let (mut client, task) = connect(server).await;
 
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
@@ -266,7 +304,7 @@ async fn a_session_served_without_a_scene_changes_and_writes_nothing_to_a_file()
     let mut session = session;
     assert!(session.open_product(product));
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     let run = json!({"command": "node.rename", "params": {"node": product.get(), "name": "Wardrobe"}});
     let answered = client
@@ -296,7 +334,7 @@ async fn a_refused_batch_takes_back_its_steps_and_writes_nothing() {
     let session = Arc::new(Mutex::new(session));
     let sink = Arc::new(CountingSink::default());
     let (mut client, task) =
-        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>), None)).await;
 
     let missing = Id::new(9_999).expect("an id the scene does not hold");
     let steps = json!({"steps": [
@@ -340,7 +378,7 @@ async fn a_session_in_plan_mode_answers_every_call_with_a_plan_and_writes_nothin
     let session = Arc::new(Mutex::new(session));
     let sink = Arc::new(CountingSink::default());
     let (mut client, task) =
-        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>))).await;
+        connect(CommandServer::new(Arc::clone(&session), Some(Arc::clone(&sink) as Arc<dyn SceneSink>), None)).await;
 
     let listed = client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers");
     assert_eq!(body(&listed)["mode"], json!("plan"), "the list says which mode the session answers in");
@@ -398,7 +436,7 @@ async fn a_batch_names_the_product_it_works_in() {
     let first = *products.first().expect("the fixture makes two products");
     let before = session.project().revision().get();
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     let ghost = Id::new(9_999).expect("an id the scene does not hold");
     let unknown =
@@ -457,7 +495,7 @@ async fn naming_a_product_opens_it_with_no_revision_and_no_undo_entry() {
     let second = *products.get(1).expect("the fixture makes two products");
     let before = session.project().revision().get();
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     let missing = Id::new(9_999).expect("an id the scene does not hold");
     let named = json!({
@@ -492,7 +530,7 @@ async fn a_frame_a_call_creates_is_open_and_the_first_part_needs_no_second_step(
     let (session, _products) = session_with(0);
     let root = session.project().root().id();
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     let frame = json!({"command": "product.create", "params": {
         "parent": root.get(),
@@ -539,7 +577,7 @@ async fn a_client_reads_back_the_box_of_the_body_it_just_built() {
     let product = *products.first().expect("one product");
     assert!(session.open_product(product), "the fixture opens the one product");
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     // A cuboid anchors at the centre of its base face, so its local box is 100 mm each way in X and
     // Y and 600 mm up: the answer a caller has to be able to check.
@@ -617,7 +655,7 @@ async fn a_caller_that_reads_only_the_surface_puts_the_shelves_where_the_person_
     let product = *products.first().expect("one product");
     assert!(session.open_product(product), "the fixture opens the one product");
     let session = Arc::new(Mutex::new(session));
-    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None)).await;
+    let (mut client, task) = connect(CommandServer::new(Arc::clone(&session), None, None)).await;
 
     // What the surface says about the vocabulary it is about to be used with.
     let listed = body(&client.call_tool(CallToolRequestParams::new(TOOL_LIST)).await.expect("the list answers"));
@@ -768,4 +806,77 @@ async fn a_caller_that_reads_only_the_surface_puts_the_shelves_where_the_person_
 
     let _ = client.close().await;
     let _ = task.await.expect("the server task never panics");
+}
+
+#[tokio::test]
+async fn a_client_reads_a_picture_at_the_size_it_named_and_the_image_comes_beside_the_report() {
+    let (session, _products) = session_with(1);
+    let previewer = Arc::new(MarkedPreview::default());
+    let (mut client, task) =
+        connect(CommandServer::new(Arc::new(Mutex::new(session)), None, Some(Arc::clone(&previewer) as _))).await;
+
+    let answered = call(&mut client, TOOL_PREVIEW, json!({ "width": 320, "height": 200 })).await;
+    assert!(!answered.is_error.unwrap_or(false), "a picture is an answer, not a failure");
+    let report = body(&answered);
+    assert_eq!((report["width"].as_u64(), report["height"].as_u64()), (Some(320), Some(200)));
+    assert_eq!(report["bytes"], json!(3), "the answer says what the picture weighs");
+    assert_eq!(report["mime_type"], json!("image/png"));
+    assert!(report["revision"].as_u64().is_some(), "the picture is of a revision a caller can name");
+
+    // The picture itself is a block of the protocol's own, base64 of what the previewer answered.
+    let picture = image(&answered).expect("the answer carries the picture as an image block");
+    assert_eq!(picture.mime_type, "image/png");
+    assert_eq!(picture.data, "cG5n", "three bytes of `png`");
+
+    // A call that names no size asks for the default shape.
+    let default = call(&mut client, TOOL_PREVIEW, json!({})).await;
+    let report = body(&default);
+    assert_eq!(report["width"], json!(640));
+    assert_eq!(report["height"], json!(480));
+
+    let asked = previewer.asked.lock().expect("the test's own lock").clone();
+    assert_eq!(asked, vec![PreviewSize { width: 320, height: 200 }, PreviewSize { width: 640, height: 480 }]);
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_picture_outside_the_caps_is_refused_before_it_is_drawn_or_sent() {
+    let (session, _products) = session_with(1);
+    let previewer = Arc::new(MarkedPreview { asked: Mutex::new(Vec::new()), bytes: Some(mcp::MAX_BYTES + 1) });
+    let (mut client, task) =
+        connect(CommandServer::new(Arc::new(Mutex::new(session)), None, Some(Arc::clone(&previewer) as _))).await;
+
+    // A side past the bound is refused with the bound in the sentence, and nothing was drawn.
+    let large = call(&mut client, TOOL_PREVIEW, json!({ "width": mcp::MAX_SIDE + 1, "height": 200 })).await;
+    assert!(large.is_error.unwrap_or(false), "a wall poster is a refusal");
+    let sentence = body(&large)["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains("width") && sentence.contains(&mcp::MAX_SIDE.to_string()), "{sentence}");
+    assert!(image(&large).is_none(), "a refusal carries no picture");
+    assert!(previewer.asked.lock().expect("the test's own lock").is_empty(), "the size was checked first");
+
+    // A picture that encodes over the byte cap is refused, and its bytes never reach the answer.
+    let heavy = call(&mut client, TOOL_PREVIEW, json!({ "width": 200, "height": 200 })).await;
+    assert!(heavy.is_error.unwrap_or(false), "an oversized picture is a refusal");
+    let sentence = body(&heavy)["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains(&mcp::MAX_BYTES.to_string()), "{sentence}");
+    assert!(image(&heavy).is_none(), "the caller never starts a download the cap forbids");
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_session_with_no_device_refuses_the_picture_and_answers_every_other_tool() {
+    let (session, _products) = session_with(1);
+    let (mut client, task) = connect(CommandServer::new(Arc::new(Mutex::new(session)), None, None)).await;
+
+    let refused = call(&mut client, TOOL_PREVIEW, json!({})).await;
+    assert!(refused.is_error.unwrap_or(false), "no device is a refusal, not a protocol error");
+    let sentence = body(&refused)["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains("device"), "{sentence}");
+    assert!(image(&refused).is_none(), "and it carries no picture");
+
+    // The rest of the surface is unaffected: a device is a picture's need, not a session's.
+    let listed = call(&mut client, TOOL_LIST, json!({})).await;
+    assert!(!listed.is_error.unwrap_or(false), "the commands still list");
+    assert!(body(&listed)["commands"].as_array().is_some_and(|rows| !rows.is_empty()));
+    task.abort();
 }

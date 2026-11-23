@@ -48,8 +48,8 @@ use tokio::time::timeout;
 use crate::ServeError;
 use crate::server::{result, tool_error};
 use crate::tools::{
-    Answer, BatchRequest, CommandListRequest, FindingsRequest, RunRequest, TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT,
-    TOOL_LIST, TOOL_QUERY, TOOL_RUN, attached_definitions, parse,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, PreviewRequest, RunRequest, TOOL_BATCH, TOOL_FINDINGS,
+    TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN, attached_definitions, parse,
 };
 
 /// The file the channel publishes its port and token in, inside the settings folder.
@@ -106,6 +106,8 @@ pub enum Call {
     Ask(Query),
     /// `inspect`: the mistakes the rules can prove, in the document a person is looking at.
     Findings,
+    /// `render_preview`: the scene as one picture, drawn by the host that owns the device.
+    Preview(PreviewRequest),
     /// `ui_inspect`: the window's own state.
     Inspect,
 }
@@ -118,6 +120,7 @@ impl Call {
             Self::Dispatch(_) => "batch",
             Self::Ask(_) => "query",
             Self::Findings => "inspection",
+            Self::Preview(_) => "preview",
             Self::Inspect => "window report",
         }
     }
@@ -641,12 +644,12 @@ impl AttachedServer {
     }
 }
 
-/// The tool list of the attached channel: the headless five and the window's own report.
+/// The tool list of the attached channel: the headless tools and the window's own report.
 const INSTRUCTIONS: &str = "\
 These tools drive a running Z3L window: the document a person is looking at, not a file. Call \
 `ui_inspect` first to learn which scenes are open, which one is in front and what is selected; \
 `command_list` names every command this build dispatches with the JSON Schema of its parameters; \
-`query` reads the scene and never writes. A change lands at the next frame of the window, so it is \
+`query` reads the scene and never writes; `render_preview` answers the picture the window draws. A change lands at the next frame of the window, so it is \
 one undo entry the person can take back.";
 
 impl ServerHandler for AttachedServer {
@@ -704,12 +707,13 @@ fn intent(name: &str, arguments: Option<Map<String, Value>>) -> Result<Call, Err
             let _: FindingsRequest = parse(TOOL_FINDINGS, arguments).map_err(tool_error)?;
             Call::Findings
         }
+        TOOL_PREVIEW => Call::Preview(parse::<PreviewRequest>(TOOL_PREVIEW, arguments).map_err(tool_error)?),
         TOOL_INSPECT => Call::Inspect,
         other => {
             return Err(ErrorData::invalid_params(
                 format!(
                     "no tool is named `{other}`; a window offers {TOOL_INSPECT}, {TOOL_LIST}, {TOOL_RUN}, \
-                     {TOOL_BATCH}, {TOOL_QUERY}, {TOOL_FINDINGS}"
+                     {TOOL_BATCH}, {TOOL_QUERY}, {TOOL_FINDINGS}, {TOOL_PREVIEW}"
                 ),
                 None,
             ));

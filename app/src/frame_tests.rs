@@ -6604,6 +6604,28 @@ fn a_channel_call_is_answered_at_the_frame_boundary() {
 }
 
 #[test]
+fn a_picture_asked_of_a_window_with_no_device_is_a_refusal_and_the_other_calls_answer() {
+    // A window built with no device (`App::headless`) still routes the call: the picture is the one
+    // thing that needs a GPU, and it says so instead of failing the protocol or drawing nothing
+    // (ADR 0228). The rest of the surface is untouched, which is what a caller that only reads the
+    // scene depends on.
+    let mut harness = Harness::new("frame-channel-preview");
+    let (previewed, preview_answer) = mcp::queued(mcp::Call::Preview(mcp::PreviewRequest::default()));
+    let (listed, listed_answer) = mcp::queued(mcp::Call::List);
+    harness.app.queued.push(previewed);
+    harness.app.queued.push(listed);
+    harness.frame();
+
+    let refused = preview_answer.take().expect("the frame answered the preview");
+    assert!(refused.failed(), "a window with no device cannot draw: {:?}", refused.body());
+    assert!(refused.image().is_none(), "and it sends no picture");
+    let sentence = refused.body()["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains("device"), "{sentence}");
+    let listed = listed_answer.take().expect("the frame answered the listing");
+    assert!(!listed.failed(), "the commands still list: {:?}", listed.body());
+}
+
+#[test]
 fn a_call_that_lands_answers_in_the_frame_it_asks_for_with_no_input_at_all() {
     // The window paints on input, so a call from the channel used to wait for a pointer only a
     // person brings: the document moved, the tab was dirty, and the frame the person saw was the old

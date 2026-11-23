@@ -62,7 +62,7 @@ pub(super) fn perform(args: &McpArgs) -> Result<(), CliError> {
             None => "a document that is not written".to_owned(),
         }
     );
-    mcp::serve_stdio(mcp::serve_session(session, sink)).map_err(|error| CliError::Mcp(error.to_string()))
+    mcp::serve_stdio(mcp::serve_session(session, sink, previewer())).map_err(|error| CliError::Mcp(error.to_string()))
 }
 
 /// Serves the local control channel until standard input closes.
@@ -76,6 +76,7 @@ pub(super) fn perform(args: &McpArgs) -> Result<(), CliError> {
 /// the tool is the channel's, and hiding it would make one tool list describe two doors.
 fn attach(args: &McpArgs) -> Result<(), CliError> {
     let (mut session, sink) = open(args)?;
+    let previewer = previewer();
     let folder = crate::settings_store::config_dir()
         .ok_or_else(|| CliError::Mcp("the settings folder is not known, so no token can be published".to_owned()))?;
     let (channel, mut mailbox) = mcp::Channel::open(&folder).map_err(|error| CliError::Mcp(error.to_string()))?;
@@ -116,6 +117,7 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
                 mcp::Call::Dispatch(request) => {
                     mcp::dispatch(&mut session, request, mcp::Door::Headless { sink: sink.as_deref() })
                 }
+                mcp::Call::Preview(request) => mcp::preview(&session, request, previewer.as_deref()),
                 mcp::Call::Inspect => mcp::Answer::refused(NO_WINDOW),
             };
             pending.answer(answer);
@@ -126,6 +128,24 @@ fn attach(args: &McpArgs) -> Result<(), CliError> {
     }
     channel.shutdown();
     Ok(())
+}
+
+/// The device the served tools draw a picture with, or `None` when this machine has no adapter.
+///
+/// A process that serves a scene has no window and therefore no device of its own; it asks for one
+/// once, when it starts, and `render_preview` answers its no-device sentence if there is none
+/// (ADR 0228). Every other tool is unaffected — a picture is the only tool that needs a GPU.
+fn previewer() -> Option<Arc<dyn mcp::Previewer>> {
+    match crate::preview::ScenePreview::headless() {
+        Some(previewer) => Some(Arc::new(previewer) as Arc<dyn mcp::Previewer>),
+        None => {
+            log::warn!(
+                target: "z3l::shell",
+                "this machine has no GPU adapter, so `render_preview` answers a refusal and every other tool works"
+            );
+            None
+        }
+    }
 }
 
 /// The sentence `ui_inspect` answers with in a process that has no window.
