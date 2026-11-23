@@ -113,6 +113,14 @@ pub(crate) struct Chat {
     problem: Option<EndpointProblem>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
+    /// What the turn last did — the command it dispatched or the tool it read with — so the progress
+    /// line says what is happening instead of only that something is (J26).
+    step: Option<String>,
+    /// When the turn in flight was sent, so the panel can say how long the person has waited.
+    ///
+    /// A waiting person reads seconds and knows the program is working; a spinner says nothing about
+    /// whether an answer is near (J26).
+    started: Option<std::time::Instant>,
     /// The rules' findings for the revision the panel last read.
     findings: Vec<Finding>,
     /// The revision [`Self::findings`] was derived from, so a frame polls the rules once.
@@ -141,6 +149,8 @@ impl Chat {
             problem: None,
             session: new_session_id(),
             checklist: Vec::new(),
+            step: None,
+            started: None,
             findings: Vec::new(),
             findings_revision: None,
         }
@@ -316,6 +326,8 @@ impl Chat {
         self.conversation.set_brief(engine::scene_brief(session));
         self.scope = Some(session.edit_scope());
         self.checklist.clear();
+        self.step = None;
+        self.started = Some(std::time::Instant::now());
         self.turn = Some(Turn::new());
     }
 
@@ -350,9 +362,11 @@ impl Chat {
             turn.advance(backend, conversation, lang, &mut door);
         }
         self.checklist = turn.checklist().to_vec();
+        self.step = turn.current().map(str::to_owned);
         if turn.is_done() {
             session.end_edit();
             self.scope = None;
+            self.started = None;
         } else {
             self.turn = Some(turn);
         }
@@ -412,8 +426,18 @@ impl Chat {
         }
         ui.separator();
         if self.is_busy() {
+            // The turn asks for the frames that draw it: an answer arriving in pieces and a clock
+            // that keeps moving are both invisible without one, and the person is looking at a
+            // panel that would otherwise only move when the pointer does (J26, ADR 0211).
+            ui.ctx().request_repaint();
             let calls = self.turn.as_ref().map_or(0, |turn| turn.calls()).max(1).to_string();
-            ui.label(RichText::new(Message::AssistantWorking.with(lang, [calls])).color(theme::text_dim(ui)));
+            let seconds = self.started.map_or(0, |started| started.elapsed().as_secs()).to_string();
+            ui.label(RichText::new(Message::AssistantWorking.with(lang, [seconds, calls])).color(theme::text_dim(ui)));
+            if let Some(step) = &self.step {
+                ui.label(
+                    RichText::new(Message::AssistantWorkingStep.with(lang, [step.clone()])).color(theme::text_dim(ui)),
+                );
+            }
         }
         if self.backend.is_none() {
             let (words, ink) = if self.blocked {

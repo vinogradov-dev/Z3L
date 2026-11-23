@@ -330,11 +330,12 @@ impl ChatBackend for OpenAi {
         let agent = self.agent.clone();
         let endpoint = self.endpoint.clone();
         let session = self.session.clone();
-        let (sender, answer) = mpsc::channel();
+        // One piece at a time: a streamed answer is what the frame in front has not drawn yet, so
+        // the worker waits for the frame instead of running a whole answer into a queue (J26). The
+        // wait ends when the turn drops its receiver, which is what the person's stop does.
+        let (sender, answer) = mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new().name("agent-request".to_owned()).spawn(move || {
-            // A send fails only when the turn dropped the request it replaces; the answer is then
-            // nobody's, which is exactly what the person's stop asked for.
-            let _ = sender.send(complete(&agent, &endpoint, &key, &body, &session));
+            let _ = sender.send(answer_for(&agent, &endpoint, &key, &body, &session, &sender));
         });
         self.answer = Some(match spawned {
             Ok(_) => answer,
@@ -348,6 +349,11 @@ impl ChatBackend for OpenAi {
         let answer = self.answer.as_ref()?;
         match answer.try_recv() {
             Ok(result) => {
+                // A piece of an answer leaves the request in flight, so the receiver stays until the
+                // answer is whole: only the last reply of a stream ends it (J26).
+                if result.as_ref().map(|reply| reply.more).unwrap_or(false) {
+                    return Some(result);
+                }
                 self.answer = None;
                 Some(result)
             }
@@ -411,6 +417,10 @@ fn request_body(endpoint: &Endpoint, transcript: &Conversation) -> Value {
         "messages": messages,
         "tools": tools(),
         "tool_choice": "auto",
+        // The answer arrives as it is written, so a person who types "build me a wardrobe" watches
+        // the words appear instead of a still line (J26). An endpoint that ignores the flag answers
+        // the whole completion, which is read exactly as before.
+        "stream": true,
     })
 }
 
@@ -559,18 +569,23 @@ fn default_session() -> String {
     format!("z3l-{t:x}-{n:x}-{:x}", std::process::id())
 }
 
-/// One completion, on the thread [`OpenAi::ask`] started.
-fn complete(
+/// One completion, on the thread [`OpenAi::ask`] started: the whole answer, or its pieces.
+///
+/// A piece of a streamed answer travels through `sender` as it arrives, so the panel draws the
+/// model's words while it is still writing them; the answer the caller gets back is the whole of it
+/// and the only thing that enters the history (J26).
+fn answer_for(
     agent: &ureq::Agent,
     endpoint: &Endpoint,
     key: &str,
     body: &Value,
     session: &str,
+    sender: &mpsc::SyncSender<Result<Reply, BackendError>>,
 ) -> Result<Reply, BackendError> {
     let mut request = agent
         .post(endpoint.chat_url())
         .header("Authorization", format!("Bearer {}", key.trim()))
-        .header("Accept", "application/json");
+        .header("Accept", "text/event-stream, application/json");
     if go_gateway(endpoint.base_url()) {
         request = request.header(GO_SESSION_HEADER, session);
     }
@@ -580,11 +595,143 @@ fn complete(
         let body = response.body_mut().with_config().limit(MAX_ERROR_BYTES).read_to_string().unwrap_or_default();
         return Err(status_refusal(endpoint, code, &body));
     }
-    let value: Value = response
-        .body_mut()
-        .read_json()
-        .map_err(|error| BackendError::new(format!("`{}` did not answer with JSON: {error}", endpoint.base_url())))?;
-    reply_from(&value)
+    // The answer's own content type decides how it is read, not the flag that was sent: a gateway
+    // that ignores `stream` answers one completion, and a client that insisted would lose it.
+    if !answers_in_pieces(&response) {
+        let value: Value = response.body_mut().read_json().map_err(|error| {
+            BackendError::new(format!("`{}` did not answer with JSON: {error}", endpoint.base_url()))
+        })?;
+        return reply_from(&value);
+    }
+    read_stream(&mut response, endpoint, sender)
+}
+
+/// Whether this answer is a stream of events rather than one completion.
+fn answers_in_pieces(response: &ureq::http::Response<ureq::Body>) -> bool {
+    response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+}
+
+/// Reads one answer as it is written: a growing text, and the tool calls that end it.
+///
+/// The wire is the OpenAI one: `data:` lines carrying a JSON chunk each, `[DONE]` at the end, and a
+/// `delta` whose `content` is the next piece of the words. A piece is drawn the moment it arrives,
+/// because the whole point of a streamed answer is that a person reads it while it happens (J26).
+/// The text sent with each piece is the answer **so far** and not the delta, so the panel replaces a
+/// line instead of adding one per token.
+fn read_stream(
+    response: &mut ureq::http::Response<ureq::Body>,
+    endpoint: &Endpoint,
+    sender: &mpsc::SyncSender<Result<Reply, BackendError>>,
+) -> Result<Reply, BackendError> {
+    let mut reader = std::io::BufReader::new(response.body_mut().as_reader());
+    let mut line = String::new();
+    let mut said = String::new();
+    let mut calls: Vec<StreamedCall> = Vec::new();
+    loop {
+        line.clear();
+        let read = std::io::BufRead::read_line(&mut reader, &mut line)
+            .map_err(|error| BackendError::new(format!("`{}` cut the answer short: {error}", endpoint.base_url())))?;
+        if read == 0 {
+            break;
+        }
+        // Comments, ids and the event's own name say nothing a person reads; the payload is the
+        // line that starts with `data:`.
+        let Some(payload) = line.trim_end().strip_prefix("data:") else { continue };
+        let payload = payload.trim();
+        if payload.is_empty() {
+            continue;
+        }
+        if payload == "[DONE]" {
+            break;
+        }
+        let value: Value = serde_json::from_str(payload).map_err(|error| {
+            BackendError::new(format!("`{}` sent a piece that is not JSON: {error}", endpoint.base_url()))
+        })?;
+        let choice = value.get("choices").and_then(Value::as_array).and_then(|choices| choices.first());
+        let Some(delta) = choice.and_then(|choice| choice.get("delta")) else { continue };
+        let text = delta_text(delta.get("content"));
+        if !text.is_empty() {
+            said.push_str(&text);
+            // A send fails only when the turn dropped the request, which is the person's stop: the
+            // socket is let go of instead of reading an answer nobody will draw.
+            if sender.send(Ok(Reply::saying_so_far(said.clone()))).is_err() {
+                return Ok(Reply::saying(&said));
+            }
+        }
+        collect_calls(delta.get("tool_calls"), &mut calls);
+    }
+    let mut reply = Reply { text: said, ..Reply::default() };
+    for call in &calls {
+        read_call(&call.as_wire(), &mut reply)?;
+    }
+    Ok(reply)
+}
+
+/// One streamed tool call, assembled from the fragments the wire spreads it over.
+///
+/// A streamed call arrives as pieces: the id once, the name once, and the arguments a few characters
+/// at a time. What the turn reads is the call they add up to, so the fragments are collected and the
+/// same reader parses the whole.
+#[derive(Debug, Default)]
+struct StreamedCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl StreamedCall {
+    /// The call as the non-streamed wire carries it, so one reader parses both shapes.
+    fn as_wire(&self) -> Value {
+        let function = json!({ "name": self.name, "arguments": self.arguments });
+        match self.id.is_empty() {
+            true => json!({ "function": function }),
+            false => json!({ "id": self.id, "function": function }),
+        }
+    }
+}
+
+/// How many streamed calls one answer may name, so a broken index cannot grow the list without end.
+const MAX_STREAMED_CALLS: usize = 32;
+
+/// Adds one chunk's tool-call fragments to `calls`, by the index the wire sends them under.
+fn collect_calls(deltas: Option<&Value>, calls: &mut Vec<StreamedCall>) {
+    let Some(deltas) = deltas.and_then(Value::as_array) else { return };
+    for delta in deltas {
+        let index = delta.get("index").and_then(Value::as_u64).and_then(|index| usize::try_from(index).ok());
+        let Some(index) = index.filter(|index| *index < MAX_STREAMED_CALLS) else { continue };
+        if calls.len() <= index {
+            calls.resize_with(index.saturating_add(1), StreamedCall::default);
+        }
+        let Some(call) = calls.get_mut(index) else { continue };
+        if let Some(id) = delta.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()) {
+            call.id.push_str(id);
+        }
+        let function = delta.get("function");
+        if let Some(name) = function.and_then(|function| function.get("name")).and_then(Value::as_str) {
+            call.name.push_str(name);
+        }
+        if let Some(arguments) = function.and_then(|function| function.get("arguments")).and_then(Value::as_str) {
+            call.arguments.push_str(arguments);
+        }
+    }
+}
+
+/// The words one streamed chunk adds, exactly as they were sent.
+///
+/// It is [`words`] without the trim: a delta carries the spaces between the words, and trimming each
+/// piece would run the answer's words together.
+fn delta_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => {
+            parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<&str>>().join("")
+        }
+        _ => String::new(),
+    }
 }
 
 /// How much of a provider's refusal is read before the sentence is built.
@@ -990,6 +1137,65 @@ mod tests {
             "another endpoint is not sent the gateway's header: {:?}",
             request.headers
         );
+    }
+
+    #[test]
+    fn a_streamed_answer_arrives_in_pieces_and_lands_one_batch() {
+        // J26: a person who asks for a wardrobe watches the model say what it is doing. The endpoint
+        // answers in events, the pieces reach the panel as they arrive, and the batch they add up to
+        // is one undo entry — the words are drawn once, not once per token.
+        let (mut session, panel) = fixture();
+        let arguments = json!({
+            "steps": [{ "command": "node.rename", "params": { "node": panel.get(), "name": "Left" } }]
+        })
+        .to_string();
+        let (head, tail) = arguments.split_at(arguments.len() / 2);
+        let events = vec![
+            json!({ "choices": [{ "delta": { "content": "Renaming" } }] }).to_string(),
+            json!({ "choices": [{ "delta": { "content": " the side." } }] }).to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "id": "call-batch", "function": { "name": "command_batch", "arguments": "" } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": head } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": tail } }] } }] })
+                .to_string(),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }).to_string(),
+            "[DONE]".to_owned(),
+        ];
+        let (url, requests) = testkit::stub_events(events);
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-stream")));
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+        let scope = session.edit_scope();
+        let mut door = crate::reads::MessageDoor::new(&mut session, scope);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut drawn: Vec<String> = Vec::new();
+        while !turn.is_done() && Instant::now() < deadline {
+            turn.advance(&mut backend, &mut conversation, Lang::En, &mut door);
+            for line in conversation.lines() {
+                if line.speaker == Speaker::Agent && drawn.last() != Some(&line.text) {
+                    drawn.push(line.text.clone());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        session.end_edit();
+
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
+        assert_eq!(request.body["stream"], true, "the answer is asked for as it is written: {}", request.body);
+        assert!(turn.is_done(), "the turn ended before its deadline");
+        assert!(drawn.len() > 1, "the words were drawn more than once, each time longer: {drawn:?}");
+        assert_eq!(
+            drawn.last().map(String::as_str),
+            Some("Renaming the side."),
+            "one line holds the answer: {drawn:?}"
+        );
+        assert_eq!(name(&session, panel).as_deref(), Some("Left"), "the batch the call assembled landed");
+        session.undo().expect("the whole answer is one entry");
+        assert_eq!(name(&session, panel).as_deref(), Some("Side"), "and one undo takes it back");
+        let spoken = conversation.lines().iter().filter(|line| line.speaker == Speaker::Agent).count();
+        assert_eq!(spoken, 1, "the answer is one line, not one per piece");
     }
 
     #[test]

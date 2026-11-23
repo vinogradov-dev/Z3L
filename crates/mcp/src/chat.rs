@@ -146,6 +146,12 @@ pub struct Conversation {
     /// scene itself. It is a system note, not a transcript line: the person never sees it, and it is
     /// replaced for every message instead of growing the history.
     brief: String,
+    /// Which drawn line is the answer still arriving, so the words of one streamed answer grow in
+    /// place instead of arriving as a label per chunk.
+    ///
+    /// It is an index and not a flag because a tool line may be drawn between two pieces of text:
+    /// the piece after it starts a line of its own, and the one before it keeps the text it had.
+    open: Option<usize>,
 }
 
 impl Conversation {
@@ -159,6 +165,7 @@ impl Conversation {
         let text = text.into();
         self.messages.push(message_of(speaker, &text));
         self.lines.push(Line { speaker, text });
+        self.open = None;
     }
 
     /// Adds one line the panel draws and the history does not carry.
@@ -197,23 +204,47 @@ impl Conversation {
     /// An answer that names a tool is one assistant message carrying both, which is what the wire
     /// expects and what the model reads back: its own words and what it asked for.
     pub fn push_answer(&mut self, reply: &Reply) {
-        let spoken = !reply.text.trim().is_empty();
+        // The words go into the line this answer is drawn in, whether it is still arriving or whole:
+        // a piece carries what was said so far, so the line grows instead of a label appearing per
+        // token, and the whole answer replaces it with the same text it ended on (J26).
+        if !reply.text.trim().is_empty() {
+            self.draw_so_far(&reply.text);
+        }
+        if reply.more {
+            // Nothing enters the history yet: the wire says one assistant message per answer, and
+            // half a sentence is not one.
+            return;
+        }
+        self.open = None;
         if reply.tool_calls.is_empty() {
-            if spoken {
-                self.push(Speaker::Agent, reply.text.clone());
+            if !reply.text.trim().is_empty() {
+                self.messages.push(message_of(Speaker::Agent, &reply.text));
             }
             return;
         }
         let calls: Vec<Value> = reply.tool_calls.iter().map(tool_call_message).collect();
-        let content = if spoken { Value::String(reply.text.clone()) } else { Value::Null };
+        let content = if reply.text.trim().is_empty() { Value::Null } else { Value::String(reply.text.clone()) };
         self.messages.push(json!({
             "role": "assistant",
             "content": content,
             "tool_calls": calls,
         }));
-        if spoken {
-            self.push_line(Speaker::Agent, reply.text.clone());
+    }
+
+    /// Draws the words of an answer still arriving, in the line that answer is growing in.
+    ///
+    /// The piece carries the whole of what was said so far rather than the delta, so this replaces
+    /// the open line's text instead of appending: a backend that repeats itself, or a frame that
+    /// takes two pieces at once, still leaves one answer on the screen.
+    fn draw_so_far(&mut self, text: &str) {
+        if let Some(line) = self.open.and_then(|open| self.lines.get_mut(open))
+            && line.speaker == Speaker::Agent
+        {
+            line.text = text.to_owned();
+            return;
         }
+        self.lines.push(Line { speaker: Speaker::Agent, text: text.to_owned() });
+        self.open = self.lines.len().checked_sub(1);
     }
 
     /// Records what one tool call answered, tied to it by the wire's id.
@@ -230,6 +261,7 @@ impl Conversation {
         self.lines.clear();
         self.messages.clear();
         self.brief.clear();
+        self.open = None;
     }
 
     /// Whether the conversation holds nothing yet.
@@ -279,6 +311,16 @@ pub struct Reply {
     /// A streaming backend hands a chunk over as soon as it arrives, so the person watches the
     /// agent talk instead of a spinner. The request it answers stays in flight, which is what keeps
     /// [`Turn`] from asking again: only the last reply of an answer ends anything.
+    ///
+    /// The two halves of a piece mean different things and both are drawn at once:
+    ///
+    /// - [`Self::text`] is the answer **so far** and not the delta, so the panel replaces the line
+    ///   it drew instead of adding one per token;
+    /// - [`Self::lines`] are pieces drawn as they come and never replaced, which is how a backend
+    ///   that owns the loop reports a tool it called between two sentences.
+    ///
+    /// Nothing enters the wire's history until the answer is whole: a model reads one assistant
+    /// message per answer.
     pub more: bool,
 }
 
@@ -305,6 +347,14 @@ impl Reply {
     /// One more piece of an answer still arriving: the lines it said since the last piece.
     pub fn part(lines: Vec<Line>) -> Self {
         Self { lines, more: true, ..Self::default() }
+    }
+
+    /// The words of an answer still arriving, as much of them as has arrived.
+    ///
+    /// The text is the whole answer so far, never the delta, so the panel draws one growing
+    /// sentence instead of a label per token (J26).
+    pub fn saying_so_far(text: impl Into<String>) -> Self {
+        Self { text: text.into(), more: true, ..Self::default() }
     }
 }
 
@@ -371,7 +421,9 @@ pub trait Tools {
 ///
 /// It is the first backend the tree has (ADR 0187: "a scripted model must run a whole task in
 /// tests"): a test hands in the answers a model would have produced and the frame drives them
-/// through the real turn, the real session and the real undo history.
+/// through the real turn, the real session and the real undo history. A script that answers in
+/// pieces writes them in order after the piece that names the answer: everything between one
+/// non-`more` reply and the next belongs to the same request, exactly as a stream does (J26).
 #[derive(Clone, Debug, Default)]
 pub struct Scripted {
     answers: VecDeque<Result<Reply, BackendError>>,
@@ -401,19 +453,28 @@ impl ChatBackend for Scripted {
     fn ask(&mut self, _transcript: &Conversation) {
         // A script that ran out says so instead of leaving the turn waiting forever for an answer
         // no backend will ever send.
-        self.pending = Some(
-            self.answers
-                .pop_front()
-                .unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers"))),
-        );
+        self.pending = Some(self.next_answer());
     }
 
     fn take(&mut self) -> Option<Result<Reply, BackendError>> {
-        self.pending.take()
+        let answer = self.pending.take()?;
+        // A piece of an answer keeps the request in flight, so the next piece of the script is what
+        // the backend hands over next: a scripted stream needs no second request (J26).
+        if answer.as_ref().is_ok_and(|reply| reply.more) {
+            self.pending = Some(self.next_answer());
+        }
+        Some(answer)
     }
 
     fn waiting(&self) -> bool {
         self.pending.is_none()
+    }
+}
+
+impl Scripted {
+    /// The answer the script holds next, or the sentence that says it has none.
+    fn next_answer(&mut self) -> Result<Reply, BackendError> {
+        self.answers.pop_front().unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers")))
     }
 }
 
@@ -437,6 +498,12 @@ pub struct Turn {
     /// Only a batch that ran is kept: a refused one may be corrected and asked again, which is what
     /// the refusal sentence is for.
     landed: Option<Vec<BatchStep>>,
+    /// What the turn last did, named for the progress line the panel draws while it runs.
+    ///
+    /// It is the last step the agent dispatched or the tool it read with, in the agent's own words:
+    /// a person waiting for an answer reads `panel.create` and knows what is happening, where a
+    /// spinner tells them nothing (J26).
+    current: Option<String>,
 }
 
 impl Default for Turn {
@@ -456,6 +523,7 @@ impl Turn {
             done: false,
             checklist: Vec::new(),
             landed: None,
+            current: None,
         }
     }
 
@@ -494,6 +562,14 @@ impl Turn {
     /// How many replies the turn has taken, which the panel prints as "3/12" if it ever needs to.
     pub fn calls(&self) -> u32 {
         self.calls
+    }
+
+    /// What the turn last did — the step it dispatched or the read it made — while it runs.
+    ///
+    /// `None` before the first answer names anything, which is the state a person sees while the
+    /// model is still thinking.
+    pub fn current(&self) -> Option<&str> {
+        self.current.as_deref()
     }
 
     /// One step of the turn, at a frame boundary.
@@ -585,6 +661,9 @@ impl Turn {
                         continue;
                     }
                     dispatched = true;
+                    if let Some(last) = reply.calls.last() {
+                        self.current = Some(last.command().to_owned());
+                    }
                     let report = tools.dispatch(&reply.calls);
                     let sentence = describe(&report, lang);
                     conversation.push_line(Speaker::Tool, tool_line(call));
@@ -596,6 +675,7 @@ impl Turn {
                 }
                 _ => {
                     let answer = tools.read(call);
+                    self.current = Some(call.name.clone());
                     conversation.push_line(Speaker::Tool, tool_line(call));
                     conversation.push_tool_result(call, answer.body());
                 }
@@ -984,6 +1064,117 @@ pub(crate) mod tests {
             vec![(Speaker::Tool, "command_batch · node.rename"), (Speaker::Note, "refused: the document is in plan")]
         );
         assert!(!backend.cancelled, "a turn that finished was never cancelled");
+    }
+
+    #[test]
+    fn a_streamed_answer_grows_in_one_line_and_lands_one_history_entry() {
+        // J26: a model that answers as it thinks is watched instead of waited for. The piece carries
+        // the answer so far, so the panel draws one growing sentence and the wire's history takes the
+        // whole answer once.
+        let (mut session, _panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Streaming {
+            pieces: std::collections::VecDeque::from(vec![
+                Reply::saying_so_far("Renaming"),
+                Reply::saying_so_far("Renaming the side"),
+                Reply::saying("Renaming the side now."),
+            ]),
+            cancelled: false,
+        };
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_asking(), "the first frame only asks");
+        let drawn = |conversation: &Conversation| -> Vec<String> {
+            conversation
+                .lines()
+                .iter()
+                .filter(|line| line.speaker == Speaker::Agent)
+                .map(|line| line.text.clone())
+                .collect()
+        };
+        assert!(drawn(&conversation).is_empty(), "nothing is drawn before the model speaks");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_asking(), "a piece leaves the request in flight");
+        assert_eq!(drawn(&conversation), vec!["Renaming"], "the words so far are drawn at once");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert_eq!(drawn(&conversation), vec!["Renaming the side"], "the same line grew instead of a second one");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert!(turn.is_done(), "the whole answer ends the turn");
+        assert_eq!(drawn(&conversation), vec!["Renaming the side now."], "no line was drawn twice");
+        let spoken: Vec<&Value> =
+            conversation.messages().iter().filter(|message| message["role"] == "assistant").collect();
+        assert_eq!(spoken.len(), 1, "the history carries the answer once, whole: {spoken:?}");
+        assert_eq!(spoken[0]["content"], "Renaming the side now.");
+    }
+
+    #[test]
+    fn a_stop_in_the_middle_of_a_stream_keeps_what_was_already_said() {
+        // J26: a streamed answer is read as it arrives, so the person's stop lands between two pieces
+        // and not inside one: the words already drawn stay, the request is cancelled, and the turn
+        // says it was stopped instead of pretending the answer finished.
+        let (mut session, _panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Streaming {
+            pieces: std::collections::VecDeque::from(vec![
+                Reply::saying_so_far("Renaming"),
+                Reply::saying_so_far("Renaming the side"),
+                Reply::saying("Renaming the side now."),
+            ]),
+            cancelled: false,
+        };
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "rename the side");
+        let mut turn = Turn::new();
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 2);
+        assert!(turn.is_asking(), "a piece left the request in flight");
+        turn.stop();
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+
+        assert!(turn.is_done(), "the stop ends the turn at the next piece boundary");
+        assert!(backend.cancelled, "and reaches the backend that is writing the answer");
+        let drawn: Vec<&str> = conversation
+            .lines()
+            .iter()
+            .filter(|line| line.speaker == Speaker::Agent)
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(drawn, vec!["Renaming"], "what was said before the stop stays, and nothing more");
+        assert_eq!(
+            conversation.lines().last().map(|line| line.text.as_str()),
+            Some(Message::AssistantStoppedLine.text(Lang::En))
+        );
+    }
+
+    #[test]
+    fn the_turn_names_the_step_it_last_dispatched() {
+        // J26: the panel says what the agent is doing, and the turn is the only place that knows: a
+        // read is named by its tool and a batch by the last command it dispatched.
+        let (mut session, panel) = session();
+        let scope = session.edit_scope();
+        let mut backend = Scripted::new(vec![
+            Reply::reading(crate::tools::TOOL_LIST, json!({ "command": "node.rename" })),
+            Reply::calling(vec![rename(panel, "Left")]),
+            Reply::saying("renamed"),
+        ]);
+        let mut conversation = Conversation::new();
+        let mut turn = Turn::new();
+        assert_eq!(turn.current(), None, "a turn that has not asked anything names no step");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert_eq!(turn.current(), None, "the first frame only asks: nothing has happened yet");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
+        assert_eq!(turn.current(), Some(crate::tools::TOOL_LIST), "the read is what the turn last did");
+
+        drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 2);
+        assert_eq!(turn.current(), Some("node.rename"), "and then the command it dispatched");
     }
 
     #[test]

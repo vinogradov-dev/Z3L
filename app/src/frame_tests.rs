@@ -7175,6 +7175,63 @@ fn a_turn_pauses_when_its_tab_leaves_and_finishes_when_it_comes_back() {
 }
 
 #[test]
+fn the_panel_says_how_long_the_agent_has_worked_and_what_it_is_doing() {
+    // J26: the owner's complaint was that a simple request takes long and the panel says nothing
+    // while it does. A waiting person now reads the seconds, the request count and the step the
+    // agent is on, and the answer grows in one line as it is written instead of appearing whole.
+    let (mut harness, panel) = chat_fixture("frame-chat-progress");
+    harness.app.assistant_open = true;
+    harness.settle();
+    assert!(harness.drew("Plan"), "the panel is on screen before the message: {:?}", harness.drawn);
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    harness.app.chat_mut().backend = Some(Box::new(mcp::Scripted::new(vec![
+        mcp::Reply::calling(vec![rename_step(panel, "Left")]),
+        mcp::Reply::saying_so_far("Renaming"),
+        mcp::Reply::saying_so_far("Renaming the side"),
+        mcp::Reply::saying("Renaming the side now."),
+    ])));
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+
+    // The first frame only asks, so the panel says it is working and names no step yet.
+    harness.frame();
+    assert!(harness.app.chat_mut().is_busy());
+    assert!(
+        harness.drawn.iter().any(|text| text.starts_with("The agent is working")),
+        "the panel says how long it has been working: {:?}",
+        harness.drawn
+    );
+
+    // The batch lands, so the next frame names the step it dispatched. `repaint_causes` names the
+    // frame before the last one, so the ask the panel made is read a frame later.
+    harness.frame();
+    assert!(
+        harness.ctx.repaint_causes().iter().any(|cause| cause.file.ends_with("app/src/chat.rs")),
+        "the panel asks for the frames that keep its clock and its answer moving (J26): {:?}",
+        harness.ctx.repaint_causes()
+    );
+    assert!(harness.app.chat_mut().is_busy(), "the turn asks again after the batch");
+    assert!(harness.drew("now: node.rename"), "the panel names the step: {:?}", harness.drawn);
+
+    // The answer arrives in pieces and is drawn as one line that grows.
+    harness.frame();
+    harness.frame();
+    assert!(harness.drew("Renaming"), "the words appear as they arrive: {:?}", harness.drawn);
+    harness.frame();
+    harness.frame();
+    assert!(harness.drew("Renaming the side"), "the same line grew: {:?}", harness.drawn);
+    assert!(
+        !harness.drawn_rects.iter().any(|(_, text)| text == "Renaming"),
+        "and the shorter piece is not drawn beside it: {:?}",
+        harness.drawn
+    );
+
+    drive_turn(&mut harness, 8);
+    assert!(!harness.app.chat_mut().is_busy(), "the whole answer ends the turn");
+    harness.frame();
+    assert!(!harness.drew("The agent is working"), "the progress line goes when the turn does");
+}
+
+#[test]
 fn the_workspace_settings_reach_every_open_tab() {
     // The backend is the tab's, so a settings change is applied to every tab and not only to the one
     // in front: a scene that comes forward is already able to send (J24).
