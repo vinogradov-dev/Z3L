@@ -130,7 +130,7 @@ their tests is not started until the first link compiles. This is what prevents 
 - **Rust only.** No JS/TS, no scripting runtime, no code generation into other languages.
 - **Native.** Windows, Linux and macOS from one codebase. No webview shells, no browser as the primary target.
 - **Free and accessible.** Dependencies must be free and permissively licensed: MIT, Apache-2.0, BSD-2-Clause/3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0. GPL/AGPL or anything requiring an account, a paid tier or a foreign payment card is a stop-and-ask. Every new dependency needs one sentence of justification.
-- **Pure Rust dependencies.** Z3L does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates.
+- **Pure Rust dependencies.** Z3L does not compile, vendor or ship C/C++/Objective-C code. A dependency that builds native code (`cc`, `cmake`, `bindgen`, or a `-sys` crate with bundled sources such as `lzma-sys`, `xz2` or `vtkio`) is forbidden. Bindings to libraries the operating system provides (X11, Wayland, Vulkan, Metal, fontconfig) are allowed only as platform integration, loaded through Rust FFI; they must not add native build steps to our build. `cargo xtask layers` rejects known C-vendoring crates. One exception is counted and proved instead of assumed: `openssl-sys` is the operating system's TLS on Linux, and the gate allows it while the resolved feature graph leaves its `vendored` feature off — the build that ships C (ADR 0189).
 - **Graphics:** `wgpu` (cross-platform, pure Rust). **UI:** `egui`/`eframe`. Do not add a second GUI toolkit or a second GPU abstraction.
 - **Performance is native, not "good enough for a demo".** Keep the frame path free of document scans and allocations; rebuild only what changed.
 - **Language:** code, comments, docs, commit messages — English. Discussion with the owner — Russian.
@@ -223,7 +223,7 @@ Every change comes with tests. Domain invariants, unit conversions, command beha
 
 Prefer the standard library and the crates we already have. A new crate must be justified, licensed permissively, maintained, and pinned in the workspace. No dependency may pull in a web runtime, a second GUI toolkit or a second async runtime.
 
-Z3L is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources. Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
+Z3L is a Rust product: no dependency may compile or vendor C/C++/Objective-C sources, with the one counted exception of §2 (`openssl-sys` without `vendored`, ADR 0189). Check the build script and the feature graph before adding a crate; `*-sys` crates are a red flag unless they only bind an OS library. When a dependency forces a native feature we do not need, narrow its features or vendor a minimal patch with a note — do not accept the C build.
 
 ### 4.9 Do not invent the domain
 
@@ -287,6 +287,7 @@ runtime.
 | Geometry kernel | `truck` (Apache-2.0), behind the `kernel` port; only `kernel-truck` may use it |
 | Math | `glam`, re-exported through `geom` |
 | Serialization | `serde` (+ `serde_json` until a binary format exists) |
+| Assistant transport | `ureq` over the operating system's TLS, in `mcp` only (ADR 0189) |
 | Errors | `thiserror` per crate |
 | Logging | `log` (the shell installs the sink) |
 | Tests | built-in test harness; `testkit` for fixtures |

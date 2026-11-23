@@ -53,7 +53,20 @@ const PROTOCOL_PREFIXES: &[&str] = &["rmcp", "tokio"];
 /// platform library through Rust FFI are not listed here: the rule is about
 /// native code shipped and built with Z3L, not about the operating system.
 const C_VENDORING_CRATES: &[&str] =
-    &["bindgen", "bzip2-sys", "cmake", "libz-sys", "lzma-sys", "openssl-sys", "vtkio", "xz2", "zstd-sys"];
+    &["bindgen", "bzip2-sys", "cmake", "libz-sys", "lzma-sys", "vtkio", "xz2", "zstd-sys"];
+
+/// The one crate the C-vendoring rule allows, and the feature that would make it a real breach.
+///
+/// `openssl-sys` binds the operating system's OpenSSL, which Linux needs for the assistant's
+/// transport, and it is allowed while — and only while — the resolved graph leaves `vendored` off:
+/// that feature builds OpenSSL from C sources shipped inside the crate, which is exactly what the
+/// rule forbids (ADR 0189, `AGENTS.md` §2). The proof is the resolved feature set and not a comment
+/// in a manifest, so a workspace that turns it on fails the gate (see
+/// [`counted_exception_violations`]).
+const COUNTED_EXCEPTION: &str = "openssl-sys";
+
+/// The feature that turns the counted exception into a breach of the rule.
+const COUNTED_EXCEPTION_VENDORED: &str = "vendored";
 
 /// The gate, in order. Each step must pass before the next one starts.
 /// `layers` is not a cargo command and runs in-process after these.
@@ -126,7 +139,12 @@ fn check_layers() -> Result<usize, Vec<String>> {
     let metadata = cargo_metadata().map_err(|error| vec![error])?;
     let packages = array(&metadata, "packages").map_err(|error| vec![error])?;
     let (checked, mut violations) = collect_violations(CRATES, packages).map_err(|error| vec![error])?;
-    violations.extend(c_vendoring_violations(packages));
+    // The two vendoring rules read the whole graph, dependencies included: a workspace member is
+    // never one of those crates, so asking the members alone would be a check that cannot fail.
+    let graph = cargo_graph().map_err(|error| vec![error])?;
+    let graph_packages = array(&graph, "packages").map_err(|error| vec![error])?;
+    violations.extend(c_vendoring_violations(graph_packages));
+    violations.extend(counted_exception_violations(&graph).map_err(|error| vec![error])?);
     violations.extend(shadow_violations(packages).map_err(|error| vec![error])?);
 
     if violations.is_empty() { Ok(checked) } else { Err(violations) }
@@ -143,6 +161,44 @@ fn c_vendoring_violations(packages: &[serde_json::Value]) -> Vec<String> {
                 .then(|| format!("`{name}` compiles or vendors C/C++ code; Z3L dependencies must be pure Rust"))
         })
         .collect()
+}
+
+/// Rejects the counted exception when the graph turns on the feature that rebuilds it from C.
+///
+/// [`COUNTED_EXCEPTION`] passes the rule while the resolver leaves `vendored` off, and the resolved
+/// feature set is the only proof of that: `cargo metadata` reports the features cargo will actually
+/// build, so a dependency that asked for the vendored build fails the gate with the sentence that
+/// names the feature to turn off (ADR 0189).
+fn counted_exception_violations(graph: &serde_json::Value) -> Result<Vec<String>, String> {
+    let resolve = graph
+        .get("resolve")
+        .filter(|value| !value.is_null())
+        .ok_or("`cargo metadata` resolved no graph, so the C-vendoring exception cannot be checked")?;
+    let mut violations = Vec::new();
+    for node in array(resolve, "nodes")? {
+        let id = string(node, "id")?;
+        if package_name(id) != COUNTED_EXCEPTION {
+            continue;
+        }
+        let enabled = node.get("features").and_then(serde_json::Value::as_array).is_some_and(|features| {
+            features.iter().any(|feature| feature.as_str() == Some(COUNTED_EXCEPTION_VENDORED))
+        });
+        if enabled {
+            violations.push(format!(
+                "`{COUNTED_EXCEPTION}` is the one counted exception to the C-vendoring rule, and the resolved \
+                 graph enables its `{COUNTED_EXCEPTION_VENDORED}` feature: it would build OpenSSL from the C \
+                 sources inside the crate. Turn that feature off, or the tree no longer builds pure Rust \
+                 (ADR 0189)"
+            ));
+        }
+    }
+    Ok(violations)
+}
+
+/// The package name of a resolved id, which reads `registry+https://…#name@version`.
+fn package_name(id: &str) -> &str {
+    let after_hash = id.rsplit('#').next().unwrap_or(id);
+    after_hash.split('@').next().unwrap_or(after_hash)
 }
 
 /// Rejects a crate whose module name hides a crate it depends on.
@@ -314,9 +370,23 @@ fn collect_violations(rules: &[CrateRule], packages: &[serde_json::Value]) -> Re
 }
 
 fn cargo_metadata() -> Result<serde_json::Value, String> {
+    metadata(&["--no-deps"])
+}
+
+/// The whole dependency graph, dependencies included, with the features cargo resolved for each.
+///
+/// [`cargo_metadata`] answers about the workspace members alone, which is what the layer and module
+/// rules need; the C-vendoring rules read this one, because the crates they name are never members.
+fn cargo_graph() -> Result<serde_json::Value, String> {
+    metadata(&[])
+}
+
+/// `cargo metadata` with `extra` arguments, as one parsed value.
+fn metadata(extra: &[&str]) -> Result<serde_json::Value, String> {
     let manifest_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.toml");
     let output = Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version=1", "--no-deps", "--manifest-path", manifest_path])
+        .args(["metadata", "--format-version=1", "--manifest-path", manifest_path])
+        .args(extra)
         .output()
         .map_err(|error| format!("cannot run `cargo metadata`: {error}"))?;
 

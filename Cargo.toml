@@ -62,6 +62,11 @@ rmcp = { version = "3.11", default-features = false, features = ["server", "tran
 # needs, and `net` with `time` are the local control channel's: one loopback listener and the
 # deadline the handshake answers on (ADR 0186, ADR 0188).
 tokio = { version = "1.54", default-features = false, features = ["rt", "io-std", "io-util", "sync", "net", "time"] }
+# The assistant's outbound wire: one blocking OpenAI-compatible client, in `mcp` alone, with the
+# operating system's TLS. `default-features = false` keeps `rustls` and its C crypto provider out of
+# the tree; the exception this needs is `openssl-sys` without its `vendored` feature, and the gate
+# proves it over the resolved graph (ADR 0189).
+ureq = { version = "3.5", default-features = false, features = ["json", "native-tls"] }
 # The bytes of the channel's run token, from the operating system's generator: MIT OR Apache-2.0,
 # pure Rust (a syscall on every platform, no C source) and already in the tree through `uuid`.
 getrandom = "0.3"

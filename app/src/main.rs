@@ -951,15 +951,25 @@ impl App {
         self.pending_question.is_some() || self.tabs.active().holding_piece()
     }
 
-    /// Starts the agent process the workspace names, or lets it go.
+    /// Gives the panel the model the workspace names, and takes it away when it names none.
     ///
-    /// The command is settings and the channel is the window's, so the two are read every frame and
-    /// the panel is handed the answer: a process is started once per configured command, never per
-    /// frame, and a command that is cleared ends its process. The panel keeps whatever backend a test
-    /// installed, because a backend this shell did not create is not the settings' to replace.
-    fn apply_agent(&mut self) {
-        let command = mcp::Program::parse(&self.settings.assistant.agent);
-        self.chat.apply_agent(command, self.channel.is_some());
+    /// Two ways to one loop (ADR 0189, ADR 0230), and the process wins: a command the workshop typed
+    /// starts an agent that owns the loop itself, and the endpoint is the OpenAI-compatible wire the
+    /// panel asks only while that command is empty. Both are settings and the channel is the
+    /// window's, so the two are read every frame and the panel is handed the answer; a backend this
+    /// shell did not create — a test's script — is left alone.
+    ///
+    /// The key is not read here: it belongs to the message that needs it, so no frame touches the
+    /// file and the homes are named by the sentence a turn answers with when neither has one.
+    fn apply_assistant(&mut self) {
+        let assistant = self.settings.assistant.clone();
+        let program = mcp::Program::parse(&assistant.agent);
+        self.chat.apply_agent(program.clone(), self.channel.is_some());
+        let endpoint = match (program, assistant.endpoint_to_ask()) {
+            (None, Some(base_url)) => Some(mcp::Endpoint::new(base_url, assistant.model.trim())),
+            _ => None,
+        };
+        self.chat.apply_model(endpoint, self.settings_store.folder().map(std::path::Path::to_path_buf));
     }
 
     /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
@@ -993,11 +1003,10 @@ impl App {
         let busy = self.gesture_in_flight();
         match self.chat.show(ctx, mode, lang, busy) {
             ChatAction::None => {}
-            ChatAction::Send => {
-                let text = std::mem::take(&mut self.chat.input);
-                self.send_chat(text, lang);
-            }
+            ChatAction::Send => self.send_chat(self.chat.input.trim().to_owned(), lang),
             ChatAction::Stop => self.chat.stop(),
+            ChatAction::AllowEndpoint => self.allow_endpoint(lang),
+            ChatAction::DenyEndpoint => self.chat.clear_consent(),
             ChatAction::Mode(mode) => {
                 self.chat.stop();
                 self.tabs.active_mut().session.set_agent_mode(mode);
@@ -1006,10 +1015,41 @@ impl App {
         }
     }
 
-    /// Sends one message as one turn of the active tab's session.
+    /// Sends one message as one turn of the active tab's session, once the endpoint is agreed to.
+    ///
+    /// The question comes before the message: a workspace with an endpoint sends nothing until the
+    /// person has seen what leaves the machine and said yes once for that endpoint (ADR 0189). The
+    /// typed message stays in the field while the card is drawn, so "not now" costs nothing.
     fn send_chat(&mut self, text: String, lang: text::Lang) {
+        // The key is read when a message is sent and not once per frame: a workspace whose key is
+        // missing reads the sentence that names both homes instead of being asked a question about
+        // a message that cannot go anywhere.
+        if self.chat.asks_an_endpoint()
+            && let Err(error) = mcp::key(self.settings_store.folder())
+        {
+            self.chat.note(error.sentence().to_owned());
+            return;
+        }
+        if let Some(endpoint) = self.chat.unconsented(&self.settings.assistant) {
+            self.chat.request_consent(endpoint);
+            return;
+        }
         let Self { tabs, chat, .. } = self;
         chat.begin(&mut tabs.active_mut().session, text, lang);
+    }
+
+    /// The person agreed to send to the endpoint the panel named: remember it, then send.
+    ///
+    /// The agreement is written now instead of when the settings window closes, because a promise
+    /// that dies with a crash is a promise the program did not keep.
+    fn allow_endpoint(&mut self, lang: text::Lang) {
+        let Some(endpoint) = self.chat.take_consent() else {
+            return;
+        };
+        self.settings.assistant.remember_consent(&endpoint);
+        self.persist_settings();
+        let text = self.chat.input.trim().to_owned();
+        self.send_chat(text, lang);
     }
 
     /// The window as `ui_inspect` reports it: the scenes, the one in front, the gesture and the
@@ -1483,7 +1523,7 @@ impl App {
         // An agent process the workspace names is started here, once, and given the channel this
         // window offers (ADR 0230). A command that is empty, or a channel that is closed, is the
         // panel's own state and not a failure.
-        self.apply_agent();
+        self.apply_assistant();
         self.serve_chat(lang);
         // A directory another application finished writing is swapped in here, at the frame
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
