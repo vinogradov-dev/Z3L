@@ -13,6 +13,10 @@
 //! working (the words under the conversation and a Stop where Send was), and what the last answer
 //! did to the document (the turn's own note line, which says *plan* or *one undo entry*).
 //!
+//! A backend that owns the model loop reports its work as it happens — the tool it called and what
+//! came back — so those lines are drawn between the messages, dim and marked, instead of being
+//! folded into the answer's own words (ADR 0230).
+//!
 //! It is a `Window`, like Settings and Home: the panel is not a document surface, it opens over the
 //! scene and closes without touching it. Its one row in `HOST_OWNERS` is the surface it draws
 //! (`xtask/src/ui_rules.rs`).
@@ -71,6 +75,10 @@ pub(crate) struct Chat {
     turn: Option<Turn>,
     /// The edit scope of the turn in flight, so every answer of one message is one undo entry.
     scope: Option<EditScope>,
+    /// The agent-process command this panel installed, so a frame can tell a change from the same one.
+    agent: Option<mcp::Program>,
+    /// Whether the workspace names an agent process the window offers no channel to.
+    blocked: bool,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
     /// The rules' findings for the revision the panel last read.
@@ -95,9 +103,49 @@ impl Chat {
             backend: None,
             turn: None,
             scope: None,
+            agent: None,
+            blocked: false,
             checklist: Vec::new(),
             findings: Vec::new(),
             findings_revision: None,
+        }
+    }
+
+    /// The edit scope of the turn in flight, which is what makes a batch that arrives over the
+    /// channel part of the message the person sent (ADR 0187, ADR 0230).
+    pub(crate) fn scope(&self) -> Option<EditScope> {
+        self.scope
+    }
+
+    /// Starts the agent process the workspace names, or lets it go.
+    ///
+    /// A process is started once per command and never per frame, and a command that was cleared
+    /// ends its process. A backend this shell did not install — a test's script, a future adapter —
+    /// is left alone: only a backend this panel created is the settings' to replace.
+    ///
+    /// With no channel open the panel installs nothing and says why: a process with no door to the
+    /// document could talk and do nothing, which is worse than a sentence (ADR 0188).
+    pub(crate) fn apply_agent(&mut self, command: Option<mcp::Program>, channel_open: bool) {
+        self.blocked = command.is_some() && !channel_open;
+        let wanted = command.filter(|_| channel_open);
+        if wanted == self.agent {
+            return;
+        }
+        // A turn in flight belongs to the process that is running it: the setting takes effect when
+        // the message is finished, so nothing is cut in half.
+        if self.turn.is_some() {
+            return;
+        }
+        match wanted {
+            Some(program) => {
+                self.backend = Some(Box::new(mcp::Acp::new(program.clone())));
+                self.agent = Some(program);
+            }
+            None => {
+                if self.agent.take().is_some() {
+                    self.backend = None;
+                }
+            }
         }
     }
 
@@ -240,7 +288,12 @@ impl Chat {
             ui.label(RichText::new(Message::AssistantThinking.text(lang)).color(theme::text_dim(ui)));
         }
         if self.backend.is_none() {
-            ui.label(RichText::new(Message::AssistantNotConfigured.text(lang)).color(theme::warn(ui)));
+            let (words, ink) = if self.blocked {
+                (Message::AssistantNoChannel, theme::warn(ui))
+            } else {
+                (Message::AssistantNotConfigured, theme::warn(ui))
+            };
+            ui.label(RichText::new(words.text(lang)).color(ink));
         }
         self.field(ui, lang, busy, &mut action);
         action
@@ -309,6 +362,11 @@ impl Chat {
                 }
                 Speaker::Agent => {
                     ui.label(line.text.as_str());
+                }
+                Speaker::Tool => {
+                    // Work, not speech: the marker says the agent did something, and the dim ink
+                    // keeps it out of the conversation's own rhythm (ADR 0230).
+                    ui.label(RichText::new(format!("· {}", line.text)).color(theme::text_dim(ui)));
                 }
                 Speaker::Note => {
                     ui.label(RichText::new(line.text.as_str()).italics().color(theme::text_dim(ui)));

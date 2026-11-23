@@ -7212,3 +7212,204 @@ fn the_assistant_panel_keeps_the_size_it_opens_at() {
         assert_eq!(first, last, "{lang:?}: the panel kept the size it opened at, first {first:?}, last {last:?}");
     }
 }
+
+/// Drives frames until the panel's turn is over, with the real time a process needs to answer.
+///
+/// A scripted agent is a thread on the other end of two pipes, so a loop that ran as fast as it
+/// could would outrun it: the turn ends when the process has spoken, not when the frames run out.
+fn drive_agent_turn(harness: &mut Harness) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        harness.frame();
+        if !harness.app.chat.is_busy() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+/// One scripted agent process and the record of what it saw, over the shared peer in `testkit`.
+fn agent_process(
+    script: impl FnOnce(&mut testkit::acp::Peer) + Send + 'static,
+) -> (Box<dyn mcp::Spawner>, std::sync::Arc<testkit::acp::Seen>) {
+    let running = std::sync::Arc::new(std::sync::Mutex::new(testkit::acp::scripted(script)));
+    let seen = match running.lock() {
+        Ok(held) => held.seen(),
+        Err(poisoned) => poisoned.into_inner().seen(),
+    };
+    let held = std::sync::Arc::clone(&running);
+    let spawner = mcp::ScriptedProcess::new(move || {
+        let mut running = match held.lock() {
+            Ok(held) => held,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let (reader, writer) = running.start().map_err(mcp::BackendError::new)?;
+        Ok(mcp::Started { reader, writer, ending: Box::new(|| {}) })
+    });
+    (Box::new(spawner), seen)
+}
+
+/// One batch the window is asked to run over its own channel, and the answer it gave.
+fn call_channel(harness: &mut Harness, step: mcp::StepRequest) -> mcp::Answer {
+    let mailbox = harness.app.mailbox.as_ref().expect("the mailbox comes with the channel");
+    let answering = mailbox
+        .post(mcp::Call::Dispatch(mcp::BatchRequest {
+            steps: vec![step],
+            product: None,
+            atomic: true,
+            dry_run: false,
+            save: false,
+        }))
+        .expect("the channel takes the call");
+    harness.frame();
+    answering.take().expect("the frame answered the call")
+}
+
+/// One rename step, as a caller over the channel sends it.
+fn rename_call(panel: Id, name: &str) -> mcp::StepRequest {
+    mcp::StepRequest::new("node.rename", serde_json::json!({ "node": panel.get(), "name": name }))
+}
+
+#[test]
+fn an_agent_process_turn_lands_one_undo_entry_and_the_panel_draws_its_calls() {
+    // The door of ADR 0230 through the real frame: a configured agent process is started, told the
+    // person's message, and it edits the document through the window's channel. Two batches arrive
+    // while the turn is open — one lands, one is refused by the window — and the message is one undo
+    // entry, because a batch that reaches the window inside a turn lands in the turn's scope. The
+    // panel draws the calls and the refusal from the protocol's own messages, not from prose.
+    let (mut harness, panel) = chat_fixture("frame-acp-turn");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let folder = testkit::scratch_dir("frame-acp-turn-channel");
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let (asking, want) = std::sync::mpsc::channel::<u8>();
+    let (told, refuses) = std::sync::mpsc::channel::<String>();
+    let (spawner, seen) = agent_process(move |peer| {
+        let Some(session) = peer.open() else { return };
+        let Some(prompt) = peer.read() else { return };
+        peer.say(&session, "Renaming the side.");
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "t1",
+                "title": "command_batch · node.rename",
+                "kind": "edit",
+                "status": "pending",
+            }),
+        );
+        // The test performs the calls the agent is asking for, over the same channel a real process
+        // would use, and hands back the sentence the window answered the second one with.
+        if asking.send(1).is_err() {
+            return;
+        }
+        if asking.send(2).is_err() {
+            return;
+        }
+        let Ok(refusal) = refuses.recv_timeout(std::time::Duration::from_secs(5)) else { return };
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "t2",
+                "title": "command_batch · node.rename",
+                "kind": "edit",
+                "status": "pending",
+            }),
+        );
+        peer.update(
+            &session,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "t2",
+                "status": "failed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": refusal } }],
+            }),
+        );
+        peer.answer(&prompt, serde_json::json!({ "stopReason": "end_turn" }));
+        let _ = told;
+    });
+    harness.app.chat.backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    harness.frame();
+    want.recv_timeout(std::time::Duration::from_secs(5)).expect("the process was given the message");
+    let landed = call_channel(&mut harness, rename_call(panel, "Left"));
+    assert!(!landed.failed(), "the first call landed: {:?}", landed.body());
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the window did what the process asked");
+
+    // A call that names no node is refused by the window, and the sentence it answered with is what
+    // the process reports and the panel draws.
+    let refused = call_channel(
+        &mut harness,
+        mcp::StepRequest::new("node.rename", serde_json::json!({ "node": 999_999, "name": "Ghost" })),
+    );
+    assert!(refused.failed(), "a call that names no node is refused: {:?}", refused.body());
+    let sentence = refused.body()["refusal"]["error"].as_str().unwrap_or_default().to_owned();
+    assert!(!sentence.is_empty(), "a refusal carries its own sentence: {:?}", refused.body());
+    told.send(sentence.clone()).expect("the process hears what the window said");
+
+    drive_agent_turn(&mut harness);
+    assert!(!harness.app.chat.is_busy(), "the turn ended with the process's answer");
+    assert_eq!(seen.complaint(), None, "the process did what it was written to do");
+    assert!(seen.method("session/prompt").is_some(), "the message reached the process as one prompt");
+
+    let drawn: Vec<(mcp::Speaker, String)> =
+        harness.app.chat.conversation.lines().iter().map(|line| (line.speaker, line.text.clone())).collect();
+    assert!(
+        drawn.contains(&(mcp::Speaker::Tool, "command_batch · node.rename".to_owned())),
+        "the panel drew the tool call: {drawn:?}"
+    );
+    assert!(
+        drawn.iter().any(|(speaker, text)| *speaker == mcp::Speaker::Note && text.contains(&sentence)),
+        "the panel drew the refusal the window gave: {drawn:?}"
+    );
+
+    // One message, one entry: the landed call is the whole of it, and the refused one wrote nothing.
+    harness.app.tabs.active_mut().session.undo().expect("the whole message is one undo entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo took the message back");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the turn left exactly one entry");
+}
+
+#[test]
+fn a_process_that_dies_mid_turn_leaves_the_document_as_the_last_batch_left_it() {
+    // A process that exits with a turn open is a turn that stops: the batch that already landed is
+    // the document, the panel says the process ended, and the history is one entry — a batch is all
+    // or nothing in the window, so nothing is ever cut in half (ADR 0187, ADR 0230).
+    let (mut harness, panel) = chat_fixture("frame-acp-dies");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let folder = testkit::scratch_dir("frame-acp-dies-channel");
+    assert!(harness.app.attach_channel(&folder, &harness.ctx), "the channel opens in a folder of its own");
+
+    let (asking, want) = std::sync::mpsc::channel::<u8>();
+    let (spawner, seen) = agent_process(move |peer| {
+        let Some(session) = peer.open() else { return };
+        let Some(_prompt) = peer.read() else { return };
+        peer.say(&session, "Working.");
+        // The process dies here, with the turn open and the prompt unanswered.
+        let _ = asking.send(1);
+    });
+    harness.app.chat.backend = Some(Box::new(mcp::Acp::with_spawner(spawner)));
+
+    harness.app.send_chat("rename the side".to_owned(), Lang::En);
+    harness.frame();
+    want.recv_timeout(std::time::Duration::from_secs(5)).expect("the process was given the message");
+    let landed = call_channel(&mut harness, rename_call(panel, "Left"));
+    assert!(!landed.failed(), "the call landed before the process died: {:?}", landed.body());
+
+    drive_agent_turn(&mut harness);
+    assert!(!harness.app.chat.is_busy(), "the turn ended when the process did");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the document keeps the completed batch");
+    let last = harness.app.chat.conversation.lines().last().expect("the panel said something last");
+    assert_eq!(last.speaker, mcp::Speaker::Note, "the ending is the panel's own note: {last:?}");
+    assert!(last.text.contains("ended"), "and it says the process ended: {}", last.text);
+    assert_eq!(seen.complaint(), None, "the client itself broke nothing");
+
+    harness.app.tabs.active_mut().session.undo().expect("the landed batch is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"), "one undo takes it back");
+    harness.app.tabs.active_mut().session.undo().expect("the fixture's creation is the entry under it");
+    assert!(panel_name(&harness, panel).is_none(), "the dead turn left no second entry");
+}

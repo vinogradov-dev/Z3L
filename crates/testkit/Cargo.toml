@@ -14,3 +14,5 @@ catalog = { workspace = true }
 units = { workspace = true }
 # The interface shots are pictures; `png` is already in the tree through `epaint` (U81).
 png = { workspace = true }
+# A scripted agent process reads and writes the protocol's own JSON frames (ADR 0230).
+serde_json = { workspace = true }

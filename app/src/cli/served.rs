@@ -65,6 +65,19 @@ pub(super) fn perform(args: &McpArgs) -> Result<(), CliError> {
     mcp::serve_stdio(mcp::serve_session(session, sink, previewer())).map_err(|error| CliError::Mcp(error.to_string()))
 }
 
+/// Carries this process's standard streams into the open window's control channel and back.
+///
+/// It is the fourth use of one door (ADR 0188): an agent process the person already runs is handed
+/// `z3l mcp bridge` as one of its MCP servers, speaks MCP on its own stdio, and every call it makes
+/// is answered by the window at a frame boundary with the window's own policy. Nothing is printed:
+/// standard output carries the protocol, so the one sentence a failure owes a person goes to the
+/// log sink on stderr through the CLI's own error report.
+pub(super) fn bridge() -> Result<(), CliError> {
+    let folder = crate::settings_store::config_dir()
+        .ok_or_else(|| CliError::Mcp("the settings folder is not known, so no channel can be found".to_owned()))?;
+    mcp::bridge(&folder).map_err(|error| CliError::Mcp(error.to_string()))
+}
+
 /// Serves the local control channel until standard input closes.
 ///
 /// This is the second door of ADR 0188 for a process with no window: the same channel a window
@@ -186,8 +199,11 @@ mod tests {
     fn the_line_names_its_subcommand_before_it_does_anything() {
         let error = crate::cli::parse(&["mcp".to_owned()]).expect_err("`mcp` alone names no job");
         assert!(error.to_string().contains("`mcp` needs a subcommand"), "{error}");
-        let error = crate::cli::parse(&["mcp".to_owned(), "nonsense".to_owned()]).expect_err("there is one subcommand");
+        let error = crate::cli::parse(&["mcp".to_owned(), "nonsense".to_owned()]).expect_err("two subcommands exist");
         assert!(error.to_string().contains("`mcp nonsense` is not a subcommand"), "{error}");
+        let error = crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned(), "extra".to_owned()])
+            .expect_err("bridge takes nothing");
+        assert!(error.to_string().contains("`mcp bridge` takes no argument"), "{error}");
         let error =
             crate::cli::parse(&["mcp".to_owned(), "serve".to_owned(), "one.z3l".to_owned(), "two.z3l".to_owned()])
                 .expect_err("one scene is served at a time");
@@ -219,6 +235,9 @@ mod tests {
         let channel = crate::cli::parse(&["mcp".to_owned(), "serve".to_owned(), "--attach".to_owned()])
             .expect("the local channel is a mode of the same door");
         assert_eq!(channel, crate::cli::Command::Mcp(McpArgs { scene: None, product: None, attach: true }));
+        let bridging =
+            crate::cli::parse(&["mcp".to_owned(), "bridge".to_owned()]).expect("the bridge is a subcommand of its own");
+        assert_eq!(bridging, crate::cli::Command::McpBridge, "it names no scene, product or switch");
     }
 
     #[test]

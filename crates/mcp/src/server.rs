@@ -15,7 +15,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use engine::{BatchOptions, BatchStep, CommandRegistry, Query, Session};
+use engine::{BatchOptions, BatchStep, CommandRegistry, EditScope, Query, Session};
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::model::{
@@ -207,14 +207,30 @@ pub enum Door<'a> {
         /// The file a save the caller asked for is written to: the one the scene was opened from or
         /// last saved to. `None` while the scene has no path, which refuses the ask.
         sink: Option<&'a dyn SceneSink>,
+        /// The edit scope of an assistant turn in flight, so a process that edits a document in
+        /// several batches of one message still leaves one undo entry (ADR 0187, ADR 0230).
+        ///
+        /// It is the shell's answer and not the request's: a caller cannot name a scope, because a
+        /// scope is a promise the person's window makes about its own history.
+        scope: Option<EditScope>,
     },
+}
+
+impl Door<'_> {
+    /// The turn this door lands inside, when one is running.
+    const fn scope(self) -> Option<EditScope> {
+        match self {
+            Self::Headless { .. } => None,
+            Self::Window { scope, .. } => scope,
+        }
+    }
 }
 
 impl fmt::Debug for Door<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Headless { sink } => formatter.debug_tuple("Headless").field(&sink.is_some()).finish(),
-            Self::Window { sink } => formatter.debug_tuple("Window").field(&sink.is_some()).finish(),
+            Self::Window { sink, .. } => formatter.debug_tuple("Window").field(&sink.is_some()).finish(),
         }
     }
 }
@@ -258,11 +274,16 @@ pub fn dispatch(session: &mut Session, request: &BatchRequest, door: Door<'_>) -
     }
     let steps: Vec<BatchStep> = request.steps.iter().map(step_of).collect();
     let options = BatchOptions::ALL_OR_NOTHING.atomic(request.atomic).dry_run(request.dry_run);
-    let report = session.agent_batch(&steps, options);
+    // A turn's scope is what makes several batches of one message one undo entry: the first pushes
+    // the state before the message and the rest replace the document inside it (ADR 0187).
+    let report = match door.scope() {
+        Some(scope) => session.agent_batch_in(scope, &steps, options),
+        None => session.agent_batch(&steps, options),
+    };
     let write = match door {
         Door::Headless { sink: Some(sink) } => write_landed(sink, session, &report),
         Door::Headless { sink: None } => Write::NoFile,
-        Door::Window { sink } => write_asked(sink, session, &report, request.save),
+        Door::Window { sink, .. } => write_asked(sink, session, &report, request.save),
     };
     let body = report::batch(
         &report,

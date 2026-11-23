@@ -233,6 +233,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0226](0226-a-command-names-the-piece-and-the-interface-keeps-it-open.md) | A command names the piece it writes in, and the interface keeps it open | Accepted; amends the command-vs-button clause of 0098 and the `enabled` column of 0185 |
 | [0227](0227-a-released-build-carries-its-words-on-the-surface.md) | A released build carries its words on the surface | Accepted; states the units clause of 0185 with an annotation, refuses the side-vocabulary half of X118 |
 | [0228](0228-the-tool-server-asks-for-a-picture-it-is-handed.md) | The tool server asks for a picture it is handed | Accepted; states the screenshot channel 0028 left open |
+| [0230](0230-an-agent-process-owns-the-model-loop.md) | An agent process owns the model loop, and the bridge is what it holds | Accepted |
 
 ## Format
 

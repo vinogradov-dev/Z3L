@@ -623,21 +623,28 @@ pub struct PanelsSettings {
     pub inspector: PanelState,
 }
 
-/// The *Assistant* section: the local control channel an agent attaches to.
+/// The *Assistant* section: the local control channel an agent attaches to, and the agent process
+/// the panel starts.
 ///
 /// The channel is on for a fresh workspace because a feature a person has to discover a flag for is a
 /// feature that does not exist (ADR 0188). Its exposure is one machine, one account and one token that
 /// dies with the process, and this switch is the one place a workshop closes the door.
+///
+/// The agent command is empty by default: no process, no request and no network until a person types
+/// the name of an agent they already run (ADR 0230). What it starts reaches the document only
+/// through the channel above, so the two settings are read together by the shell.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssistantSettings {
     /// Whether the window offers the loopback control channel.
     pub attach: bool,
+    /// The command an agent process is started with: one program and its arguments, on one line.
+    pub agent: String,
 }
 
 impl Default for AssistantSettings {
     fn default() -> Self {
-        Self { attach: true }
+        Self { attach: true, agent: String::new() }
     }
 }
 
@@ -1041,11 +1048,17 @@ fn swatch(ui: &mut Ui, fill: egui::Color32) {
 /// the two is the door (ADR 0188). Nothing here reaches the network: the channel binds loopback.
 fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     ui.heading(Message::SectionAssistant.text(lang));
-    let changed = ui
+    let mut changed = ui
         .checkbox(&mut settings.assistant.attach, Message::AttachChannel.text(lang))
         .on_hover_text(Message::AttachChannelHint.text(lang))
         .changed();
     ui.label(egui::RichText::new(Message::AttachChannelHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.add_space(theme::STEP);
+    ui.label(Message::AgentCommand.text(lang));
+    changed |= ui
+        .add(egui::TextEdit::singleline(&mut settings.assistant.agent).hint_text(Message::AgentCommandHint.text(lang)))
+        .changed();
+    ui.label(egui::RichText::new(Message::AgentCommandHint.text(lang)).small().color(theme::text_dim(ui)));
     changed
 }
 
@@ -1376,7 +1389,7 @@ mod tests {
                 scene: PanelState { visible: false, expanded: true },
                 inspector: PanelState { visible: true, expanded: false },
             },
-            assistant: AssistantSettings { attach: false },
+            assistant: AssistantSettings { attach: false, agent: String::new() },
         }
     }
 
@@ -1436,6 +1449,26 @@ mod tests {
         assert!(!off.assistant.attach, "a closed door stays closed across a restart");
         let text = off.to_json().expect("serialise");
         assert!(!Settings::from_json(&text).expect("reread").assistant.attach);
+    }
+
+    #[test]
+    fn an_agent_process_is_nothing_until_a_workshop_names_one() {
+        // A process that runs a model is not started by a default: an empty command is no agent, and
+        // the one a workshop types is remembered across a restart byte for byte (ADR 0230).
+        let fresh = Settings::default();
+        assert!(fresh.assistant.agent.is_empty(), "a fresh workspace starts no agent process");
+
+        let typed = Settings::from_json(
+            r#"{"version":1,"assistant":{"attach":true,"agent":"npx @zed-industries/claude-code-acp"}}"#,
+        )
+        .expect("parse");
+        assert_eq!(typed.assistant.agent, "npx @zed-industries/claude-code-acp");
+        let text = typed.to_json().expect("serialise");
+        assert_eq!(
+            Settings::from_json(&text).expect("reread").assistant.agent,
+            "npx @zed-industries/claude-code-acp",
+            "the command a person typed survives the write"
+        );
     }
 
     #[test]

@@ -919,13 +919,17 @@ impl App {
                 mcp::preview(&self.tabs.active().session, request, previewer.as_ref().map(|p| p as &dyn mcp::Previewer))
             }
             mcp::Call::Dispatch(request) => {
+                // A batch that arrives while a chat turn is open lands in the turn's own edit scope,
+                // so a process that edits in several calls of one message leaves one undo entry
+                // (ADR 0187, ADR 0230). The scope is read before the document is borrowed.
+                let scope = self.chat.scope();
                 let document = self.tabs.active_mut();
                 // The save a caller asks for is the person's *Save* performed on their document, so
                 // it goes through the same writer and to the same file (X114). A scene that was
                 // never saved has no file yet, and the door says so instead of choosing a path.
                 let writer = document.save_sink();
                 let sink = writer.as_ref().map(|writer| writer as &dyn mcp::SceneSink);
-                let answer = mcp::dispatch(&mut document.session, request, mcp::Door::Window { sink });
+                let answer = mcp::dispatch(&mut document.session, request, mcp::Door::Window { sink, scope });
                 if answer.written() {
                     document.mark_saved();
                 }
@@ -941,6 +945,17 @@ impl App {
     /// the person's answer, and both mean "not now" rather than "move the document" (ADR 0187).
     fn gesture_in_flight(&self) -> bool {
         self.pending_question.is_some() || self.tabs.active().holding_piece()
+    }
+
+    /// Starts the agent process the workspace names, or lets it go.
+    ///
+    /// The command is settings and the channel is the window's, so the two are read every frame and
+    /// the panel is handed the answer: a process is started once per configured command, never per
+    /// frame, and a command that is cleared ends its process. The panel keeps whatever backend a test
+    /// installed, because a backend this shell did not create is not the settings' to replace.
+    fn apply_agent(&mut self) {
+        let command = mcp::Program::parse(&self.settings.assistant.agent);
+        self.chat.apply_agent(command, self.channel.is_some());
     }
 
     /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
@@ -1460,7 +1475,12 @@ impl App {
         self.serve_channel(ui.ctx());
         // A chat turn takes the same boundary: one answer per frame, so the person's stop lands
         // between two calls and the scene this frame draws is what the agent left (ADR 0187).
-        self.serve_chat(ui::language(ui.ctx()));
+        let lang = ui::language(ui.ctx());
+        // An agent process the workspace names is started here, once, and given the channel this
+        // window offers (ADR 0230). A command that is empty, or a channel that is closed, is the
+        // panel's own state and not a failure.
+        self.apply_agent();
+        self.serve_chat(lang);
         // A directory another application finished writing is swapped in here, at the frame
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).

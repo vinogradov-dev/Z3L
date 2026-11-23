@@ -16,6 +16,8 @@
     clippy::unreachable
 )]
 
+pub mod acp;
+
 use std::io;
 use std::path::{Path, PathBuf};
 
