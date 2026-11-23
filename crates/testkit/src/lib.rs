@@ -19,10 +19,13 @@
 pub mod acp;
 
 use std::io;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 
 use catalog::{Currency, Directory, Money, Starter};
-use model::{ItemId, PanelNominalSize, PanelRect};
+use model::{Id, ItemId, PanelNominalSize, PanelRect};
+use serde_json::{Value, json};
 use units::Length;
 
 /// The fixtures every crate's tests start from, defined once in `model::testing`
@@ -41,6 +44,81 @@ pub fn scratch_dir(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&directory);
     let _ = std::fs::create_dir_all(&directory);
     directory
+}
+
+/// A stub endpoint on this machine's loopback: it answers one request with `answer` and hands the
+/// request's JSON body to the test.
+///
+/// A client that speaks HTTP is proved without a network, a key or a provider: the listener takes a
+/// port the operating system chooses and the thread answers the first connection with a fixed
+/// completion, so a test asserts both what the client asked and what it did with the answer. The
+/// returned string is the base URL a client is pointed at (`http://127.0.0.1:<port>/v1`).
+#[allow(clippy::expect_used)]
+pub fn stub_endpoint(answer: Value) -> (String, Receiver<Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+    let port = listener.local_addr().expect("the test reads the port it took").port();
+    let (sender, requests) = mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let Some(body) = read_request(&mut stream) else { continue };
+            let _ = sender.send(body);
+            let text = answer.to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                text.len()
+            );
+            let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            break;
+        }
+    });
+    (format!("http://127.0.0.1:{port}/v1"), requests)
+}
+
+/// The JSON body of one HTTP request, read off the socket by its own `Content-Length`.
+fn read_request(stream: &mut TcpStream) -> Option<Value> {
+    let mut raw = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let read = std::io::Read::read(stream, &mut buffer).ok()?;
+        if read == 0 {
+            return None;
+        }
+        raw.extend_from_slice(&buffer[..read]);
+        let head_end = raw.windows(4).position(|window| window == b"\r\n\r\n")? + 4;
+        let head = String::from_utf8_lossy(&raw[..head_end]).to_ascii_lowercase();
+        let length: usize = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        if raw.len() >= head_end + length {
+            return serde_json::from_slice(&raw[head_end..head_end + length]).ok();
+        }
+    }
+}
+
+/// One completion's answer that renames `panel` through one `command_batch` tool call.
+///
+/// It is the shape an OpenAI-compatible endpoint answers with, so a test of the wire and a test of
+/// the window drive the same answer through the same parser.
+pub fn batch_answer(panel: Id, name: &str) -> Value {
+    let arguments = json!({
+        "steps": [{ "command": "node.rename", "params": { "node": panel.get(), "name": name } }]
+    });
+    json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": format!("Renaming the side to {name}."),
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": { "name": "command_batch", "arguments": arguments.to_string() },
+                }],
+            }
+        }]
+    })
 }
 
 /// The package number the sample fixtures' directory uses.

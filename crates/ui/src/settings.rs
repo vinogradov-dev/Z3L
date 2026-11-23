@@ -623,16 +623,22 @@ pub struct PanelsSettings {
     pub inspector: PanelState,
 }
 
-/// The *Assistant* section: the local control channel an agent attaches to, and the agent process
-/// the panel starts.
+/// The *Assistant* section: the local control channel an agent attaches to, the agent process the
+/// panel starts, the endpoint a model is asked at, and the endpoints a person has agreed to.
 ///
 /// The channel is on for a fresh workspace because a feature a person has to discover a flag for is a
 /// feature that does not exist (ADR 0188). Its exposure is one machine, one account and one token that
 /// dies with the process, and this switch is the one place a workshop closes the door.
 ///
-/// The agent command is empty by default: no process, no request and no network until a person types
-/// the name of an agent they already run (ADR 0230). What it starts reaches the document only
-/// through the channel above, so the two settings are read together by the shell.
+/// Two ways to give the panel a model, and the process wins: a command the workshop types starts an
+/// agent that owns the model loop (ADR 0230), and an endpoint is the OpenAI-compatible wire a cloud
+/// provider and a server on this machine answer the same way (ADR 0189). Both are empty by default,
+/// so a fresh workspace sends nothing anywhere.
+///
+/// The key is not here and never will be: it comes from `Z3L_AGENT_KEY` or from a file beside this
+/// one, and the settings file is the kind of file people copy between machines. The consent list is
+/// the only record of what a person agreed to send, one entry per endpoint, and clearing an entry is
+/// how they ask to be asked again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssistantSettings {
@@ -640,11 +646,48 @@ pub struct AssistantSettings {
     pub attach: bool,
     /// The command an agent process is started with: one program and its arguments, on one line.
     pub agent: String,
+    /// The OpenAI-compatible base URL a model is asked at (`https://host/v1`); empty for none.
+    pub endpoint: String,
+    /// The model name the endpoint answers with; empty for none.
+    pub model: String,
+    /// The endpoints a person has agreed to send a conversation to, oldest first.
+    pub consent: Vec<String>,
 }
 
 impl Default for AssistantSettings {
     fn default() -> Self {
-        Self { attach: true, agent: String::new() }
+        Self { attach: true, agent: String::new(), endpoint: String::new(), model: String::new(), consent: Vec::new() }
+    }
+}
+
+impl AssistantSettings {
+    /// The endpoint a message would go to, or `None` when no model is configured.
+    ///
+    /// It answers with the endpoint as the person typed it, trimmed, so the consent list and the
+    /// request name the same string. The agent process is not an endpoint and is not asked here.
+    pub fn endpoint_to_ask(&self) -> Option<String> {
+        let endpoint = self.endpoint.trim();
+        let model = self.model.trim();
+        (!endpoint.is_empty() && !model.is_empty()).then(|| endpoint.to_owned())
+    }
+
+    /// Whether the person has agreed to send a conversation to `endpoint`.
+    pub fn consents(&self, endpoint: &str) -> bool {
+        self.consent.iter().any(|held| held == endpoint)
+    }
+
+    /// Remembers one endpoint's agreement, once, at the end of the list.
+    pub fn remember_consent(&mut self, endpoint: &str) {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() || self.consents(endpoint) {
+            return;
+        }
+        self.consent.push(endpoint.to_owned());
+    }
+
+    /// Forgets one endpoint's agreement, so the next message to it asks again.
+    pub fn forget_consent(&mut self, endpoint: &str) {
+        self.consent.retain(|held| held != endpoint);
     }
 }
 
@@ -1041,11 +1084,15 @@ fn swatch(ui: &mut Ui, fill: egui::Color32) {
     ui.painter().rect_filled(rect, egui::CornerRadius::same(2), fill);
 }
 
-/// The *Assistant* page: the one switch that closes the local control channel.
+/// The *Assistant* page: the door an agent attaches to, the process it starts, the endpoint it asks
+/// and the endpoints a person has agreed to send to.
 ///
-/// The page names both places a support question lands — this switch and the token file in the
+/// The page names both places a support question lands — the channel switch and the token file in the
 /// settings folder — because a person answering "my agent cannot see the window" has to know which of
-/// the two is the door (ADR 0188). Nothing here reaches the network: the channel binds loopback.
+/// the two is the door (ADR 0188). It also names the key's two homes and the one file the key is
+/// never in, so "why is it not configured" has an answer a person can read (ADR 0189). Nothing here
+/// reaches the network by itself: the channel binds loopback, and a message leaves only after the
+/// panel has asked once per endpoint.
 fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
     ui.heading(Message::SectionAssistant.text(lang));
     let mut changed = ui
@@ -1059,6 +1106,46 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         .add(egui::TextEdit::singleline(&mut settings.assistant.agent).hint_text(Message::AgentCommandHint.text(lang)))
         .changed();
     ui.label(egui::RichText::new(Message::AgentCommandHint.text(lang)).small().color(theme::text_dim(ui)));
+
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(Message::AssistantEndpoint.text(lang));
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.endpoint)
+                .hint_text(Message::AssistantEndpointHint.text(lang)),
+        )
+        .changed();
+    ui.label(egui::RichText::new(Message::AssistantEndpointHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(Message::AssistantModel.text(lang));
+    changed |= ui
+        .add(
+            egui::TextEdit::singleline(&mut settings.assistant.model).hint_text(Message::AssistantModelHint.text(lang)),
+        )
+        .changed();
+    ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantProcessWins.text(lang)).small().color(theme::text_dim(ui)));
+    ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
+
+    ui.add_space(theme::STEP * 2.0);
+    ui.label(Message::AssistantConsentList.text(lang));
+    if settings.assistant.consent.is_empty() {
+        ui.label(egui::RichText::new(Message::AssistantConsentNone.text(lang)).small().color(theme::text_dim(ui)));
+    }
+    // The list is read before it is written: a forget clicked this frame lands after the rows that
+    // drew, so the row under the pointer is the row that disappears and no other.
+    let mut forget = None;
+    for endpoint in &settings.assistant.consent {
+        ui.horizontal(|ui| {
+            ui.label(endpoint.as_str());
+            if ui.button(Message::AssistantConsentForget.text(lang)).clicked() {
+                forget = Some(endpoint.clone());
+            }
+        });
+    }
+    if let Some(endpoint) = forget {
+        settings.assistant.forget_consent(&endpoint);
+        changed = true;
+    }
     changed
 }
 
@@ -1389,7 +1476,13 @@ mod tests {
                 scene: PanelState { visible: false, expanded: true },
                 inspector: PanelState { visible: true, expanded: false },
             },
-            assistant: AssistantSettings { attach: false, agent: String::new() },
+            assistant: AssistantSettings {
+                attach: false,
+                agent: String::new(),
+                endpoint: "https://api.example.com/v1".to_owned(),
+                model: "a-model".to_owned(),
+                consent: vec!["https://api.example.com/v1".to_owned()],
+            },
         }
     }
 
@@ -1469,6 +1562,63 @@ mod tests {
             "npx @zed-industries/claude-code-acp",
             "the command a person typed survives the write"
         );
+    }
+
+    #[test]
+    fn a_consent_is_remembered_once_per_endpoint_and_forgetting_it_asks_again() {
+        // ADR 0189: the confirmation is per endpoint, remembered across restarts, and clearing it
+        // re-asks. The empty list is the state a workspace with no model is born in.
+        let mut assistant = AssistantSettings::default();
+        assert!(!assistant.consents("https://api.example.com/v1"), "nothing is agreed to by default");
+        assistant.remember_consent("https://api.example.com/v1");
+        assistant.remember_consent("https://api.example.com/v1");
+        assert_eq!(assistant.consent.len(), 1, "one endpoint is one entry");
+        assert!(assistant.consents("https://api.example.com/v1"));
+        assert!(!assistant.consents("http://127.0.0.1:11434/v1"), "another endpoint is asked about again");
+        assistant.remember_consent("  http://127.0.0.1:11434/v1  ");
+        assert!(assistant.consents("http://127.0.0.1:11434/v1"), "an endpoint is remembered as typed, trimmed");
+
+        let json = Settings { assistant: assistant.clone(), ..Settings::default() }.to_json().expect("serialise");
+        assert_eq!(
+            Settings::from_json(&json).expect("parse").assistant.consent,
+            assistant.consent,
+            "the agreement survives a restart, so the question is asked once"
+        );
+
+        assistant.forget_consent("https://api.example.com/v1");
+        assert!(!assistant.consents("https://api.example.com/v1"), "forgotten, the next message asks again");
+    }
+
+    #[test]
+    fn an_endpoint_is_asked_only_when_the_address_and_the_model_are_both_named() {
+        let mut assistant = AssistantSettings::default();
+        assert_eq!(assistant.endpoint_to_ask(), None, "a fresh workspace asks nothing anywhere");
+        assistant.endpoint = "https://api.example.com/v1".to_owned();
+        assert_eq!(assistant.endpoint_to_ask(), None, "an address with no model is not an endpoint yet");
+        assistant.model = "a-model".to_owned();
+        assert_eq!(assistant.endpoint_to_ask().as_deref(), Some("https://api.example.com/v1"));
+        assistant.endpoint = "  https://api.example.com/v1  ".to_owned();
+        assert_eq!(
+            assistant.endpoint_to_ask().as_deref(),
+            Some("https://api.example.com/v1"),
+            "the endpoint is the string the consent list holds, trimmed"
+        );
+    }
+
+    #[test]
+    fn the_settings_file_carries_no_key() {
+        // The assistant section is exactly the five fields below. A sixth that held a secret would
+        // fail here before it could be written to the kind of file people copy between machines.
+        let settings = custom();
+        let json: serde_json::Value = serde_json::from_str(&settings.to_json().expect("serialise")).expect("json");
+        let mut fields: Vec<&str> = json["assistant"]
+            .as_object()
+            .expect("the assistant section is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["agent", "attach", "consent", "endpoint", "model"], "no key, by construction");
     }
 
     #[test]

@@ -52,6 +52,10 @@ pub(crate) enum ChatAction {
     Send,
     /// Stop the turn in flight at its next call boundary.
     Stop,
+    /// Send the waiting message to the endpoint the panel just named.
+    AllowEndpoint,
+    /// Keep the message: the endpoint was named and the person said not now.
+    DenyEndpoint,
     /// Put the session in this mode.
     Mode(AgentMode),
     /// Close the panel.
@@ -77,6 +81,10 @@ pub(crate) struct Chat {
     scope: Option<EditScope>,
     /// The agent-process command this panel installed, so a frame can tell a change from the same one.
     agent: Option<mcp::Program>,
+    /// The endpoint this panel installed, so a frame can tell a change from the same one.
+    model: Option<mcp::Endpoint>,
+    /// The endpoint a person has to agree to before the message they typed may leave the machine.
+    consent: Option<String>,
     /// Whether the workspace names an agent process the window offers no channel to.
     blocked: bool,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
@@ -104,6 +112,8 @@ impl Chat {
             turn: None,
             scope: None,
             agent: None,
+            model: None,
+            consent: None,
             blocked: false,
             checklist: Vec::new(),
             findings: Vec::new(),
@@ -147,6 +157,77 @@ impl Chat {
                 }
             }
         }
+    }
+
+    /// Installs the OpenAI-compatible backend the workspace names, or lets it go.
+    ///
+    /// Two ways to give the panel a model, one turn: an agent process owns the loop (ADR 0230) and
+    /// this endpoint is the wire a cloud provider and a local server answer the same way (ADR 0189).
+    /// The shell offers only one of them, so `None` here means "no process is configured" and not
+    /// "forget what a test installed": a backend this shell did not create is left alone, exactly as
+    /// [`Self::apply_agent`] leaves it.
+    ///
+    /// A turn in flight belongs to the backend that is running it, so the settings take effect when
+    /// the message is finished. The key is not read here: it is the backend's to find when a message
+    /// is sent, so no frame touches the file and a key written while the window runs is picked up by
+    /// the next message (ADR 0189).
+    pub(crate) fn apply_model(&mut self, wanted: Option<mcp::Endpoint>, key_folder: Option<std::path::PathBuf>) {
+        let same = match (&self.model, &wanted) {
+            (Some(current), Some(next)) => current == next,
+            (None, None) => true,
+            _ => false,
+        };
+        if same || self.turn.is_some() {
+            return;
+        }
+        self.backend = wanted
+            .clone()
+            .map(|endpoint| Box::new(mcp::OpenAi::new(endpoint, key_folder.clone())) as Box<dyn ChatBackend>);
+        self.model = wanted;
+    }
+
+    /// Whether the panel is asking an endpoint rather than a process, which the shell asks before it
+    /// names the key's homes: a process brings its own credentials.
+    pub(crate) fn asks_an_endpoint(&self) -> bool {
+        self.model.is_some()
+    }
+
+    /// The endpoint a message would leave for and that the person has not agreed to yet.
+    ///
+    /// It is asked before the message is dispatched, so a workspace with an endpoint still sends
+    /// nothing until somebody says yes (ADR 0189). The consent list is the workspace's, so it is the
+    /// shell that holds it and this panel only reports which endpoint its backend asks.
+    pub(crate) fn unconsented(&self, assistant: &ui::settings::AssistantSettings) -> Option<String> {
+        let endpoint = self.model.as_ref()?.base_url().trim();
+        (!assistant.consents(endpoint)).then(|| endpoint.to_owned())
+    }
+
+    /// Holds the typed message back until the person answers the question the panel is drawing.
+    pub(crate) fn request_consent(&mut self, endpoint: String) {
+        self.consent = Some(endpoint);
+    }
+
+    /// The endpoint waiting for an answer, which the panel draws as one card above the field.
+    pub(crate) fn consent_pending(&self) -> Option<&str> {
+        self.consent.as_deref()
+    }
+
+    /// The endpoint the person just allowed, taken so one click cannot allow twice.
+    pub(crate) fn take_consent(&mut self) -> Option<String> {
+        self.consent.take()
+    }
+
+    /// The person said not now: the message stays in the field and nothing leaves.
+    pub(crate) fn clear_consent(&mut self) {
+        self.consent = None;
+    }
+
+    /// Says one line of the shell's own voice in the conversation, before any turn has begun.
+    ///
+    /// It is how a message that cannot be sent is answered: the missing key is a sentence a person
+    /// reads in the panel they typed in, not a modal and not silence.
+    pub(crate) fn note(&mut self, text: String) {
+        self.conversation.push(Speaker::Note, text);
     }
 
     /// The findings the panel last read, in the report's own order.
@@ -295,8 +376,31 @@ impl Chat {
             };
             ui.label(RichText::new(words.text(lang)).color(ink));
         }
+        if let Some(endpoint) = self.consent_pending() {
+            self.consent_card(ui, endpoint, lang, &mut action);
+        }
         self.field(ui, lang, busy, &mut action);
         action
+    }
+
+    /// The one question a message to a new endpoint asks, in the panel the person is already reading.
+    ///
+    /// It names the endpoint and what leaves the machine, and it is the only place the program asks:
+    /// the answer is the workspace's, remembered per endpoint, so a second message to the same place
+    /// does not ask again (ADR 0189). Nothing is sent while the card is drawn.
+    fn consent_card(&self, ui: &mut Ui, endpoint: &str, lang: Lang, action: &mut ChatAction) {
+        ui.separator();
+        ui.label(RichText::new(Message::AssistantConsentTitle.text(lang)).strong());
+        let body = Message::AssistantConsentBody.with(lang, [endpoint.to_owned()]);
+        ui.label(RichText::new(body).color(theme::warn(ui)));
+        ui.horizontal(|ui| {
+            if ui.button(RichText::new(Message::AssistantSend.text(lang)).strong()).clicked() {
+                *action = ChatAction::AllowEndpoint;
+            }
+            if ui.button(Message::AssistantConsentDeny.text(lang)).clicked() {
+                *action = ChatAction::DenyEndpoint;
+            }
+        });
     }
 
     /// The two modes as one switch: the chosen segment, and the sentence it stands for.

@@ -1423,6 +1423,36 @@ messages! {
         "Build: the next answer may change the document. Every answer is one undo entry.",
         "Сборка: следующий ответ может изменить документ. Каждый ответ — одна запись в истории."
     ],
+    AssistantEndpoint = ["Endpoint", "Адрес"],
+    AssistantEndpointHint = [
+        "The OpenAI-compatible base URL a model is asked at, for example https://api.example.com/v1. A server on this machine is the same field with its own address.",
+        "Базовый адрес модели в формате OpenAI, например https://api.example.com/v1. Сервер на этой машине — то же поле со своим адресом."
+    ],
+    AssistantModel = ["Model", "Модель"],
+    AssistantModelHint = [
+        "The model name the endpoint answers with, spelled the way the endpoint spells it.",
+        "Имя модели, которым отвечает адрес, ровно так, как его пишет сам адрес."
+    ],
+    AssistantProcessWins = [
+        "An agent process named above runs the loop itself; this endpoint is used while that command is empty.",
+        "Процесс агента, названный выше, ведёт работу сам; этот адрес используется, пока та команда пуста."
+    ],
+    AssistantKeyHint = [
+        "The key comes from Z3L_AGENT_KEY, else from agent-key with mode 0600 beside this settings file, and is never written here.",
+        "Ключ берётся из Z3L_AGENT_KEY, иначе из файла agent-key с правами 0600 рядом с этим файлом настроек, и никогда не пишется здесь."
+    ],
+    AssistantConsentList = ["Endpoints this workspace sends to", "Адреса, куда мастерская отправляет"],
+    AssistantConsentNone = [
+        "No endpoint has been agreed to yet: the first message to one asks first.",
+        "Пока ни один адрес не подтверждён: перед первым сообщением программа спросит."
+    ],
+    AssistantConsentForget = ["Forget", "Забыть"],
+    AssistantConsentTitle = ["Send to this endpoint?", "Отправлять на этот адрес?"],
+    AssistantConsentBody = [
+        "Your messages and the program's own description of what it can do leave this machine for {}. Nothing else is sent.",
+        "Ваши сообщения и описание того, что умеет программа, уходят с этой машины на {}. Больше ничего не отправляется."
+    ],
+    AssistantConsentDeny = ["Not now", "Не сейчас"],
     AssistantNotConfigured = [
         "No model is connected yet, so there is nobody to answer. The editor works without one.",
         "Модель ещё не подключена, отвечать некому. Редактор работает и без неё."

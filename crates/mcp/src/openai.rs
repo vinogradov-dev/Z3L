@@ -22,7 +22,7 @@
 //! Changes when: the wire, the key's homes or the tool surface change.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
@@ -56,21 +56,21 @@ pub const CHECKLIST_TOOL: &str = "todo_write";
 /// is worse than waiting, so the bound is generous and the person's Stop is the fast way out.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// One endpoint: where a completion is asked for, which model answers it, and the key it carries.
+/// One endpoint: where a completion is asked for and which model answers it.
 ///
-/// The key is private and `Debug` never prints it: an endpoint is handed to a worker thread and may
-/// appear in a test's failure output, and neither is a place a secret belongs.
-#[derive(Clone)]
+/// The key is deliberately not a field. It is read from its two homes when a message is sent, by
+/// [`OpenAi::ask`], so a key written while the window runs is picked up by the next message and no
+/// frame ever reads the file; a value that cannot be printed cannot be printed by accident.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Endpoint {
     base_url: String,
     model: String,
-    key: String,
 }
 
 impl Endpoint {
-    /// An endpoint, as the settings and the key's two homes made it.
-    pub fn new(base_url: impl Into<String>, model: impl Into<String>, key: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), model: model.into(), key: key.into() }
+    /// An endpoint, as the two settings made it.
+    pub fn new(base_url: impl Into<String>, model: impl Into<String>) -> Self {
+        Self { base_url: base_url.into(), model: model.into() }
     }
 
     /// The base URL a request is sent under, as the settings carry it (`https://host/v1`).
@@ -88,25 +88,9 @@ impl Endpoint {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
     }
 
-    /// Whether the endpoint names all three parts of a request, so a turn can be asked at all.
+    /// Whether the endpoint names both parts of a request, so a turn can be asked at all.
     pub fn is_configured(&self) -> bool {
-        !self.base_url.trim().is_empty() && !self.model.trim().is_empty() && !self.key.trim().is_empty()
-    }
-
-    /// The authorization header's value, built where it is used so it is not a field of the value.
-    fn authorization(&self) -> String {
-        format!("Bearer {}", self.key.trim())
-    }
-}
-
-impl fmt::Debug for Endpoint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Endpoint")
-            .field("base_url", &self.base_url)
-            .field("model", &self.model)
-            .field("key", &"<redacted>")
-            .finish()
+        !self.base_url.trim().is_empty() && !self.model.trim().is_empty()
     }
 }
 
@@ -176,13 +160,15 @@ fn others_can_read(_path: &Path) -> bool {
 /// The model behind the panel, on the OpenAI-compatible wire.
 pub struct OpenAi {
     endpoint: Endpoint,
+    /// The settings folder the key's second home sits in, when the workspace has one.
+    folder: Option<PathBuf>,
     // Never printed: `ureq::Agent` has no useful `Debug` and a test that names the backend should
-    // read the endpoint's own redacted shape.
+    // read the endpoint's own shape.
     agent: ureq::Agent,
     answer: Option<Receiver<Result<Reply, BackendError>>>,
 }
 
-/// The backend as a test's failure output and a log line read it: the endpoint, never the key.
+/// The backend as a test's failure output and a log line read it: the endpoint, and no key.
 impl fmt::Debug for OpenAi {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_struct("OpenAi").field("endpoint", &self.endpoint).finish_non_exhaustive()
@@ -191,9 +177,9 @@ impl fmt::Debug for OpenAi {
 
 impl OpenAi {
     /// A backend for `endpoint`, with the one agent every request of this session shares.
-    pub fn new(endpoint: Endpoint) -> Self {
+    pub fn new(endpoint: Endpoint, folder: Option<PathBuf>) -> Self {
         let config = ureq::Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build();
-        Self { endpoint, agent: ureq::Agent::new_with_config(config), answer: None }
+        Self { endpoint, folder, agent: ureq::Agent::new_with_config(config), answer: None }
     }
 
     /// The endpoint this backend asks, for the shell's consent and the panel's words.
@@ -204,6 +190,15 @@ impl OpenAi {
 
 impl ChatBackend for OpenAi {
     fn ask(&mut self, transcript: &Conversation) {
+        // The key is read here, once per message: a file nobody reads on a frame, and a key that is
+        // never held by the backend while no message is being asked.
+        let key = match key(self.folder.as_deref()) {
+            Ok(key) => key,
+            Err(error) => {
+                self.answer = Some(ready(Err(error)));
+                return;
+            }
+        };
         let body = request_body(&self.endpoint, transcript);
         let agent = self.agent.clone();
         let endpoint = self.endpoint.clone();
@@ -211,17 +206,13 @@ impl ChatBackend for OpenAi {
         let spawned = std::thread::Builder::new().name("agent-request".to_owned()).spawn(move || {
             // A send fails only when the turn dropped the request it replaces; the answer is then
             // nobody's, which is exactly what the person's stop asked for.
-            let _ = sender.send(complete(&agent, &endpoint, &body));
+            let _ = sender.send(complete(&agent, &endpoint, &key, &body));
         });
         self.answer = Some(match spawned {
             Ok(_) => answer,
             // A thread that never started answers nothing, so the turn is handed the sentence now
             // instead of waiting for a frame that never comes.
-            Err(error) => {
-                let (sender, answer) = mpsc::channel();
-                let _ = sender.send(Err(BackendError::new(format!("the assistant cannot start a request: {error}"))));
-                answer
-            }
+            Err(error) => ready(Err(BackendError::new(format!("the assistant cannot start a request: {error}")))),
         });
     }
 
@@ -243,6 +234,13 @@ impl ChatBackend for OpenAi {
     fn waiting(&self) -> bool {
         self.answer.is_none()
     }
+}
+
+/// A channel that already holds one answer, so a request that never started still answers.
+fn ready(result: Result<Reply, BackendError>) -> Receiver<Result<Reply, BackendError>> {
+    let (sender, answer) = mpsc::channel();
+    let _ = sender.send(result);
+    answer
 }
 
 /// The arguments of the wire's `command_batch`: the steps of one answer, in order.
@@ -353,10 +351,10 @@ fn system_message() -> String {
 }
 
 /// One completion, on the thread [`OpenAi::ask`] started.
-fn complete(agent: &ureq::Agent, endpoint: &Endpoint, body: &Value) -> Result<Reply, BackendError> {
+fn complete(agent: &ureq::Agent, endpoint: &Endpoint, key: &str, body: &Value) -> Result<Reply, BackendError> {
     let response = agent
         .post(endpoint.chat_url())
-        .header("Authorization", endpoint.authorization())
+        .header("Authorization", format!("Bearer {}", key.trim()))
         .header("Accept", "application/json")
         .send_json(body)
         .map_err(|error| refusal(endpoint, &error))?;
@@ -482,9 +480,6 @@ impl Reply {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::mpsc::{self, Receiver};
     use std::time::{Duration, Instant};
 
     use engine::{BatchOptions, Session};
@@ -494,74 +489,6 @@ mod tests {
     use super::*;
     use crate::chat::Turn;
     use crate::chat::tests::session as fixture;
-
-    /// A stub endpoint on this machine: it answers `answer`, and the test reads the request it got.
-    ///
-    /// Nothing here leaves the process's own loopback, so the test needs no key, no provider and no
-    /// network, and it is the same code path a real endpoint takes.
-    fn stub(answer: Value) -> (String, Receiver<Value>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let port = listener.local_addr().expect("the port the listener took").port();
-        let (sender, requests) = mpsc::channel();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { break };
-                let Some(body) = read_request(&mut stream) else { continue };
-                let _ = sender.send(body);
-                let text = answer.to_string();
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
-                    text.len()
-                );
-                let _ = stream.write_all(response.as_bytes());
-                break;
-            }
-        });
-        (format!("http://127.0.0.1:{port}/v1"), requests)
-    }
-
-    /// The JSON body of one HTTP request, read from the socket by its own `Content-Length`.
-    fn read_request(stream: &mut std::net::TcpStream) -> Option<Value> {
-        let mut raw = Vec::new();
-        let mut buffer = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut buffer).ok()?;
-            if read == 0 {
-                return None;
-            }
-            raw.extend_from_slice(&buffer[..read]);
-            let head_end = raw.windows(4).position(|window| window == b"\r\n\r\n")? + 4;
-            let head = String::from_utf8_lossy(&raw[..head_end]).to_ascii_lowercase();
-            let length: usize = head
-                .lines()
-                .find_map(|line| line.strip_prefix("content-length:"))
-                .and_then(|value| value.trim().parse().ok())
-                .unwrap_or(0);
-            if raw.len() >= head_end + length {
-                return serde_json::from_slice(&raw[head_end..head_end + length]).ok();
-            }
-        }
-    }
-
-    /// An answer that renames the panel through one `command_batch` call.
-    fn batch_answer(panel: Id, name: &str) -> Value {
-        let arguments = json!({
-            "steps": [{ "command": "node.rename", "params": { "node": panel.get(), "name": name } }]
-        });
-        json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Renaming the side.",
-                    "tool_calls": [{
-                        "id": "call-1",
-                        "type": "function",
-                        "function": { "name": BATCH_TOOL, "arguments": arguments.to_string() },
-                    }],
-                }
-            }]
-        })
-    }
 
     /// Drives one turn to its end, sleeping between frames so the worker can answer.
     ///
@@ -587,12 +514,32 @@ mod tests {
         session.project().node(panel).map(|node| node.name().to_owned())
     }
 
+    /// A scratch folder holding `agent-key` with owner-only permissions, and the key's text.
+    ///
+    /// It is the file home the tests read, so the request a stub receives carries a key that came
+    /// through the same path a person's does.
+    fn keyed(name: &str) -> PathBuf {
+        let directory = testkit::scratch_dir(name);
+        std::fs::create_dir_all(&directory).expect("scratch");
+        let path = directory.join(KEY_FILE);
+        std::fs::write(&path, KEY_TEXT).expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+        }
+        directory
+    }
+
+    /// The key every stub test sends.
+    const KEY_TEXT: &str = "sk-test-secret";
+
     #[test]
     fn a_turn_reaches_the_stub_and_lands_one_undo_entry() {
         let (session_id, panel) = fixture();
         let mut session = session_id;
-        let (url, requests) = stub(batch_answer(panel, "Left"));
-        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model", "test-key"));
+        let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-turn")));
 
         let conversation = drive(&mut backend, &mut session);
 
@@ -607,7 +554,10 @@ mod tests {
         session.undo().expect("the whole answer is one entry");
         assert_eq!(name(&session, panel).as_deref(), Some("Side"), "one undo takes the answer back");
         assert!(
-            conversation.lines().iter().any(|line| line.speaker == Speaker::Agent && line.text == "Renaming the side."),
+            conversation
+                .lines()
+                .iter()
+                .any(|line| line.speaker == Speaker::Agent && line.text.starts_with("Renaming the side")),
             "the model's words are in the conversation"
         );
         assert!(
@@ -622,10 +572,10 @@ mod tests {
         // ADR 0189: a local server is the same client pointed elsewhere, so nothing but the two
         // settings may decide who answers.
         let (mut session, panel) = fixture();
-        let (first_url, first_requests) = stub(batch_answer(panel, "Left"));
-        let (second_url, second_requests) = stub(Reply::saying("nothing to do").into_wire());
-        let mut first = OpenAi::new(Endpoint::new(first_url, "model-a", "key-a"));
-        let mut second = OpenAi::new(Endpoint::new(second_url, "model-b", "key-b"));
+        let (first_url, first_requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
+        let (second_url, second_requests) = testkit::stub_endpoint(Reply::saying("nothing to do").into_wire());
+        let mut first = OpenAi::new(Endpoint::new(first_url, "model-a"), Some(keyed("openai-first")));
+        let mut second = OpenAi::new(Endpoint::new(second_url, "model-b"), Some(keyed("openai-second")));
 
         let _ = drive(&mut first, &mut session);
         drive_half(&mut second, &mut session);
@@ -702,12 +652,13 @@ mod tests {
 
     #[test]
     fn the_key_never_prints_and_never_travels_to_an_error() {
-        let endpoint = Endpoint::new("http://127.0.0.1:9/v1", "model", "sk-secret-value");
-        let printed = format!("{endpoint:?}");
-        assert!(!printed.contains("sk-secret-value"), "the debug shape redacts the key: {printed}");
-        assert!(printed.contains("<redacted>"));
-        // Nothing listens on port 9, so this request fails; the sentence must not carry the key.
-        let mut backend = OpenAi::new(endpoint);
+        // Nothing listens on port 9, so this request fails; the sentence must not carry the key, and
+        // neither must any value the backend hands a test or a log.
+        let folder = keyed("openai-secret");
+        let endpoint = Endpoint::new("http://127.0.0.1:9/v1", "model");
+        let mut backend = OpenAi::new(endpoint, Some(folder));
+        let printed = format!("{backend:?}");
+        assert!(!printed.contains(KEY_TEXT), "the backend's own shape carries no key: {printed}");
         let mut conversation = Conversation::new();
         conversation.push(Speaker::Person, "hello");
         backend.ask(&conversation);
@@ -720,16 +671,27 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         let error = failure.expect("the request fails without a listener").expect_err("port 9 answers nothing");
-        assert!(!error.sentence().contains("sk-secret-value"), "the refusal never names the key: {}", error.sentence());
+        assert!(!error.sentence().contains(KEY_TEXT), "the refusal never names the key: {}", error.sentence());
+    }
+
+    #[test]
+    fn a_workspace_with_no_key_answers_the_sentence_instead_of_asking() {
+        let mut backend = OpenAi::new(Endpoint::new("http://127.0.0.1:9/v1", "model"), None);
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "hello");
+        backend.ask(&conversation);
+        let error = backend.take().expect("the answer is there at once").expect_err("no key, no request");
+        assert!(error.sentence().contains(KEY_ENV), "the sentence names both homes: {}", error.sentence());
+        assert!(error.sentence().contains(KEY_FILE));
     }
 
     #[test]
     fn the_endpoint_builds_the_url_the_wire_documents() {
         assert_eq!(
-            Endpoint::new("https://api.example.com/v1/", "m", "k").chat_url(),
+            Endpoint::new("https://api.example.com/v1/", "m").chat_url(),
             "https://api.example.com/v1/chat/completions"
         );
-        assert!(!Endpoint::new("", "m", "k").is_configured(), "an empty base URL is no endpoint");
-        assert!(!Endpoint::new("https://h/v1", "m", "").is_configured(), "and so is an empty key");
+        assert!(!Endpoint::new("", "m").is_configured(), "an empty base URL is no endpoint");
+        assert!(!Endpoint::new("https://h/v1", "",).is_configured(), "and so is an empty model");
     }
 }

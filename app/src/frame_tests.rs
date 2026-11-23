@@ -7029,6 +7029,100 @@ fn a_chat_turn_lands_one_undo_entry_and_the_panel_draws_what_it_did() {
 }
 
 #[test]
+fn the_first_message_to_an_endpoint_asks_once_and_a_forgotten_answer_asks_again() {
+    // ADR 0189 through the real window, the real wire and a stub on this machine's loopback: the
+    // message stops at the question, nothing leaves until the person says yes, the agreement is in
+    // the workspace file, and clearing it asks again. No provider, no network, no key in the tree.
+    let (mut harness, panel) = chat_fixture("frame-chat-consent");
+    harness.app.chat.open = true;
+    harness.app.tabs.active_mut().session.set_agent_mode(engine::AgentMode::Build);
+    let (url, requests) = testkit::stub_endpoint(testkit::batch_answer(panel, "Left"));
+    let folder = harness.path.parent().expect("the fixture's settings folder").to_path_buf();
+    write_agent_key(&folder);
+    harness.app.settings.assistant.endpoint = url.clone();
+    harness.app.settings.assistant.model = "stub-model".to_owned();
+    harness.settle();
+    assert_eq!(
+        harness.app.chat.unconsented(&harness.app.settings.assistant),
+        Some(url.clone()),
+        "the endpoint is installed and nothing has been agreed to yet"
+    );
+
+    // The first message stops at the question: the panel holds the words and the stub hears nothing.
+    harness.app.chat.input = "rename the side".to_owned();
+    harness.settle();
+    let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(field_send, egui::PointerButton::Primary);
+    assert_eq!(harness.app.chat.consent_pending(), Some(url.as_str()), "the message waits for the answer");
+    assert_eq!(harness.app.chat.input, "rename the side", "and stays in the field");
+    harness.frame();
+    assert!(harness.drew(Message::AssistantConsentTitle.text(Lang::En)), "the card is drawn");
+    assert!(
+        harness.drew(&Message::AssistantConsentBody.with(Lang::En, [url.clone()])),
+        "and it names the endpoint the words would leave for"
+    );
+    assert!(
+        requests.recv_timeout(std::time::Duration::from_millis(50)).is_err(),
+        "nothing left the machine before the person answered"
+    );
+
+    // Saying yes remembers the endpoint for the workspace and sends the message it held.
+    let card_send = assistant_send_points(&harness).into_iter().next().expect("the card draws its own Send");
+    harness.click(card_send, egui::PointerButton::Primary);
+    assert!(harness.app.settings.assistant.consents(&url), "the answer is remembered");
+    assert_eq!(harness.app.chat.consent_pending(), None, "and the card is gone");
+    for _ in 0..400 {
+        harness.frame();
+        if !harness.app.chat.is_busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the stub was asked");
+    assert_eq!(request["model"], "stub-model", "the settings' model reaches the endpoint: {request}");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Left"), "the answer landed");
+    let written = std::fs::read_to_string(&harness.path).expect("the workspace file is written");
+    assert!(written.contains(&url), "the agreement survives the run: {written}");
+    harness.app.tabs.active_mut().session.undo().expect("the answer is one entry");
+    assert_eq!(panel_name(&harness, panel).as_deref(), Some("Side"));
+
+    // Clearing the answer asks again: the question is the workspace's, not the tab's.
+    harness.app.settings.assistant.forget_consent(&url);
+    harness.app.chat.input = "rename it once more".to_owned();
+    harness.settle();
+    let field_send = assistant_send_points(&harness).into_iter().next().expect("the field draws Send");
+    harness.click(field_send, egui::PointerButton::Primary);
+    assert_eq!(harness.app.chat.consent_pending(), Some(url.as_str()), "a cleared consent asks again");
+}
+
+/// The Send buttons the last frame drew, topmost first.
+///
+/// The consent card sits above the field, so the card's own Send is the first one while the card is
+/// drawn; a frame with no card draws exactly one, the field's.
+fn assistant_send_points(harness: &Harness) -> Vec<egui::Pos2> {
+    let mut points: Vec<egui::Pos2> = harness
+        .drawn_rects
+        .iter()
+        .filter(|(_, text)| text == Message::AssistantSend.text(Lang::En))
+        .map(|(rect, _)| rect.center())
+        .collect();
+    points.sort_by(|left, right| left.y.total_cmp(&right.y));
+    points
+}
+
+/// Writes the key's second home into `folder` with owner-only permissions.
+fn write_agent_key(folder: &std::path::Path) {
+    let path = folder.join(mcp::KEY_FILE);
+    std::fs::create_dir_all(folder).expect("the settings folder");
+    std::fs::write(&path, "sk-test-secret").expect("the key file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    }
+}
+
+#[test]
 fn the_assistant_panel_lists_what_the_rules_found() {
     // ADR 0191 in the window: the rules find the mistake, the panel shows it and the model only
     // explains it. The fixture's panel is 700 mm wide in a 600 mm envelope, so the one finding is
