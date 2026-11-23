@@ -407,7 +407,8 @@ impl Chat {
         }
         ui.separator();
         if self.is_busy() {
-            ui.label(RichText::new(Message::AssistantThinking.text(lang)).color(theme::text_dim(ui)));
+            let calls = self.turn.as_ref().map_or(0, |turn| turn.calls()).max(1).to_string();
+            ui.label(RichText::new(Message::AssistantWorking.with(lang, [calls])).color(theme::text_dim(ui)));
         }
         if self.backend.is_none() {
             let (words, ink) = if self.blocked {
@@ -523,6 +524,25 @@ impl Chat {
         }
     }
 
+    /// The conversation as one text, for the copy button: the same lines the panel draws, with the
+    /// speaker named so a reader outside the window knows who said what.
+    pub(crate) fn transcript_text(&self, lang: Lang) -> String {
+        let mut text = String::new();
+        for line in self.conversation.lines() {
+            let who = match line.speaker {
+                Speaker::Person => Message::AssistantYou,
+                Speaker::Agent => Message::AssistantAgent,
+                Speaker::Tool => Message::AssistantTool,
+                Speaker::Note => Message::AssistantNote,
+            };
+            text.push_str(who.text(lang));
+            text.push_str(": ");
+            text.push_str(&line.text);
+            text.push('\n');
+        }
+        text
+    }
+
     /// The one field and its one button: Enter and Send are the same gesture.
     ///
     /// The button holds the right end of the row and the field takes what is left, so the row is
@@ -548,6 +568,16 @@ impl Chat {
                             .clicked()
                             .then_some(ChatAction::Send)
                     };
+                    // The copy sits beside Send, not on a row of its own: the panel keeps the height
+                    // it opened at, and a short label leaves the field wide in both languages.
+                    let copy = ui.add_enabled(
+                        !self.conversation.is_empty(),
+                        egui::Button::new(Message::AssistantCopy.text(lang)),
+                    );
+                    if copy.clicked() {
+                        let text = self.transcript_text(lang);
+                        ui.ctx().copy_text(text);
+                    }
                     let response = ui.add_enabled(
                         enabled,
                         egui::TextEdit::singleline(&mut self.input)
@@ -565,5 +595,28 @@ impl Chat {
         if entered && ready {
             *action = ChatAction::Send;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_conversation_copies_with_its_speakers() {
+        // The copy button's text, so a person can hand a whole turn to another reader without
+        // retyping it and without the window's colours: the speaker is a word, not an ink.
+        let mut chat = Chat::new();
+        chat.conversation.push(Speaker::Person, "создай куб 100 200 900");
+        chat.conversation.push(Speaker::Agent, "Готово");
+        chat.conversation.push(Speaker::Tool, "объект создан");
+        chat.conversation.push(Speaker::Note, "одна запись истории");
+
+        let text = chat.transcript_text(Lang::En);
+
+        assert!(text.contains("You: создай куб 100 200 900"), "{text}");
+        assert!(text.contains("Agent: Готово"), "{text}");
+        assert!(text.contains("Tool: объект создан"), "{text}");
+        assert!(text.contains("Note: одна запись истории"), "{text}");
     }
 }

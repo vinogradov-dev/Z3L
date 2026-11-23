@@ -261,6 +261,13 @@ impl ChatBackend for OpenAi {
     fn waiting(&self) -> bool {
         self.answer.is_none()
     }
+
+    fn cancel(&mut self) {
+        // The safe point for a request already sent: dropping the receiver makes the worker's send
+        // fail, and the turn ends on this frame. A blocking TLS read cannot be aborted without a
+        // socket handle, so the gateway may finish the request; its answer is nobody's.
+        self.answer = None;
+    }
 }
 
 /// A channel that already holds one answer, so a request that never started still answers.
@@ -380,7 +387,10 @@ fn system_message() -> String {
          Sizes are millimetres in width × depth × height order unless the person says otherwise; convert \
          them to the command's micrometres yourself and never show micrometres to the person. When the \
          person gives the numbers, act in the same turn; ask only when a required value is absent and \
-         no convention covers it. Three unequal sides are a box, not a cube: do not correct the person.\n\n\
+         no convention covers it. Three unequal sides are a box, not a cube: do not correct the person. \
+         A placement is `{{\"translation\": [x, y, z], \"rotation\": [x, y, z, w]}}` with the identity \
+         rotation `[0, 0, 0, 1]`, never a bare array; a box is one `object.cuboid.create` with all \
+         three sides, never one body per face.\n\n\
          The program, as it describes itself:\n{guide}\n\n\
          The command ids of this build, each with its label:\n{catalogue}",
         guide = engine::guide(),
@@ -747,6 +757,21 @@ mod tests {
     }
 
     #[test]
+    fn a_stop_drops_the_answer_in_flight() {
+        // The person's Stop must end the turn now, not at the provider's time. Dropping the receiver
+        // is the backend's safe point; the turn pushes its stopped line on the same frame.
+        let (url, _requests) = testkit::stub_endpoint(Reply::saying("ok").into_wire());
+        let mut backend = OpenAi::new(Endpoint::new(url, "stub-model"), Some(keyed("openai-cancel")));
+        let mut conversation = Conversation::new();
+        conversation.push(Speaker::Person, "hello");
+        backend.ask(&conversation);
+        assert!(!backend.waiting(), "the request is in flight");
+        backend.cancel();
+        assert!(backend.waiting(), "the stop takes the answer away");
+        assert!(backend.take().is_none(), "and nothing is handed to the turn");
+    }
+
+    #[test]
     fn a_status_refusal_carries_the_providers_own_sentence() {
         // The owner's go gateway answered 400 `MissingSessionID`; the panel read only "HTTP 400"
         // because the body was discarded. The refusal now carries the provider's sentence, capped,
@@ -781,6 +806,8 @@ mod tests {
         assert!(system.contains("width × depth × height"), "the side order is stated");
         assert!(system.contains("never show micrometres"), "the person sees millimetres");
         assert!(system.contains("Never ask the person for an id"), "and an id is never demanded");
+        assert!(system.contains("\"translation\""), "the placement shape is stated");
+        assert!(system.contains("never one body per face"), "one box is one body");
     }
 
     #[test]
