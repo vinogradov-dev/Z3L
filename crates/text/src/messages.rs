@@ -1435,9 +1435,9 @@ messages! {
         "Базовый адрес модели в формате OpenAI, например https://api.example.com/v1. Сервер на этой машине — то же поле со своим адресом."
     ],
     AssistantEndpointProblem = ["The address cannot be used: {}", "Адрес нельзя использовать: {}"],
-    AssistantEndpointInvalid = [
-        "The endpoint address is not valid: {}. Fix it in Settings › Assistant.",
-        "Адрес модели неверен: {}. Исправьте его в «Настройки → Ассистент»."
+    AssistantProblemFix = [
+        "{} Fix it in Settings › Assistant.",
+        "{} Исправьте это в «Настройки → Ассистент»."
     ],
     AssistantEndpointNeedsScheme = [
         "it must start with http:// or https://",
@@ -1464,6 +1464,20 @@ messages! {
     AssistantModelHint = [
         "The model name the endpoint answers with, spelled the way the endpoint spells it.",
         "Имя модели, которым отвечает адрес, ровно так, как его пишет сам адрес."
+    ],
+    AssistantHeaders = ["Extra request headers (optional)", "Дополнительные заголовки запроса (необязательно)"],
+    AssistantHeadersHint = [
+        "One `Name: value` per line, sent with every request — a gateway that asks for a session or routing header needs one. Do not put the key here: it comes from Z3L_AGENT_KEY or agent-key.",
+        "Один заголовок `Имя: значение` на строку, отправляется с каждым запросом — для шлюза, которому нужен заголовок сессии или маршрута. Не вписывайте сюда ключ: он берётся из Z3L_AGENT_KEY или agent-key."
+    ],
+    AssistantHeadersProblem = ["The extra headers cannot be used: {}", "Дополнительные заголовки не подходят: {}"],
+    AssistantHeadersMalformed = [
+        "each line must be `Name: value`, and the name must be one a server accepts",
+        "каждая строка должна быть `Имя: значение`, а имя — допустимым для сервера"
+    ],
+    AssistantHeadersAuthorization = [
+        "`Authorization` belongs to the key's two homes, not to this field",
+        "`Authorization` хранится в двух местах для ключа, а не в этом поле"
     ],
     AssistantProcessWins = [
         "An agent process named here runs the loop itself; the model address above is used while that command is empty.",
