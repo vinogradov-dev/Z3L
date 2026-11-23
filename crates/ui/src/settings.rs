@@ -1452,6 +1452,26 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_process_is_nothing_until_a_workshop_names_one() {
+        // A process that runs a model is not started by a default: an empty command is no agent, and
+        // the one a workshop types is remembered across a restart byte for byte (ADR 0230).
+        let fresh = Settings::default();
+        assert!(fresh.assistant.agent.is_empty(), "a fresh workspace starts no agent process");
+
+        let typed = Settings::from_json(
+            r#"{"version":1,"assistant":{"attach":true,"agent":"npx @zed-industries/claude-code-acp"}}"#,
+        )
+        .expect("parse");
+        assert_eq!(typed.assistant.agent, "npx @zed-industries/claude-code-acp");
+        let text = typed.to_json().expect("serialise");
+        assert_eq!(
+            Settings::from_json(&text).expect("reread").assistant.agent,
+            "npx @zed-industries/claude-code-acp",
+            "the command a person typed survives the write"
+        );
+    }
+
+    #[test]
     fn a_workspace_written_before_the_kinds_existed_snaps_them_all() {
         // A file from before U116 carries no `kinds` section: every kind is on, exactly as a fresh
         // workspace is, and the section's own switches keep their values.

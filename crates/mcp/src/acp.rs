@@ -1107,6 +1107,17 @@ mod tests {
     }
 
     #[test]
+    fn a_typed_command_is_a_program_and_the_words_after_it() {
+        assert_eq!(Program::parse("claude-code-acp"), Some(Program::new("claude-code-acp")));
+        assert_eq!(
+            Program::parse("  npx   @zed-industries/claude-code-acp  "),
+            Some(Program::new("npx").with_args(vec!["@zed-industries/claude-code-acp".to_owned()])),
+            "the words after the program are its arguments, and the spacing is the typist's"
+        );
+        assert_eq!(Program::parse("   "), None, "an empty line is no agent process at all");
+    }
+
+    #[test]
     fn no_message_is_no_prompt() {
         // A conversation whose last line is not the person's asks the process nothing: an empty
         // prompt would be a message the agent answers out of nowhere.
