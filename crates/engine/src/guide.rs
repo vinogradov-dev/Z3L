@@ -56,6 +56,7 @@ pub fn guide() -> Value {
         "classes": classes(),
         "units": units(),
         "sides": sides(),
+        "placements": placements(),
     })
 }
 
@@ -366,6 +367,21 @@ fn niches() -> Value {
     })
 }
 
+/// The shape a `placement` parameter takes, which a model must not guess.
+///
+/// The JSON a command parses is `{"translation":[x,y,z],"rotation":[x,y,z,w]}`; a model handed only
+/// the word "placement" tried a bare map, an array of three and an array of four in one turn, and
+/// each refusal cost a call (X127). The shape is stated once, next to the units.
+fn placements() -> Value {
+    json!({
+        "shape": {"translation": "[x, y, z]", "rotation": "[x, y, z, w]"},
+        "example": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
+        "translation": "millimetres from the parent's origin",
+        "rotation": "a unit quaternion; the identity is [0, 0, 0, 1]",
+        "rule": "a placement is this object, never a bare array or a map of named parts",
+    })
+}
+
 /// The three stances, as the guide prints them.
 fn stances() -> Value {
     Value::Array(
@@ -563,6 +579,17 @@ mod tests {
         assert!(brief.contains(&format!("open product id = {}", product.get())), "{brief}");
         assert!(brief.contains("Cabinet"), "the nodes are named: {brief}");
         assert!(brief.contains("a free body belongs under the root"), "{brief}");
+    }
+
+    #[test]
+    fn the_guide_states_the_placement_shape_a_model_must_not_guess() {
+        // X127: the model tried a map, an array of three and an array of four in one turn because
+        // nothing told it the shape. The guide now names both fields and the identity.
+        let placements = &guide()["placements"];
+        assert_eq!(placements["shape"]["translation"], "[x, y, z]");
+        assert_eq!(placements["shape"]["rotation"], "[x, y, z, w]");
+        assert_eq!(placements["example"]["rotation"], json!([0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(placements["rule"], "a placement is this object, never a bare array or a map of named parts");
     }
 
     #[test]

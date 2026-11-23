@@ -1409,10 +1409,14 @@ messages! {
 
     // ── The assistant's panel, its two modes and what a turn reports ───
     AssistantYou = ["You", "Вы"],
+    AssistantAgent = ["Agent", "Агент"],
+    AssistantTool = ["Tool", "Инструмент"],
+    AssistantNote = ["Note", "Заметка"],
+    AssistantCopy = ["Copy", "Копировать"],
+    AssistantWorking = ["The agent is working… request {}", "Агент работает… запрос {}"],
     AssistantPlaceholder = ["Ask for a change, or ask what is in the scene", "Попросите изменить изделие или спросите, что в сцене"],
     AssistantSend = ["Send", "Отправить"],
     AssistantStop = ["Stop", "Остановить"],
-    AssistantThinking = ["The agent is working…", "Агент работает…"],
     AssistantPlanMode = ["Plan", "План"],
     AssistantBuildMode = ["Build", "Сборка"],
     AssistantPlanHint = [
