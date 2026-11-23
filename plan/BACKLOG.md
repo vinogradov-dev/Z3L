@@ -286,24 +286,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: A body that omits an entry the file already holds is refused with that entry's opening
    words, and a body that adds one is written (one unit test over ).
   `files: state-contract/src/cli/write.rs,plan/debt.md`
-- `[ ]` **X130** the assistant's no-key test reads the developer's own environment, so the gate fails on a machine that is configured
-  Why: Measured 2026-11-23 in this checkout: `cargo xtask ci` fails at test in an ordinary
-   developer shell. `a_workspace_with_no_key_answers_the_sentence_instead_of_asking`
-   (`crates/mcp/src/openai.rs:987`) builds `OpenAi::new(endpoint, None)` and expects the no-key
-   sentence synchronously, but the backend reads `Z3L_AGENT_KEY` from the process environment
-   (`openai.rs:94`), and with the variable set it posts to 127.0.0.1:9 on the worker instead,
-   so `take()` answers `None` and the test panics with "the answer is there at once". The same
-   tree passes with `env -u Z3L_AGENT_KEY`, so the gate is green only on a machine whose owner
-   has not configured the assistant it belongs to.
-  Shape: The key source is a value the backend is constructed with rather than the process
-   environment read inside it: the test names an empty folder and an absent variable, and the
-   refusal is asserted without touching the environment another test in the same process can
-   see. The pure `key_from` tests stay as they are, and a test asserts the refusal both with
-   and without the variable set.
-  Done: `cargo xtask ci` is green in a shell where `Z3L_AGENT_KEY` is exported, and the no-key
-   test passes in that shell and in one without it.
-  `files: crates/mcp/src/openai.rs`
-
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -734,6 +716,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X130** the assistant's no-key test reads the developer's own environment, so the gate fails on a machine that is configured
+  Why: Measured 2026-11-23 in this checkout: `cargo xtask ci` fails at test in an ordinary
+   developer shell. `a_workspace_with_no_key_answers_the_sentence_instead_of_asking`
+   (`crates/mcp/src/openai.rs:987`) builds `OpenAi::new(endpoint, None)` and expects the no-key
+   sentence synchronously, but the backend reads `Z3L_AGENT_KEY` from the process environment
+   (`openai.rs:94`), and with the variable set it posts to 127.0.0.1:9 on the worker instead,
+   so `take()` answers `None` and the test panics with "the answer is there at once". The same
+   tree passes with `env -u Z3L_AGENT_KEY`, so the gate is green only on a machine whose owner
+   has not configured the assistant it belongs to.
+  Shape: The key source is a value the backend is constructed with rather than the process
+   environment read inside it: the test names an empty folder and an absent variable, and the
+   refusal is asserted without touching the environment another test in the same process can
+   see. The pure `key_from` tests stay as they are, and a test asserts the refusal both with
+   and without the variable set.
+  Done: `cargo xtask ci` is green in a shell where `Z3L_AGENT_KEY` is exported, and the no-key
+   test passes in that shell and in one without it.
+  `files: crates/mcp/src/openai.rs` — `73308d6`
 
 - `[x]` **J24** each tab has its own assistant conversation, backend and undo space
   Why: The owner asked that every tab have its own agent and its own space. The document and
