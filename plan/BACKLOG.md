@@ -259,6 +259,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the turn ends and the stopped line is drawn; a second assertion covers a carried piece with
    no turn in flight, which still draws Send.
   `files: app/src/chat.rs,app/src/main.rs,app/src/frame_tests.rs`
+- `[ ]` **P27** a `file` write of `plan/map.md` is checked against the copy on disk, so a stale row lands
+  Why: `check_text` reads `plan/map.md` from the workspace it is handed instead of from the
+   text being written, so `cargo xtask file plan/map.md --stdin` validated the old map and
+   wrote a row naming `crates/mcp/src/openai.rs` before that file existed on the branch. The
+   next verb then refused, and `--repair` cannot fix it: the write that would needs the same
+   stale copy to compute the same violation (J14).
+  Shape: The reference files enter the checked plan the way the notes already do — `map`,
+   `debt` and `questions` as text supplied by the change, read from the workspace only when the
+   change does not touch them — so a write is checked against the tree it produces, not against
+   the one it replaces.
+  Done: A test writes a map row naming a path the workspace does not hold and the write is
+   refused with the row named; the same row written beside a tree that holds the file passes.
+  `files: state-contract/src/lib.rs,state-contract/src/cli/write.rs,state-contract/src/validate.rs`
 
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
