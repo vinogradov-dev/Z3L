@@ -978,3 +978,38 @@ async fn a_session_with_no_device_refuses_the_picture_and_answers_every_other_to
     assert!(body(&listed)["commands"].as_array().is_some_and(|rows| !rows.is_empty()));
     task.abort();
 }
+
+#[tokio::test]
+async fn a_params_that_is_not_one_object_is_refused_with_the_field_and_the_shape_to_send() {
+    // J16: measured on a foreign client, a `params` that arrived as a string was answered
+    // "invalid type: string …, expected struct ProductCreate" — a Rust type the caller cannot see
+    // and no word about the field. The envelope names `params` and the shape, before a step runs.
+    let (session, _products) = session_with(1);
+    let (mut client, task) = connect(CommandServer::new(Arc::new(Mutex::new(session)), None, None)).await;
+
+    for tool in [TOOL_RUN, TOOL_BATCH] {
+        let sent = match tool {
+            TOOL_RUN => json!({"command": "panel.create", "params": "not json"}),
+            _ => json!({"steps": [{"command": "panel.create", "params": ["not", "an", "object"]}]}),
+        };
+        let refused = client
+            .call_tool(CallToolRequestParams::new(tool).with_arguments(arguments(sent)))
+            .await
+            .expect_err("a params that is not one object is refused before it reaches the document");
+        let sentence = refused.to_string();
+        assert!(sentence.contains("`params`"), "{}: the sentence names the field: {sentence}", tool);
+        assert!(sentence.contains("one JSON object"), "{}: and the shape to send: {sentence}", tool);
+        assert!(sentence.contains("`command_list`"), "{}: and where the schema is read: {sentence}", tool);
+    }
+
+    // An object with a key the command does not read is the command's own refusal, and it names
+    // the key: that sentence is right and stays the command's (ADR 0198).
+    let refused = call(&mut client, TOOL_RUN, json!({"command": "panel.create", "params": {"bogus": 1}})).await;
+    assert!(refused.is_error.unwrap_or(false), "the command refused the step");
+    let sentence = body(&refused)["refusal"]["error"].as_str().unwrap_or_default().to_owned();
+    assert!(sentence.contains("panel.create"), "the refusal names the command: {sentence}");
+    assert!(sentence.contains("bogus"), "and the key the caller sent: {sentence}");
+
+    let _ = client.close().await;
+    let _ = task.await.expect("the server task never panics");
+}

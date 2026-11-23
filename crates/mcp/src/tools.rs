@@ -111,12 +111,17 @@ pub struct CommandListRequest {
 pub struct RunRequest {
     /// The stable command id, as `command_list` prints it.
     pub command: String,
-    /// The parameters the command takes; an empty object when the command takes none.
+    /// The parameters the command takes: one JSON object whose keys the command's own schema
+    /// describes, or an empty object when the command takes none.
     ///
     /// A client that serialises the object into a string is read the same way ([`params_of`]): a
     /// model writing JSON by hand nests one string too deep, and refusing that would be a refusal
-    /// about the envelope instead of about the command.
+    /// about the envelope instead of about the command. A value that is not an object — a bare
+    /// string, an array, a number — is refused before the command runs, with a sentence that names
+    /// `params` and the shape to send (J16). Read the object's keys with `command_list` and the
+    /// command id.
     #[serde(default = "empty_params", deserialize_with = "params_of")]
+    #[schemars(extend("type" = "object"))]
     pub params: Value,
     /// The product the command works in; the open one when it is absent.
     ///
@@ -197,10 +202,14 @@ pub struct BatchRequest {
 pub struct StepRequest {
     /// The stable command id.
     pub command: String,
-    /// The parameters the command takes; an empty object when it takes none.
+    /// The parameters the command takes: one JSON object whose keys the command's own schema
+    /// describes, or an empty object when it takes none.
     ///
-    /// The string form is read too, for the reason [`params_of`] gives.
+    /// The string form is read too, for the reason [`params_of`] gives, and anything that is not
+    /// an object is refused before the batch runs. Read the object's keys with `command_list` and
+    /// the step's command id.
     #[serde(default = "empty_params", deserialize_with = "params_of")]
+    #[schemars(extend("type" = "object"))]
     pub params: Value,
     /// The name this step gives the node it creates, so a later step of the same batch can refer to
     /// it as `{"$ref": "<name>"}` in place of an id it cannot know yet.
@@ -237,16 +246,41 @@ fn empty_params() -> Value {
 /// The parameters a step carries, whether the wire sent the object or its JSON inside a string.
 ///
 /// A model writing arguments by hand and a client that serialises every nested value produce
-/// `"{\"node\": 2}"` where the schema says object, and the command's own parser then answers
-/// "invalid type: string …, expected struct …" — a sentence about the envelope that names nothing
-/// the caller got wrong about the command (X129). The string is parsed here; one that is not JSON
-/// stays the string it was, so the command still names exactly what it received.
+/// `"{\"node\": 2}"` where the schema says object, and the string form is parsed here so the
+/// data reaches the command instead of the envelope refusing it (J28). What the string holds must
+/// still be the one object a command takes: a string that is not JSON, a JSON array or any other
+/// value is refused here with the field's name and the shape to send, instead of reaching the
+/// command whose parser would name a Rust type the caller cannot see (J16).
 fn params_of<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Value, D::Error> {
     let value = Value::deserialize(deserializer)?;
-    Ok(match value {
+    let params = match value {
         Value::String(text) => serde_json::from_str(&text).unwrap_or(Value::String(text)),
         other => other,
-    })
+    };
+    if params.is_object() {
+        Ok(params)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "`params` is one JSON object whose keys the command's own schema describes, not {}; read \
+             that schema with `command_list` and the command id, and send the object",
+            value_kind(&params)
+        )))
+    }
+}
+
+/// What a JSON value is, for the sentence that says what was sent instead of the object.
+///
+/// The words are the ones a caller can find in its own request: a string, an array, a number, a
+/// flag or null.
+const fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a flag",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
 }
 
 /// The default of a switch that is on, spelled out because `Default` is not `true`.
@@ -529,7 +563,7 @@ mod tests {
     fn params_sent_as_json_inside_a_string_are_read_as_the_object_they_encode() {
         // A model writing arguments by hand nests one string too deep: `"{\"node\": 2}"` where the
         // schema says object. The data is right and only the envelope is wrong, so the string is
-        // parsed here instead of reaching the command as a string it cannot read (X129).
+        // parsed here instead of reaching the command as a string it cannot read (J28).
         let arguments = serde_json::from_value::<JsonObject>(json!({
             "steps": [{
                 "command": "node.rename",
@@ -547,15 +581,46 @@ mod tests {
         .expect("an arguments object");
         let run: RunRequest = parse(TOOL_RUN, Some(arguments)).expect("a run reads the same way");
         assert_eq!(run.params, json!({"node": 2, "name": "Left"}));
+    }
 
-        // A string that is not JSON is left alone, so the command's own sentence names it.
-        let arguments = serde_json::from_value::<JsonObject>(json!({
-            "command": "node.rename",
-            "params": "not json",
-        }))
-        .expect("an arguments object");
-        let run: RunRequest = parse(TOOL_RUN, Some(arguments)).expect("the envelope still parses");
-        assert_eq!(run.params, json!("not json"));
+    #[test]
+    fn a_params_that_is_not_one_object_is_refused_with_the_field_and_the_shape_to_send() {
+        // J16: the command's parser answers "invalid type: string …, expected struct …" — a Rust
+        // type a caller cannot see and no word about the field. The envelope states its own rule.
+        for params in [json!("not json"), json!("[]"), json!([1, 2]), json!(7), json!(true), Value::Null] {
+            let arguments = serde_json::from_value::<JsonObject>(json!({
+                "command": "node.rename",
+                "params": params,
+            }))
+            .expect("an arguments object");
+            let refusal = parse::<RunRequest>(TOOL_RUN, Some(arguments)).expect_err("a non-object is refused");
+            let sentence = refusal.body().get("error").and_then(Value::as_str).expect("a sentence");
+            assert!(sentence.contains("`params`"), "the sentence names the field: {sentence}");
+            assert!(sentence.contains("one JSON object"), "and the shape to send: {sentence}");
+            assert!(sentence.contains("`command_list`"), "and where the command's own schema is read: {sentence}");
+            assert!(refusal.failed());
+        }
+    }
+
+    #[test]
+    fn the_schema_says_params_is_the_object_a_command_describes() {
+        // A free-form `params` left the caller to guess that one string too deep was the mistake
+        // (J16): the schema states the shape, and the description says where the keys are named.
+        for tool in headless_definitions() {
+            let schema = Value::Object((*tool.input_schema).clone());
+            let params = match tool.name.as_ref() {
+                TOOL_RUN => schema.pointer("/properties/params").cloned(),
+                TOOL_BATCH => schema.pointer("/$defs/StepRequest/properties/params").cloned(),
+                _ => None,
+            };
+            let Some(params) = params else {
+                continue;
+            };
+            assert_eq!(params.get("type").and_then(Value::as_str), Some("object"), "{}: {params}", tool.name);
+            let description = params.get("description").and_then(Value::as_str).unwrap_or_default();
+            assert!(description.contains("`command_list`"), "{}: {description}", tool.name);
+            assert!(description.contains("object"), "{}: {description}", tool.name);
+        }
     }
 
     #[test]
