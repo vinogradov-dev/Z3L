@@ -177,6 +177,15 @@ pub enum RenderError {
         /// Position of the envelope in the frame.
         index: usize,
     },
+    /// The colour target could not be copied back to the host.
+    ///
+    /// A device that cannot map a staging buffer, or a copy it rejects, is a sentence the caller
+    /// reports; the alternative is a picture nobody can check.
+    #[error("the coloured target could not be read back: {reason}")]
+    ReadBack {
+        /// What the device said.
+        reason: String,
+    },
 }
 
 /// Uniform data shared by the mesh and grid pipelines.
@@ -208,7 +217,7 @@ struct CameraUniform {
 }
 
 struct RenderTargets {
-    _color_texture: wgpu::Texture,
+    color_texture: wgpu::Texture,
     color_view: wgpu::TextureView,
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
@@ -217,9 +226,9 @@ struct RenderTargets {
 impl RenderTargets {
     fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
-        // `COPY_SRC` in a test build is what lets an offscreen test read the picture back; the
-        // product never copies its colour target.
-        let copy = if cfg!(test) { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() };
+        // `COPY_SRC` is what lets the picture be copied back after the pass: the agent's preview
+        // writes one PNG from it (J10) and an offscreen test reads it. The usage costs nothing
+        // while nothing copies the target.
         let color = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Z3L viewport colour"),
             size,
@@ -227,7 +236,9 @@ impl RenderTargets {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | copy,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let depth = device.create_texture(&wgpu::TextureDescriptor {
@@ -242,7 +253,7 @@ impl RenderTargets {
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { _color_texture: color, color_view, _depth_texture: depth, depth_view }
+        Self { color_texture: color, color_view, _depth_texture: depth, depth_view }
     }
 }
 
@@ -556,6 +567,79 @@ impl ViewportRenderer {
     /// The view egui should sample.
     pub const fn color_view(&self) -> &wgpu::TextureView {
         &self.targets.color_view
+    }
+
+    /// Copies the colour target back as RGBA8 rows, top row first, without the copy's padding.
+    ///
+    /// The rows of a texture copy are aligned to `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`, so a picture
+    /// whose width is not a multiple of 64 pixels arrives padded; stripping that padding is this
+    /// crate's job because this crate owns the target's format. The bytes are what the shader wrote
+    /// — already gamma-corrected — so the caller encodes them and applies no curve.
+    ///
+    /// A target the device cannot map, or a copy it rejects, is a [`RenderError::ReadBack`].
+    pub fn read_color(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Vec<u8>, RenderError> {
+        let [width, height] = self.size;
+        let row = (width as usize).saturating_mul(4);
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded = row.div_ceil(alignment).saturating_mul(alignment);
+        let bytes = (padded as u64).saturating_mul(u64::from(height));
+        if bytes == 0 || bytes > device.limits().max_buffer_size {
+            return Err(RenderError::ReadBack {
+                reason: format!("a {width} x {height} picture does not fit a buffer"),
+            });
+        }
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Z3L viewport read-back"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Z3L viewport read-back") });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.targets.color_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        queue.submit([encoder.finish()]);
+        let slice = staging.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).map_err(|error| RenderError::ReadBack {
+            reason: format!("the picture could not be read back: {error}"),
+        })?;
+        receiver
+            .recv()
+            .map_err(|_| RenderError::ReadBack { reason: "the read-back never answered".to_owned() })?
+            .map_err(|error| RenderError::ReadBack { reason: format!("the picture could not be mapped: {error}") })?;
+        let mut pixels = Vec::with_capacity(row.saturating_mul(height as usize));
+        {
+            let mapped = slice
+                .get_mapped_range()
+                .map_err(|error| RenderError::ReadBack { reason: format!("the picture is not mapped: {error}") })?;
+            for line in mapped.chunks(padded.max(1)).take(height as usize) {
+                let Some(line) = line.get(..row) else {
+                    return Err(RenderError::ReadBack { reason: "a row was shorter than its picture".to_owned() });
+                };
+                pixels.extend_from_slice(line);
+            }
+        }
+        staging.unmap();
+        Ok(pixels)
     }
 
     /// Recreates the colour and depth targets when their size changes.
@@ -1923,55 +2007,9 @@ mod tests {
         assert_eq!(renderer.edge_slots.len(), 1);
     }
 
-    /// Copies the renderer's colour target back, top row first and tightly packed.
+    /// Copies the renderer's colour target back, which is what the preview will do (J10).
     fn read_pixels(renderer: &ViewportRenderer, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
-        let [width, height] = renderer.size();
-        let row_bytes = width.checked_mul(4).expect("a row fits");
-        let padded = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Z3L product envelope shot pixels"),
-            size: u64::from(padded) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &renderer.targets._color_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        );
-        queue.submit([encoder.finish()]);
-        let slice = buffer.slice(..);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        device.poll(wgpu::PollType::wait_indefinitely()).expect("the shot waits for the map");
-        receiver.recv().expect("the shot is mapped").expect("the shot could be mapped");
-        let mut pixels = Vec::with_capacity((row_bytes * height) as usize);
-        {
-            let mapped = slice.get_mapped_range().expect("the shot is readable");
-            for line in 0..height as usize {
-                let start = line * padded as usize;
-                if let Some(chunk) = mapped.get(start..start + row_bytes as usize) {
-                    pixels.extend_from_slice(chunk);
-                }
-            }
-        }
-        buffer.unmap();
-        pixels
+        renderer.read_color(device, queue).expect("the picture can be read back")
     }
 
     /// How many pixels carry `color`, within a rounding step per channel.

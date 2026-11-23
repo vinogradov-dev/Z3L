@@ -51,7 +51,7 @@ pub mod view;
 
 pub use bvh::Bvh;
 pub use gpu::{Accumulation, Progress, Tracer};
-pub use image::Image;
+pub use image::{Image, encode_rgba8};
 pub use job::{Input, RENDER_FINAL_ID, Report, Settings, run};
 pub use ray::{Hit, Ray, Triangle};
 pub use soup::{Face, MAX_TRIANGLES, faces_of};
