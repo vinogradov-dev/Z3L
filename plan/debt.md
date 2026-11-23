@@ -535,3 +535,14 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   A model in the panel therefore proves a closed cabinet, a door gap or a mirror by `query parts`,
   `query bounds` and `inspect`, and never by looking. It leaves when the wire carries one picture and
   the port answers it — the `Previewer` the shell already holds is half of that.
+
+- `[assistant]` A call an agent process makes lands in the scene in front, not in the tab that started
+  it. Each tab owns its chat and its own backend (`Document::chat`, ADR 0233), but a process reaches the
+  document through the window's one channel — `z3l mcp bridge` presents `channel.json`'s token and
+  copies the process's tool calls to the socket — and `Call` names no tab, so `App::answer_channel`
+  answers `self.tabs.active_mut()`. A turn in a scene behind therefore cannot pause its process, and a
+  batch that process lands edits the front document; the endpoint kind pauses honestly, because its
+  whole turn is driven by `serve_chat`. What would land it: the bridge carries the tab it was spawned
+  for, `Call` gains that field, and the window answers that tab instead of the active one — or one
+  channel per tab, which costs a socket and a token file each. Either is a change to the tool server's
+  contract for every client, so it needs its own task and record (J24).
