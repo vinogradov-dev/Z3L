@@ -10,6 +10,14 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[vendor]`.
 
+- `[assistant]` `openssl-sys` is the one counted exception to the C-vendoring rule: the assistant's
+  transport is `ureq` over the operating system's own TLS, and on Linux that is the system OpenSSL.
+  `cargo xtask layers` allows the crate while the resolved graph leaves its `vendored` feature off and
+  fails the moment a dependency turns it on, so what is forbidden is building OpenSSL from the C
+  sources inside the crate, not binding the library the system already carries (J14, ADR 0189). It
+  leaves when a maintained pure-Rust TLS provider exists whose crypto is neither `ring` nor
+  `aws-lc-rs`; until then the vendored build is the breach, and the feature is the switch.
+
 - `[assistant]` A turn of the assistant panel advances one step per frame but asks for no frame of
   its own (`Chat::is_busy`, `App::serve_chat`), so a turn that is not stopped from outside still waits
   for the pointer between two calls: the channel was given its ring in X111, and the panel's own turn
