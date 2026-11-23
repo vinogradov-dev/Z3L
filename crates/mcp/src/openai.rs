@@ -896,6 +896,9 @@ mod tests {
 
     #[test]
     fn the_key_is_the_environments_first_and_the_files_second() {
+        // Both homes are values here, never the process's: a test that reads `std::env` answers
+        // differently on a configured machine, which is how `cargo xtask ci` stopped being green
+        // for the owner (X130).
         let directory = testkit::scratch_dir("agent-key");
         std::fs::create_dir_all(&directory).expect("scratch");
         let path = directory.join(KEY_FILE);
@@ -907,7 +910,11 @@ mod tests {
         }
         assert_eq!(key_from(Some("env-key".to_owned()), Some(&directory)).expect("the environment wins"), "env-key");
         assert_eq!(key_from(None, Some(&directory)).expect("the file is the second home"), "file-key");
-        assert!(key_from(None, Some(&directory.join("nothing"))).is_err(), "no file is no key");
+        let missing = key_from(None, Some(&directory.join("nothing"))).expect_err("no file is no key");
+        assert!(missing.sentence().contains(KEY_ENV), "the refusal names the variable: {}", missing.sentence());
+        assert!(missing.sentence().contains(KEY_FILE), "and the file beside the settings: {}", missing.sentence());
+        let nowhere = key_from(None, None).expect_err("no home at all is no key");
+        assert!(nowhere.sentence().contains(KEY_ENV) && nowhere.sentence().contains(KEY_FILE));
     }
 
     #[test]
@@ -976,17 +983,6 @@ mod tests {
         }
         let error = failure.expect("the request fails without a listener").expect_err("port 9 answers nothing");
         assert!(!error.sentence().contains(KEY_TEXT), "the refusal never names the key: {}", error.sentence());
-    }
-
-    #[test]
-    fn a_workspace_with_no_key_answers_the_sentence_instead_of_asking() {
-        let mut backend = OpenAi::new(Endpoint::new("http://127.0.0.1:9/v1", "model"), None);
-        let mut conversation = Conversation::new();
-        conversation.push(Speaker::Person, "hello");
-        backend.ask(&conversation);
-        let error = backend.take().expect("the answer is there at once").expect_err("no key, no request");
-        assert!(error.sentence().contains(KEY_ENV), "the sentence names both homes: {}", error.sentence());
-        assert!(error.sentence().contains(KEY_FILE));
     }
 
     #[test]
