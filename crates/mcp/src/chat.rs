@@ -474,9 +474,7 @@ impl ChatBackend for Scripted {
 impl Scripted {
     /// The answer the script holds next, or the sentence that says it has none.
     fn next_answer(&mut self) -> Result<Reply, BackendError> {
-        self.answers
-            .pop_front()
-            .unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers")))
+        self.answers.pop_front().unwrap_or_else(|| Err(BackendError::new("the scripted backend holds no more answers")))
     }
 }
 
@@ -1109,11 +1107,8 @@ pub(crate) mod tests {
         drive(&mut turn, &mut backend, &mut conversation, &mut session, scope, 1);
         assert!(turn.is_done(), "the whole answer ends the turn");
         assert_eq!(drawn(&conversation), vec!["Renaming the side now."], "no line was drawn twice");
-        let spoken: Vec<&Value> = conversation
-            .messages()
-            .iter()
-            .filter(|message| message["role"] == "assistant")
-            .collect();
+        let spoken: Vec<&Value> =
+            conversation.messages().iter().filter(|message| message["role"] == "assistant").collect();
         assert_eq!(spoken.len(), 1, "the history carries the answer once, whole: {spoken:?}");
         assert_eq!(spoken[0]["content"], "Renaming the side now.");
     }

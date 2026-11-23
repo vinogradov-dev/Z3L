@@ -633,9 +633,8 @@ fn read_stream(
     let mut calls: Vec<StreamedCall> = Vec::new();
     loop {
         line.clear();
-        let read = std::io::BufRead::read_line(&mut reader, &mut line).map_err(|error| {
-            BackendError::new(format!("`{}` cut the answer short: {error}", endpoint.base_url()))
-        })?;
+        let read = std::io::BufRead::read_line(&mut reader, &mut line)
+            .map_err(|error| BackendError::new(format!("`{}` cut the answer short: {error}", endpoint.base_url())))?;
         if read == 0 {
             break;
         }
@@ -728,11 +727,9 @@ fn collect_calls(deltas: Option<&Value>, calls: &mut Vec<StreamedCall>) {
 fn delta_text(content: Option<&Value>) -> String {
     match content {
         Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<&str>>()
-            .join(""),
+        Some(Value::Array(parts)) => {
+            parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<&str>>().join("")
+        }
         _ => String::new(),
     }
 }
@@ -1188,11 +1185,12 @@ mod tests {
         let request = requests.recv_timeout(Duration::from_secs(5)).expect("the stub was asked");
         assert_eq!(request.body["stream"], true, "the answer is asked for as it is written: {}", request.body);
         assert!(turn.is_done(), "the turn ended before its deadline");
-        assert!(
-            drawn.len() > 1,
-            "the words were drawn more than once, each time longer: {drawn:?}"
+        assert!(drawn.len() > 1, "the words were drawn more than once, each time longer: {drawn:?}");
+        assert_eq!(
+            drawn.last().map(String::as_str),
+            Some("Renaming the side."),
+            "one line holds the answer: {drawn:?}"
         );
-        assert_eq!(drawn.last().map(String::as_str), Some("Renaming the side."), "one line holds the answer: {drawn:?}");
         assert_eq!(name(&session, panel).as_deref(), Some("Left"), "the batch the call assembled landed");
         session.undo().expect("the whole answer is one entry");
         assert_eq!(name(&session, panel).as_deref(), Some("Side"), "and one undo takes it back");

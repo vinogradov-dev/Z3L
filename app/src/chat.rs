@@ -432,9 +432,7 @@ impl Chat {
             ui.ctx().request_repaint();
             let calls = self.turn.as_ref().map_or(0, |turn| turn.calls()).max(1).to_string();
             let seconds = self.started.map_or(0, |started| started.elapsed().as_secs()).to_string();
-            ui.label(
-                RichText::new(Message::AssistantWorking.with(lang, [seconds, calls])).color(theme::text_dim(ui)),
-            );
+            ui.label(RichText::new(Message::AssistantWorking.with(lang, [seconds, calls])).color(theme::text_dim(ui)));
             if let Some(step) = &self.step {
                 ui.label(
                     RichText::new(Message::AssistantWorkingStep.with(lang, [step.clone()])).color(theme::text_dim(ui)),

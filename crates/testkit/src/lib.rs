@@ -132,7 +132,8 @@ pub fn stub_events(events: Vec<String>) -> (String, Receiver<Request>) {
 
 /// One loopback listener that answers the first request with `status` and `answer` and breaks.
 #[allow(clippy::expect_used)]
-fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
+fn stub_seen(status: u16, answer: String) -> (String, Receiver<Request>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the test takes a loopback port");
     let port = listener.local_addr().expect("the test reads the port it took").port();
     let (sender, requests) = mpsc::channel();
     std::thread::spawn(move || {
