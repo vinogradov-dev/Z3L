@@ -321,18 +321,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **J10** a preview shows what the agent built, without a device on the client
-  Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
-   of the assistant unless a person asks for one; nothing renders without a device today, so a
-   headless test and a remote client have no way to see what they built.
-  Shape: An offscreen render of the session's scene to an image the tool returns and the panel
-   shows, sized by a parameter and capped in bytes and in size; the renderer stays `render`'s
-   and the device stays the shell's, so `mcp` asks for a frame it is handed rather than owning
-   a `wgpu` context.
-  Done: A test renders the golden scene at two sizes and asserts both dimensions and a
-   non-empty body; a request with no session is a refusal; the byte cap and the size cap are
-   enforced, and no request can start a download of a scene larger than its cap.
-  `files: crates/render/src/lib.rs,crates/scene/src/lib.rs,app/src/main.rs`
 - `[ ]` **J11** an agent process owns the model loop and reaches the window over the same channel
   Why: ACP is the second backend ADR 0186 and ADR 0188 name, and it is how a person uses an
    agent they already run: the process owns the model loop, the editor owns the document and
@@ -732,6 +720,19 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
 
 ## Done
+
+- `[x]` **J10** a preview shows what the agent built, without a device on the client
+  Why: ADR 0193 asserts a scenario through `render_preview`, and ADR 0028 keeps a viewport out
+   of the assistant unless a person asks for one; nothing renders without a device today, so a
+   headless test and a remote client have no way to see what they built.
+  Shape: An offscreen render of the session's scene to an image the tool returns and the panel
+   shows, sized by a parameter and capped in bytes and in size; the renderer stays `render`'s
+   and the device stays the shell's, so `mcp` asks for a frame it is handed rather than owning
+   a `wgpu` context.
+  Done: A test renders the golden scene at two sizes and asserts both dimensions and a
+   non-empty body; a request with no session is a refusal; the byte cap and the size cap are
+   enforced, and no request can start a download of a scene larger than its cap.
+  `files: crates/mcp/src,app/src/preview.rs,crates/render/src/lib.rs,crates/final/src/image.rs,app/src/main.rs` — `fa133fb`
 
 - `[x]` **J9** the inspector finds the seven mistakes, and the model explains them
   Why: ADR 0191 fixes seven findings because the expensive mistakes in a workshop are a shelf
