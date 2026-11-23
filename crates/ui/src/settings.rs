@@ -652,24 +652,11 @@ pub struct AssistantSettings {
     pub model: String,
     /// The endpoints a person has agreed to send a conversation to, oldest first.
     pub consent: Vec<String>,
-    /// The extra request headers, one `Name: value` per line; empty for none.
-    ///
-    /// A gateway may require a routing or session header that the OpenAI wire does not name. The
-    /// field is data, not a provider table: the client puts the lines on every request and names no
-    /// provider in code (ADR 0189). `Authorization` is refused here because the key has two homes.
-    pub headers: String,
 }
 
 impl Default for AssistantSettings {
     fn default() -> Self {
-        Self {
-            attach: true,
-            agent: String::new(),
-            endpoint: String::new(),
-            model: String::new(),
-            consent: Vec::new(),
-            headers: String::new(),
-        }
+        Self { attach: true, agent: String::new(), endpoint: String::new(), model: String::new(), consent: Vec::new() }
     }
 }
 
@@ -705,46 +692,10 @@ impl EndpointProblem {
             Self::Completion => Message::AssistantEndpointHasCompletion,
         }
     }
-}
 
-/// Why the extra-header field cannot be sent as it stands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HeadersProblem {
-    /// A line is not `Name: value`, or the name carries a byte a header cannot.
-    Malformed,
-    /// A line sets `Authorization`; the key's homes are `Z3L_AGENT_KEY` and `agent-key`.
-    Authorization,
-}
-
-impl HeadersProblem {
-    /// The clause the settings page and the panel read.
-    pub fn message(self) -> Message {
-        match self {
-            Self::Malformed => Message::AssistantHeadersMalformed,
-            Self::Authorization => Message::AssistantHeadersAuthorization,
-        }
-    }
-}
-
-/// The reason the workspace's model configuration cannot be used.
-///
-/// One value for both fields, so the settings page and the panel name the same first problem and a
-/// message answers it instead of the generic "no model is connected".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AssistantProblem {
-    /// The base URL is not one the client can send to.
-    Endpoint(EndpointProblem),
-    /// The extra headers are not a list of `Name: value`.
-    Headers(HeadersProblem),
-}
-
-impl AssistantProblem {
     /// The sentence the settings page draws and the panel repeats.
     pub fn sentence(self, lang: Lang) -> String {
-        match self {
-            Self::Endpoint(problem) => Message::AssistantEndpointProblem.with(lang, [problem.message().text(lang)]),
-            Self::Headers(problem) => Message::AssistantHeadersProblem.with(lang, [problem.message().text(lang)]),
-        }
+        Message::AssistantEndpointProblem.with(lang, [self.message().text(lang)])
     }
 }
 
@@ -776,42 +727,6 @@ fn endpoint_problem(endpoint: &str) -> Option<EndpointProblem> {
     None
 }
 
-/// The headers `text` names, one `Name: value` per line, or the first line that is not one.
-fn parse_headers(text: &str) -> Result<Vec<(String, String)>, HeadersProblem> {
-    let mut headers = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Some((name, value)) = line.split_once(':') else {
-            return Err(HeadersProblem::Malformed);
-        };
-        let name = name.trim();
-        let value = value.trim();
-        if name.is_empty() || !name.bytes().all(is_header_name_byte) {
-            return Err(HeadersProblem::Malformed);
-        }
-        if name.eq_ignore_ascii_case("authorization") {
-            return Err(HeadersProblem::Authorization);
-        }
-        if value.bytes().any(|byte| byte.is_ascii_control()) {
-            return Err(HeadersProblem::Malformed);
-        }
-        headers.push((name.to_owned(), value.to_owned()));
-    }
-    Ok(headers)
-}
-
-/// Whether `byte` may appear in a header name: the HTTP token set.
-fn is_header_name_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
-        )
-}
-
 impl AssistantSettings {
     /// The reason the typed address cannot be sent to, or `None` when it can or is empty.
     pub fn endpoint_problem(&self) -> Option<EndpointProblem> {
@@ -830,23 +745,15 @@ impl AssistantSettings {
         (endpoint_problem(endpoint).is_none() && !endpoint.is_empty() && !model.is_empty()).then(|| endpoint.to_owned())
     }
 
-    /// The extra headers as the wire sends them, or the line that is not one.
-    pub fn headers(&self) -> Result<Vec<(String, String)>, HeadersProblem> {
-        parse_headers(&self.headers)
-    }
-
-    /// The first reason this workspace's model configuration cannot be used, when it names one.
+    /// The reason this workspace's model cannot be asked, when it names a wrong address.
     ///
     /// An empty address or model is not a problem but an unconfigured assistant, so it answers
-    /// `None`; the page still shows a wrong address or header while the person fills the rest in.
-    pub fn problem(&self) -> Option<AssistantProblem> {
+    /// `None`; the page still shows a wrong address while the person fills the rest in.
+    pub fn problem(&self) -> Option<EndpointProblem> {
         if self.endpoint.trim().is_empty() || self.model.trim().is_empty() {
             return None;
         }
-        if let Some(problem) = self.endpoint_problem() {
-            return Some(AssistantProblem::Endpoint(problem));
-        }
-        self.headers().err().map(AssistantProblem::Headers)
+        self.endpoint_problem()
     }
 
     /// Whether the person has agreed to send a conversation to `endpoint`.
@@ -1303,21 +1210,6 @@ fn assistant_ui(ui: &mut Ui, settings: &mut Settings, lang: Lang) -> bool {
         )
         .changed();
     ui.label(egui::RichText::new(Message::AssistantModelHint.text(lang)).small().color(theme::text_dim(ui)));
-    ui.label(Message::AssistantHeaders.text(lang));
-    changed |= ui
-        .add(
-            egui::TextEdit::multiline(&mut settings.assistant.headers)
-                .desired_rows(3)
-                .desired_width(ui.available_width())
-                .hint_text(Message::AssistantHeadersHint.text(lang)),
-        )
-        .changed();
-    if let Err(problem) = settings.assistant.headers() {
-        let sentence = Message::AssistantHeadersProblem.with(lang, [problem.message().text(lang)]);
-        ui.label(egui::RichText::new(sentence).color(theme::warn(ui)));
-    } else {
-        ui.label(egui::RichText::new(Message::AssistantHeadersHint.text(lang)).small().color(theme::text_dim(ui)));
-    }
     ui.label(egui::RichText::new(Message::AssistantKeyHint.text(lang)).small().color(theme::text_dim(ui)));
     ui.label(egui::RichText::new(Message::AssistantWhatNext.text(lang)).small().color(theme::text_dim(ui)));
 
@@ -1705,7 +1597,6 @@ mod tests {
                 endpoint: "https://api.example.com/v1".to_owned(),
                 model: "a-model".to_owned(),
                 consent: vec!["https://api.example.com/v1".to_owned()],
-                headers: String::new(),
             },
         }
     }
@@ -1858,28 +1749,6 @@ mod tests {
     }
 
     #[test]
-    fn extra_headers_are_one_name_value_per_line_and_never_authorization() {
-        // J23: an OpenAI-compatible gateway may route on a header the wire does not name. The field
-        // is data, so the client sends it without learning a provider; the key keeps its two
-        // homes, and a secret pasted here is refused.
-        let mut assistant = AssistantSettings::default();
-        assert_eq!(assistant.headers(), Ok(Vec::new()), "an empty field sends nothing");
-        assistant.headers = "  x-opencode-session: ses_1 \n\nX-Trace: abc".to_owned();
-        assert_eq!(
-            assistant.headers(),
-            Ok(vec![("x-opencode-session".to_owned(), "ses_1".to_owned()), ("X-Trace".to_owned(), "abc".to_owned()),])
-        );
-        assistant.headers = "x-opencode-session ses_1".to_owned();
-        assert_eq!(assistant.headers(), Err(HeadersProblem::Malformed), "a line needs a colon");
-        assistant.headers = "bad name: value".to_owned();
-        assert_eq!(assistant.headers(), Err(HeadersProblem::Malformed), "a name has no space");
-        assistant.headers = "Authorization: Bearer sk-secret".to_owned();
-        assert_eq!(assistant.headers(), Err(HeadersProblem::Authorization), "the key is never here");
-        assistant.headers = "x-trace: two\nlines".to_owned();
-        assert_eq!(assistant.headers(), Err(HeadersProblem::Malformed), "a value is one line");
-    }
-
-    #[test]
     fn the_settings_file_carries_no_key() {
         // The assistant section is exactly the five fields below. A sixth that held a secret would
         // fail here before it could be written to the kind of file people copy between machines.
@@ -1892,7 +1761,7 @@ mod tests {
             .map(String::as_str)
             .collect();
         fields.sort_unstable();
-        assert_eq!(fields, ["agent", "attach", "consent", "endpoint", "headers", "model"], "no key, by construction");
+        assert_eq!(fields, ["agent", "attach", "consent", "endpoint", "model"], "no key, by construction");
     }
 
     #[test]

@@ -964,26 +964,20 @@ impl App {
     fn apply_assistant(&mut self) {
         let assistant = self.settings.assistant.clone();
         let program = mcp::Program::parse(&assistant.agent);
-        // A process wins the loop, so a wrong address or header matters only while no process is
-        // named: the panel then answers the clause the settings page would have shown (ADR 0189).
-        let headers = assistant.headers();
+        // A process wins the loop, so a wrong address matters only while no process is named: the
+        // panel then answers the clause the settings page would have shown (ADR 0189).
         let problem = match (&program, assistant.problem()) {
             (None, Some(problem)) => Some(problem),
             _ => None,
         };
         self.chat.apply_agent(program.clone(), self.channel.is_some());
         self.chat.apply_problem(problem);
-        let endpoint = match (program, assistant.endpoint_to_ask(), headers) {
-            (None, Some(base_url), Ok(headers)) => {
-                Some((mcp::Endpoint::new(base_url, assistant.model.trim()), headers))
-            }
+        let endpoint = match (program, assistant.endpoint_to_ask()) {
+            (None, Some(base_url)) => Some(mcp::Endpoint::new(base_url, assistant.model.trim())),
             _ => None,
         };
         let folder = self.settings_store.folder().map(std::path::Path::to_path_buf);
-        match endpoint {
-            Some((endpoint, headers)) => self.chat.apply_model(Some(endpoint), folder, headers),
-            None => self.chat.apply_model(None, folder, Vec::new()),
-        }
+        self.chat.apply_model(endpoint, folder);
     }
 
     /// Drives the assistant's turn one step, at the frame boundary (ADR 0187).
@@ -1573,15 +1567,19 @@ impl App {
         // A modal — the Settings window, the Home surface, the palette, a destructive question —
         // owns the keys for the frame it is up, so typing into a field never saves, undoes, reframes
         // or leaves a tool, and a question never answers itself with a second Delete.
+        //
+        // The assistant panel is a window, not a modal: it may be open while the person works, so it
+        // keeps Escape and the tool keys for "handle_keys" but not the shell's Delete, Save or Undo.
+        // Treating it as a modal is what made Delete do nothing with the chat open (X123).
         let modals = self.settings_open
             || self.home_open
-            || self.chat.open
             || self.palette.is_open()
             || self.product_card.is_open()
             || self.pending_question.is_some();
+        let chat_open = self.chat.open;
         {
             let Self { tabs, shell, .. } = self;
-            tabs.active_mut().handle_keys(ui, modals, shell);
+            tabs.active_mut().handle_keys(ui, modals || chat_open, shell);
         }
         if let Err(error) = self.tabs.active_mut().sync_selection() {
             self.failed(error);

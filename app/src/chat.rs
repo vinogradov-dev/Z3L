@@ -27,7 +27,7 @@ use eframe::egui::{self, Context, Id, RichText, Ui};
 use engine::{AgentMode, BatchOptions, BatchStep, EditScope, Finding, Session};
 use mcp::{ChatBackend, Conversation, Speaker, Turn};
 use text::{Lang, Message};
-use ui::settings::AssistantProblem;
+use ui::settings::EndpointProblem;
 use ui::theme;
 
 /// The width and height the panel opens at, in points.
@@ -42,6 +42,20 @@ const TRANSCRIPT_HEIGHT: f32 = 300.0;
 /// Six rows keep the conversation, the findings and the field in one window a person can read at a
 /// glance; the tool answer carries the whole list for the model.
 const FINDINGS_SHOWN: usize = 6;
+
+/// The id one chat keeps for the whole of its life, sent to an OpenCode Go gateway as
+/// `x-opencode-session`. It is opaque to the gateway and only needs to be stable for one chat, so a
+/// process counter and the wall clock make it unique without a dependency or a secret.
+fn new_session_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SESSIONS: AtomicU64 = AtomicU64::new(1);
+    let n = SESSIONS.fetch_add(1, Ordering::Relaxed);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("z3l-{t:x}-{n:x}-{:x}", std::process::id())
+}
 
 /// What the panel asked the shell to do this frame, if anything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,15 +98,15 @@ pub(crate) struct Chat {
     agent: Option<mcp::Program>,
     /// The endpoint this panel installed, so a frame can tell a change from the same one.
     model: Option<mcp::Endpoint>,
-    /// The extra request headers the backend sends, so a change rebuilds it.
-    headers: Vec<(String, String)>,
+    /// This conversation's stable id, sent as `x-opencode-session` to a Go gateway so its routing and
+    /// prompt cache survive the backend being rebuilt. One chat, one id; the person never sees it.
+    session: String,
     /// The endpoint a person has to agree to before the message they typed may leave the machine.
     consent: Option<String>,
     /// Whether the workspace names an agent process the window offers no channel to.
     blocked: bool,
-    /// The clause that stops the workspace's model configuration from being used, when the page
-    /// named one.
-    problem: Option<AssistantProblem>,
+    /// The clause that stops the workspace's address from being used, when the page named one.
+    problem: Option<EndpointProblem>,
     /// The checklist the model last sent; it stays after the turn ends and dies with the tab.
     checklist: Vec<String>,
     /// The rules' findings for the revision the panel last read.
@@ -122,7 +136,7 @@ impl Chat {
             consent: None,
             blocked: false,
             problem: None,
-            headers: Vec::new(),
+            session: new_session_id(),
             checklist: Vec::new(),
             findings: Vec::new(),
             findings_revision: None,
@@ -176,20 +190,13 @@ impl Chat {
     /// [`Self::apply_agent`] leaves it.
     ///
     /// A turn in flight belongs to the backend that is running it, so the settings take effect when
-    /// the message is finished. The extra headers are the settings' `Name: value` lines, already
-    /// validated by the page; a change to them rebuilds the backend so the next message carries the
-    /// new set. The key is not read here: it is the backend's to find when a message
+    /// the message is finished. The key is not read here: it is the backend's to find when a message
     /// is sent, so no frame touches the file and a key written while the window runs is picked up by
     /// the next message (ADR 0189).
-    pub(crate) fn apply_model(
-        &mut self,
-        wanted: Option<mcp::Endpoint>,
-        key_folder: Option<std::path::PathBuf>,
-        headers: Vec<(String, String)>,
-    ) {
+    pub(crate) fn apply_model(&mut self, wanted: Option<mcp::Endpoint>, key_folder: Option<std::path::PathBuf>) {
         let same = match (&self.model, &wanted) {
-            (Some(current), Some(next)) => current == next && self.headers == headers,
-            // A backend this shell did not create is left alone, headers or no headers.
+            (Some(current), Some(next)) => current == next,
+            // A backend this shell did not create is left alone.
             (None, None) => true,
             _ => false,
         };
@@ -197,18 +204,18 @@ impl Chat {
             return;
         }
         self.backend = wanted.clone().map(|endpoint| {
-            Box::new(mcp::OpenAi::with_headers(endpoint, key_folder.clone(), headers.clone())) as Box<dyn ChatBackend>
+            Box::new(mcp::OpenAi::with_session(endpoint, key_folder.clone(), self.session.clone()))
+                as Box<dyn ChatBackend>
         });
         self.model = wanted;
-        self.headers = headers;
     }
 
     /// Names the reason the workspace's model configuration cannot be used, or clears it.
     ///
     /// The settings page owns the rule and the shell reads it every frame, because the panel is what
-    /// a person sees next: a message sent to a typed-but-unusable address or header answers the
-    /// clause that is wrong instead of the generic "no model" sentence.
-    pub(crate) fn apply_problem(&mut self, problem: Option<AssistantProblem>) {
+    /// a person sees next: a message sent to a typed-but-unusable address answers the clause that is
+    /// wrong instead of the generic "no model" sentence.
+    pub(crate) fn apply_problem(&mut self, problem: Option<EndpointProblem>) {
         self.problem = problem;
     }
 
@@ -312,6 +319,10 @@ impl Chat {
             self.conversation.push(Speaker::Note, sentence);
             return;
         }
+        // The live scene is the model's map: the root id, the open product and the nodes. It is
+        // replaced for every message, so the model never asks the person for an id the window already
+        // knows (X125).
+        self.conversation.set_brief(engine::scene_brief(session));
         self.scope = Some(session.edit_scope());
         self.checklist.clear();
         self.turn = Some(Turn::new());
