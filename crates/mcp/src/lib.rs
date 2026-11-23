@@ -4,9 +4,10 @@
 //! do: `command_list` reads [`engine::CommandRegistry::specs`], `command_run` and `command_batch`
 //! hand their steps to [`engine::Session::batch`] — the same call the command line's recipe and a
 //! chat turn make — `query` asks [`engine::Session::read`] the questions it already answers, and
-//! `inspect` reads the mistakes the rules prove ([`engine::Session::inspect`]). Five coarse tools
-//! rather than two per command id, because a model that spends its budget on transport never
-//! reaches the document (ADR 0185, ADR 0191).
+//! `inspect` reads the mistakes the rules prove ([`engine::Session::inspect`]) and `render_preview`
+//! answers the scene as one picture, drawn by the shell through the [`Previewer`] port this crate
+//! holds and never implements (ADR 0228). Coarse tools rather than two per command id, because a
+//! model that spends its budget on transport never reaches the document (ADR 0185, ADR 0191).
 //!
 //! This crate is a protocol adapter and holds no brain: no tool decides anything, and no command is
 //! re-implemented here. It sits beside `ui` at layer 7 and depends on `engine`, `model` and `text`;
@@ -40,6 +41,7 @@
 pub mod channel;
 pub mod chat;
 pub mod inspect;
+pub mod preview;
 mod report;
 pub mod server;
 pub mod tools;
@@ -53,11 +55,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub use channel::{Answering, Call, Channel, ChannelError, Mailbox, Pending, Wake, queued};
 pub use chat::{BackendError, ChatBackend, Conversation, Line, Reply, Scripted, Speaker, Turn};
 pub use inspect::{Tab, Window};
+pub use preview::{MAX_BYTES, MAX_SIDE, MIN_SIDE, PreviewSize, Previewer};
 pub use report::PLAN_NOTE;
-pub use server::{CommandServer, Door, asking, dispatch, findings, listing, serve_session};
+pub use server::{CommandServer, Door, asking, dispatch, findings, listing, preview, serve_session};
 pub use tools::{
-    Answer, BatchRequest, CommandListRequest, FindingsRequest, InspectRequest, RunRequest, StepRequest, TOOL_BATCH,
-    TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_QUERY, TOOL_RUN,
+    Answer, BatchRequest, CommandListRequest, FindingsRequest, InspectRequest, PreviewRequest, RunRequest, StepRequest,
+    TOOL_BATCH, TOOL_FINDINGS, TOOL_INSPECT, TOOL_LIST, TOOL_PREVIEW, TOOL_QUERY, TOOL_RUN,
 };
 
 /// Where a served session writes the document a batch changed.

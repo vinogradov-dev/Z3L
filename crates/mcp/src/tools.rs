@@ -1,4 +1,4 @@
-//! The five tools: what a client calls, what each takes, and what an answer is.
+//! The tools: what a client calls, what each takes, and what an answer is.
 //!
 //! A tool's arguments are typed structs that derive `serde` and `schemars`, and the schema a client
 //! reads is derived from the struct the tool parses, so the two cannot drift apart — the same rule a
@@ -8,8 +8,9 @@
 //! `CommandError`'s display already is.
 //!
 //! The tools are coarse and few on purpose. `command_list` is the discovery surface, `command_run`
-//! is one step, `command_batch` is a list of steps that lands in one undo entry, and `query` is the
-//! read model. Two tools per command id would be a hundred names for no gain.
+//! is one step, `command_batch` is a list of steps that lands in one undo entry, `query` is the
+//! read model, `inspect` is the mistakes the rules prove and `render_preview` is the scene as one
+//! picture. Two tools per command id would be a hundred names for no gain.
 
 use std::sync::Arc;
 
@@ -33,6 +34,40 @@ pub const TOOL_QUERY: &str = "query";
 pub const TOOL_FINDINGS: &str = "inspect";
 /// The tool that reports the window's own state, which only an attached channel can answer.
 pub const TOOL_INSPECT: &str = "ui_inspect";
+/// The tool that draws the scene and answers the picture, which only a process with a device can.
+pub const TOOL_PREVIEW: &str = "render_preview";
+
+/// The arguments of `render_preview`: the size of the picture.
+///
+/// Both sides are pixels and both are bounded; a call that names no size asks for the default, and a
+/// size outside the bounds is refused with the bound in the sentence rather than clamped into a
+/// picture the caller did not ask for (ADR 0228).
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewRequest {
+    /// The picture's width in pixels, from 64 to 1600.
+    #[serde(default = "default_width")]
+    pub width: u32,
+    /// The picture's height in pixels, from 64 to 1600.
+    #[serde(default = "default_height")]
+    pub height: u32,
+}
+
+impl Default for PreviewRequest {
+    fn default() -> Self {
+        Self { width: default_width(), height: default_height() }
+    }
+}
+
+/// The width a call that names none asks for: 4:3, which is the viewport's own shape.
+const fn default_width() -> u32 {
+    640
+}
+
+/// The height a call that names none asks for.
+const fn default_height() -> u32 {
+    480
+}
 
 /// The arguments of `inspect`: none.
 ///
@@ -178,26 +213,29 @@ const fn yes() -> bool {
     true
 }
 
-/// What one tool answered: the JSON the client reads, and whether the call failed.
+/// What one tool answered: the JSON the client reads, whether the call failed, and the picture when
+/// the tool drew one.
 ///
 /// A refusal is a result and not a protocol error: the command's own sentence is what a model can
 /// act on, so it travels inside the answer with `failed` set, and the client still sees the report
-/// of what did and did not land (ADR 0185).
+/// of what did and did not land (ADR 0185). The image is a block of its own beside the JSON, because
+/// the protocol has one and a client draws it without decoding our answer (ADR 0228).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Answer {
     body: Value,
     failed: bool,
+    image: Option<Vec<u8>>,
 }
 
 impl Answer {
     /// An answer that did what it was asked.
     pub const fn ok(body: Value) -> Self {
-        Self { body, failed: false }
+        Self { body, failed: false, image: None }
     }
 
     /// An answer that failed: a step refused, or the file could not be written.
     pub fn fail(body: Value) -> Self {
-        Self { body, failed: true }
+        Self { body, failed: true, image: None }
     }
 
     /// An answer that carries one sentence and nothing else, which is a refusal.
@@ -205,9 +243,20 @@ impl Answer {
         Self::fail(json!({ "error": sentence.into() }))
     }
 
+    /// The same answer with a PNG beside its report.
+    pub fn with_image(mut self, png: Vec<u8>) -> Self {
+        self.image = Some(png);
+        self
+    }
+
     /// The JSON the client reads.
     pub const fn body(&self) -> &Value {
         &self.body
+    }
+
+    /// The picture the answer carries, when the tool drew one.
+    pub fn image(&self) -> Option<&[u8]> {
+        self.image.as_deref()
     }
 
     /// Whether the call failed: a command refused, a step did not land, a save did not happen.
@@ -225,12 +274,12 @@ impl Answer {
     }
 }
 
-/// The tool list a headless session offers: the five coarse tools and no window report.
+/// The tool list a headless session offers: the coarse tools and no window report.
 pub fn definitions() -> Vec<Tool> {
     headless_definitions()
 }
 
-/// The five coarse tools, with the schema each one's own argument type publishes.
+/// The coarse tools, with the schema each one's own argument type publishes.
 ///
 /// A schema is built per call, the way a command's own is: discovery is not the frame path, and a
 /// value that lived in a `static` would have to be built at startup for a client that may never
@@ -300,13 +349,26 @@ pub fn headless_definitions() -> Vec<Tool> {
              this before explaining a scene: the rules find the mistake and the model explains it.",
             object_schema::<FindingsRequest>(),
         ),
+        Tool::new(
+            TOOL_PREVIEW,
+            "Draw the scene and answer the picture: one PNG of what this session holds, from the \
+             document's own camera when it has one and otherwise framed to fit the whole scene. The \
+             arguments are `width` and `height` in pixels, each from 64 to 1600, and the default is \
+             640 by 480; a size outside the bounds is refused with the bound in the sentence, and a \
+             picture that encodes to more than 4 MiB is refused rather than sent. The answer carries \
+             the image as a block of its own beside a JSON report of the width, height, byte count \
+             and revision it drew — a picture is what a person would look at, so look at it before \
+             describing what you built. The call writes nothing and moves no revision.",
+            object_schema::<PreviewRequest>(),
+        ),
     ]
 }
 
-/// The tool list an attached channel offers: the headless five and the window's own report.
+/// The tool list an attached channel offers: the headless tools and the window's own report.
 ///
-/// The list is built once per `tools/list`, and the five names are the whole promise: a caller that
-/// reads this list learns the same five tools on either kind of window.
+/// The list is built once per `tools/list`, and the names are the whole promise: a caller that reads
+/// this list learns the same tools on either kind of window, with `ui_inspect` added for the one a
+/// person is looking at.
 pub fn attached_definitions() -> Vec<Tool> {
     let mut tools = headless_definitions();
     tools.push(Tool::new(
@@ -361,7 +423,14 @@ mod tests {
     #[test]
     fn every_tool_publishes_a_schema_that_denies_a_key_it_does_not_read() {
         for tools in [headless_definitions(), attached_definitions()] {
-            assert!(tools.len() >= 5, "the five coarse tools");
+            assert!(tools.len() >= 6, "the coarse tools");
+            assert!(
+                tools.iter().all(|tool| {
+                    let schema = Value::Object((*tool.input_schema).clone());
+                    schema.get("type").and_then(Value::as_str) == Some("object") || schema.get("oneOf").is_some()
+                }),
+                "every tool takes one object"
+            );
             for tool in &tools {
                 // A tool takes one object, or — `query` — one of the question objects the engine's
                 // own enum describes. Either way every shape it accepts denies an unknown field, which
@@ -390,14 +459,27 @@ mod tests {
         }
         let headless = headless_definitions();
         let names: Vec<&str> = headless.iter().map(|tool| tool.name.as_ref()).collect();
-        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS]);
+        assert_eq!(names, vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW]);
         let offered = attached_definitions();
         let attached: Vec<&str> = offered.iter().map(|tool| tool.name.as_ref()).collect();
         assert_eq!(
             attached,
-            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_INSPECT],
-            "an attached channel adds the window's own report to the same five"
+            vec![TOOL_LIST, TOOL_RUN, TOOL_BATCH, TOOL_QUERY, TOOL_FINDINGS, TOOL_PREVIEW, TOOL_INSPECT],
+            "an attached channel adds the window's own report to the same tools"
         );
+    }
+
+    #[test]
+    fn a_run_names_the_size_of_the_picture_it_asks_for() {
+        let asked =
+            serde_json::from_value::<JsonObject>(json!({ "width": 320, "height": 200 })).expect("an arguments object");
+        let asked: PreviewRequest = parse(TOOL_PREVIEW, Some(asked)).expect("both sides parse");
+        assert_eq!((asked.width, asked.height), (320, 200));
+        let default = parse::<PreviewRequest>(TOOL_PREVIEW, None).expect("a call that names no size parses");
+        assert_eq!((default.width, default.height), (640, 480), "a preview has a default shape");
+        let misspelt = serde_json::from_value::<JsonObject>(json!({ "widht": 320 })).expect("an arguments object");
+        parse::<PreviewRequest>(TOOL_PREVIEW, Some(misspelt))
+            .expect_err("a misspelt side is refused instead of ignored");
     }
 
     #[test]

@@ -48,6 +48,7 @@ mod mesh_pick;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
+mod preview;
 mod render_place;
 mod rotate_gizmo;
 mod scene_build;
@@ -910,6 +911,13 @@ impl App {
                 // told so instead of being handed a value that is not the window.
                 Err(error) => mcp::Answer::refused(format!("the window cannot be reported: {error}")),
             },
+            mcp::Call::Preview(request) => {
+                // The picture is drawn with the device the window already owns, and the framing is
+                // the document's, so the picture a caller reads is the one a headless process draws
+                // (ADR 0228).
+                let previewer = self.render_state.clone().map(preview::ScenePreview::new);
+                mcp::preview(&self.tabs.active().session, request, previewer.as_ref().map(|p| p as &dyn mcp::Previewer))
+            }
             mcp::Call::Dispatch(request) => {
                 let document = self.tabs.active_mut();
                 // The save a caller asks for is the person's *Save* performed on their document, so

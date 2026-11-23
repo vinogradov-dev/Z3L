@@ -148,13 +148,27 @@ fn srgb(linear: f32) -> f32 {
 /// The image as the bytes of one PNG: eight-bit RGBA, no interlacing, no metadata.
 pub fn encode_png(image: &Image, exposure: f32) -> Result<Vec<u8>, FinalError> {
     let pixels = image.to_rgba8(exposure);
+    encode_rgba8(image.width, image.height, &pixels)
+}
+
+/// The bytes of one PNG from pixels a caller already encoded: eight-bit RGBA, row-major, no
+/// interlacing, no metadata.
+///
+/// The second caller is the agent's viewport preview (J10): `render` hands back the target's own
+/// bytes, already gamma-corrected, so the tracer's curve must not run over them. One writer for the
+/// one format keeps the preview and the final render from encoding two different pictures.
+pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, FinalError> {
+    let expected = (width as usize).checked_mul(height as usize).and_then(|pixels| pixels.checked_mul(4));
+    if width == 0 || height == 0 || expected != Some(pixels.len()) {
+        return Err(FinalError::ImageSize { width, height });
+    }
     let mut bytes = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().map_err(|error| FinalError::Image { reason: error.to_string() })?;
-        writer.write_image_data(&pixels).map_err(|error| FinalError::Image { reason: error.to_string() })?;
+        writer.write_image_data(pixels).map_err(|error| FinalError::Image { reason: error.to_string() })?;
         writer.finish().map_err(|error| FinalError::Image { reason: error.to_string() })?;
     }
     Ok(bytes)
@@ -280,6 +294,23 @@ mod tests {
         let highlight = buffer.get(12..15).expect("four pixels");
         assert_eq!(highlight[0], 255, "a hot red is white in its own channel");
         assert!(highlight[2] < 220, "the blue channel keeps the colour: {highlight:?}");
+    }
+
+    #[test]
+    fn a_png_written_from_ready_pixels_keeps_them_and_refuses_a_short_buffer() {
+        // What the viewport preview hands over: the target's own bytes, already display-ready (J10).
+        let pixels: Vec<u8> = vec![10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
+        let bytes = encode_rgba8(2, 2, &pixels).expect("ready pixels encode");
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let mut reader = decoder.read_info().expect("the bytes are a PNG");
+        let mut buffer = vec![0u8; reader.output_buffer_size().expect("a bounded image")];
+        let info = reader.next_frame(&mut buffer).expect("the frame decodes");
+        assert_eq!((info.width, info.height), (2, 2));
+        assert_eq!(buffer, pixels, "no curve runs over pixels that are already display values");
+
+        // A buffer that is not four bytes per pixel of the size is a picture that does not exist.
+        assert!(matches!(encode_rgba8(2, 2, &pixels[..12]), Err(FinalError::ImageSize { .. })));
+        assert!(matches!(encode_rgba8(0, 2, &[]), Err(FinalError::ImageSize { .. })));
     }
 
     #[test]
