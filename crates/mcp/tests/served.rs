@@ -265,6 +265,7 @@ async fn undo_takes_back_the_entry_a_call_landed_and_says_what_is_left() {
     let report = body(&built);
     assert_eq!(report["effect"], json!("landed"), "{report}");
     assert_ne!(report["revision"], json!(before), "the batch moved the document");
+    assert_eq!(report["entries"], json!(1), "one call is one entry of the history: {report}");
 
     let undone = call(&mut client, TOOL_UNDO, json!({})).await;
     assert!(!undone.is_error.unwrap_or(true), "the undo answers: {}", body(&undone));

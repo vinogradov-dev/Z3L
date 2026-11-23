@@ -144,6 +144,9 @@ pub fn batch(
         "effect": effect_word(report.effect()),
         "mode": mode.word(),
         "revision": revision,
+        // The entries the batch left, beside the revision it moved to: one batch is one
+        // operation, and the answer says so instead of leaving the caller to count steps (X128).
+        "entries": report.entries(),
         "steps": rows,
         "created": ids(report.created()),
         "changed": ids(report.changed()),

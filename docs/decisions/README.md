@@ -237,6 +237,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0231](0231-the-list-is-short-rows-and-a-schema-is-read-by-id.md) | The list is short rows, and a schema is read one id at a time | Accepted; amends the `command_list` answer of 0185 and the dictionary clause of 0227 |
 | [0232](0232-the-chat-offers-the-tools-the-door-publishes.md) | The chat offers the tools the door publishes, and the history keeps every call | Accepted; supersedes the no-read-tool ruling of J14, refines 0185, 0189 and 0190 |
 | [0233](0233-a-tab-owns-its-assistant-conversation.md) | A tab owns its assistant conversation, and one panel draws the tab in front | Accepted; tab routing of a process's calls is debt |
+| [0234](0234-a-batch-moves-the-revision-once.md) | A batch moves the revision once, and the answer says how many entries it left | Accepted |
 
 ## Format
 

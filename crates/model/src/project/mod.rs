@@ -138,6 +138,24 @@ impl Project {
         Ok(next)
     }
 
+    /// Makes the revision the one after `before`, whatever the steps inside the operation did.
+    ///
+    /// A batch runs its commands on a copy where every step advances the revision by one, so a
+    /// cache that counts revisions would see thirty-nine changes where the person made one, and
+    /// the outside could not tell one operation from one command (X128). The caller hands in the
+    /// revision the operation started from and the document ends one higher: the number stays
+    /// monotonic, because no state between the steps was ever published.
+    ///
+    /// Returns the revision the document is at afterwards. A `before` with no successor — the
+    /// counter is exhausted — leaves the revision as it is rather than moving it backwards, and
+    /// the operation's own steps have already reported that same exhaustion.
+    pub fn settle_revision(&mut self, before: Revision) -> Revision {
+        if let Some(next) = before.checked_next() {
+            self.revision = next;
+        }
+        self.revision
+    }
+
     /// Replaces the user-visible content from a snapshot and advances the revision.
     ///
     /// Undo and redo use this instead of replacing the whole project: the revision stays
