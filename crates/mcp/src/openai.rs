@@ -177,8 +177,14 @@ impl fmt::Debug for OpenAi {
 
 impl OpenAi {
     /// A backend for `endpoint`, with the one agent every request of this session shares.
+    ///
+    /// The agent names its TLS provider explicitly: [`ureq::tls::TlsProvider`] defaults to Rustls
+    /// and "is never picked up automatically", so an https endpoint would otherwise panic on the
+    /// request thread with the `rustls` feature off. `native-tls` is the provider this workspace
+    /// compiles (ADR 0189).
     pub fn new(endpoint: Endpoint, folder: Option<PathBuf>) -> Self {
-        let config = ureq::Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build();
+        let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build();
+        let config = ureq::Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).tls_config(tls).build();
         Self { endpoint, folder, agent: ureq::Agent::new_with_config(config), answer: None }
     }
 
@@ -708,6 +714,19 @@ mod tests {
         let error = backend.take().expect("the answer is there at once").expect_err("no key, no request");
         assert!(error.sentence().contains(KEY_ENV), "the sentence names both homes: {}", error.sentence());
         assert!(error.sentence().contains(KEY_FILE));
+    }
+
+    #[test]
+    fn the_transport_is_the_operating_systems_tls() {
+        // ADR 0189: `native-tls` is the only provider this tree compiles. ureq's default is
+        // Rustls, and it never switches by itself, so an https endpoint would panic on the worker
+        // instead of answering.
+        let backend = OpenAi::new(Endpoint::new("https://api.example.com/v1", "model"), None);
+        assert_eq!(
+            backend.agent.config().tls_config().provider(),
+            ureq::tls::TlsProvider::NativeTls,
+            "the agent asks for the provider the workspace enables"
+        );
     }
 
     #[test]
