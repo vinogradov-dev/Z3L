@@ -269,9 +269,10 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "sketch.create.circle.three-points", key: egui::Key::C, chord: Chord::Shift, label: "Shift+C" },
     Binding { id: "sketch.create.polygon", key: egui::Key::N, chord: Chord::Plain, label: "N" },
     Binding { id: "sketch.measure.length", key: egui::Key::M, chord: Chord::Plain, label: "M" },
-    // The niche is filed under the cell that arms it: the atom's own row names the mechanism, the
-    // map's method names the button (ADR 0117).
-    Binding { id: "furniture.panels.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
+    // The niche is filed under the atom, not under a cell: the ribbon has no niche cell (U123), and
+    // the empty space is one mechanism the fill plans from, the status bar names and the product's
+    // own context menu arms (ADR 0117, ADR 0118).
+    Binding { id: "probe.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
 ];
 
 /// The binding with `id`, if a key runs it.

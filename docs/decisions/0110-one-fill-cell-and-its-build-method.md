@@ -1,7 +1,7 @@
 # 0110. One fill cell, and its build method in the cell's own list
 
-- Status: Accepted; refines 0106 and the ribbon's method list (U74); drops the caption in its
-  amendment
+- Status: Superseded by 0239; refines 0106 and the ribbon's method list (U74); drops the caption in
+  its amendment
 - Date: 2026-11-14
 
 ## Context

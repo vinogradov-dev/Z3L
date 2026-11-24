@@ -18,6 +18,27 @@ use text::{Lang, Message};
 
 use super::Editor;
 
+/// What the next click of the Panel cell makes, when the empty-space tool is not armed yet (U123).
+///
+/// One cell serves every part a void can be filled with, so the choice lives beside the arm rather
+/// than in the map: the tool card offers the class and the build while the fill is armed, the node's
+/// context menu offers the same two rows on a part that already exists, and neither is a cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelBuild {
+    /// The class a created part carries and takes its label from.
+    pub class: ClassCode,
+    /// How the part reads the section the walls leave.
+    pub mode: FillMode,
+}
+
+impl Default for PanelBuild {
+    /// The build a fresh workspace starts on: a post that takes the largest rectangle, which is the
+    /// first row of the card and what the retired Post cell ran.
+    fn default() -> Self {
+        Self { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }
+    }
+}
+
 /// The class the next click fills a niche with, the axis pair its trait names and its mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FillArm {
@@ -36,6 +57,19 @@ impl Editor {
     /// The armed empty-space tool, or `None` when the next click is not a fill.
     pub fn fill_arm(&self) -> Option<FillArm> {
         self.fill
+    }
+
+    /// What the next click of the Panel cell makes: the class and the build the card holds.
+    pub fn panel_build(&self) -> PanelBuild {
+        self.panel_build
+    }
+
+    /// Sets what the next click of the Panel cell makes, from the card or from a menu.
+    ///
+    /// The build is view state: it survives a document edit, it is not written to the scene file and
+    /// it never reaches the undo stack. Walking away from it is what the arm's own cancel is.
+    pub fn set_panel_build(&mut self, build: PanelBuild) {
+        self.panel_build = build;
     }
 
     /// Arms the empty-space tool with `class` and `mode`, or refuses with the sentence that says why.

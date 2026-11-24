@@ -162,10 +162,11 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 action: enabled.then_some(ToolAction::DrawPanelContour),
             }
         }
-        ToolKind::Fill { class, mode } => {
+        ToolKind::Fill => {
             // A niche belongs to the open product (ADR 0098) and a part needs a material to take its
-            // thickness from; the class must actually carry the `fill` trait, so a table row that
-            // lost it disables the cell instead of arming a tool with no axis pair.
+            // thickness from; the class must actually carry the `fill` trait, so a card that chose a
+            // class without one disables the cell instead of arming a tool with no axis pair.
+            let crate::editor::PanelBuild { class, mode } = context.build;
             let fills = class.traits().and_then(|traits| traits.fill()).is_some();
             let method = match mode {
                 FillMode::Fit => Message::FillMethodFit,
@@ -263,14 +264,6 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 action: enabled.then_some(ToolAction::BodyBoolean(op)),
             }
         }
-        ToolKind::Void => Ready {
-            // A niche belongs to the open product (ADR 0098), and naming it needs nothing else: no
-            // material, no selection and no document write (ADR 0118).
-            enabled: product_open,
-            armed: is_armed(active, kind),
-            hint: tool_hint(tool.label.text(lang), tool.key()),
-            action: product_open.then_some(ToolAction::Void),
-        },
         // A snap cell is a switch of the workspace's set, and the set belongs to the view's work
         // plane: a view an authored camera pins has none, so the cells are drawn disabled there and
         // the hint says why (U116).

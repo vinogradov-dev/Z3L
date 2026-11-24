@@ -2224,7 +2224,7 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
 fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
     // U99, ADR 0118: the niche is an atom with its own arm. Arming it leaves a running draft, the
     // fill and its own measurement behind; dropping it writes nothing because it never wrote.
-    let (mut session, _product) = fill_session();
+    let (session, _product) = fill_session();
     let mut editor = Editor::new();
     editor.start_drawing(DrawTool::Line);
     editor.arm_void();
@@ -2234,16 +2234,9 @@ fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
     assert!(!editor.void_armed(), "a fill replaces the niche tool");
     assert!(editor.fill_arm().is_some());
     editor.toggle_void();
-    assert!(editor.void_armed() && editor.fill_arm().is_none(), "the niche cell toggles the tool");
+    assert!(editor.void_armed() && editor.fill_arm().is_none(), "the product's own entry toggles the tool");
     editor.toggle_void();
     assert!(!editor.void_armed(), "a second press drops it");
-
-    // The key and the cell land in the same place: the editor's own toggle.
-    let mut editor = Editor::new();
-    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell arms");
-    assert!(editor.void_armed());
-    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell drops");
-    assert!(!editor.void_armed());
 }
 
 #[test]

@@ -4160,19 +4160,10 @@ fn the_niche_is_a_tool_the_ribbon_arms_and_the_fill_reads() {
         gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen")
     };
 
-    // The cell lives on the Furniture tab, and a fresh workspace opens the Sketch tab.
-    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
-        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
-    }
-    harness.settle();
-    let cell = harness
-        .faces
-        .iter()
-        .find(|(name, _)| name.starts_with(Message::ToolVoid.text(Lang::En)))
-        .map(|(_, rect)| rect.center())
-        .expect("the niche cell is on the strip");
-    harness.click(cell, egui::PointerButton::Primary);
-    assert!(harness.app.tabs.active().editor.void_armed(), "the cell arms the niche tool");
+    // The ribbon has no niche cell any more (U123): the empty space is an atom, armed by its key and
+    // by the open product's own context menu.
+    harness.press(egui::Key::V, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.void_armed(), "the niche key arms the tool");
     assert_eq!(harness.revision(), revision, "arming it writes nothing");
 
     harness.hover(pointer);

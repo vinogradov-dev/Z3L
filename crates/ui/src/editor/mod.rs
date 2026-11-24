@@ -34,7 +34,7 @@ use crate::toolbars;
 use crate::view_flags::ViewFlags;
 
 pub use self::boolean::{BooleanArm, BooleanOperand};
-pub use self::fill::FillArm;
+pub use self::fill::{FillArm, PanelBuild};
 pub use self::selection::{BandRule, BandView, SelectionBand};
 
 mod area;
@@ -78,6 +78,8 @@ pub struct Editor {
     box_draft: Option<BoxDraft>,
     /// The class the next click fills a niche with, when the empty-space tool is armed.
     fill: Option<FillArm>,
+    /// What the next click of the Panel cell makes, until the empty-space tool is armed with it.
+    panel_build: PanelBuild,
     /// The ruler: the points of the live measurement while the tool is armed (ADR 0118).
     measure: Option<crate::measure::Measure>,
     /// The niche under the pointer: one measurement every tool that names a void reads (ADR 0118).
