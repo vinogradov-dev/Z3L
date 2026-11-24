@@ -15,9 +15,10 @@
 //! Changes when: a draw tool's input, the one commit path or what a draft can become changes.
 
 use engine::{EditScope, Session};
+use geom::DVec3;
 use model::{
     DEFAULT_BANDS, DEFAULT_SEGMENTS, Panel, PanelOutline, Placement, Primitive, PrimitiveError, PrimitiveKind,
-    PrimitiveShape,
+    PrimitiveShape, role_of_plane,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -334,6 +335,12 @@ impl Editor {
         let contour = path.to_contour().map_err(|error| error.to_string())?;
         let anchored = Panel::anchored_contour(&contour).map_err(|_| Message::PanelContourUnusable.text(lang))?;
         let nominal_size = Panel::contour_size(&anchored).map_err(|_| Message::PanelContourUnusable.text(lang))?;
+        // The board's role is the plane it lies in (ADR 0238): the work plane's normal is the
+        // panel's thickness axis, so a ring drawn on a leaned face is born a post, a shelf or a
+        // wall rather than unclassified, and a board on the work plane is born a shelf. The ring is
+        // the one creation path with a plane and no niche to name a class, which is why the rule is
+        // read here and a class a caller passes to `panel.create` still wins.
+        let class = role_of_plane(placement.transform_vector(DVec3::Z));
         self.create_panel_sized(
             session,
             parent,
@@ -342,7 +349,7 @@ impl Editor {
             Some(PanelOutline::Contour { contour }),
             Vec::new(),
             placement,
-            None,
+            class,
         )
     }
 

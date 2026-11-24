@@ -45,6 +45,36 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
+  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
+   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
+   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
+   degrees against the frontal position is a wall. Today a class is a creation parameter and
+   nothing derives one: panel.create takes a class, no command writes it after the click, so a
+   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
+   ring has no role to carry and a maker would have to type one.
+  Shape: One function in model beside classify_outline — the role a plane implies: take the
+   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
+   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
+   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
+   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
+   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
+   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
+   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
+   derived class into panel.create; the niche fill keeps naming its class, because the class is
+   what picks the section pair (ADR 0099); the card shows the role the part carries and the
+   class picker overrides it through node.property.set, which already owns the reserved class
+   key. One record carries the rule, the frame it is measured in and the two ties, because the
+   tie-breaks are a decision and not a rounding.
+  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
+   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
+   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
+   the frontal answers wall; a board drawn by three points on a leaned face is born with the
+   class its plane implies and the card shows it; an explicit class passed to panel.create
+   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
+   green.
+  `files: crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/editor/drawing.rs,docs/decisions/README.md`
+
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -104,97 +134,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-## Bugs
-## Next
-- `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
-  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
-   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
-   and there is no card, no record and no path from one to the other, so every build starts
-   from the same defaults.
-  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
-   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
-   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
-   card that names a material the catalogue does not hold is a readable refusal.
-  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
-   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
-   refused with the material named; the document carries the card reference, not the card.
-  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
-
-- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
-  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
-   dissolve targets and the card, and no task may cite a decision that does not exist. Four
-   questions are still open, so the record waits for the owner's answers.
-  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
-   open questions in plan/questions.md.
-  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
-   plan/questions.md carries the four questions.
-  `files: docs/domain/prototypes.md,docs/decisions/README.md`
-- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
-  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
-   workshop, and today they are literals in a scenario. Where the file lives is an open
-   question, so the task waits for its answer.
-  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
-   validated on load, offering defaults to the card; a value outside its range is a sentence,
-   not a fallback.
-  Done: A test loads a standards file, a command takes its default from it, and a stale file is
-   a notice.
-  `files: app/src/settings_store.rs,crates/model/src/`
-- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
-  Why: The prototype work needs three facts the document cannot store today: which container is
-   a section, which prototype and card produced a node, so a command works while the library is
-   missing, and which released node the parent must no longer rewrite.
-  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
-   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
-   opens without the library.
-  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
-   and a missing prototype library changes nothing in the load.
-  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
-- `[ ]` **O11** placement rules are typed tables
-  Why: System 32 and a supplier's hinge table are data a workshop owns, not code we write.
-  Shape: RuleTable with typed axes and cells, completeness and overlap checked on load,
-   precedence item then prototype then standard, one command and one undo entry.
-  Done: A 32-panel yields the expected positions, and an uncovered overlay or door thickness is
-   refused with the axis named.
-  `files: crates/catalog/src/directory.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
-- `[ ]` **O12** a contour names its cutter, a groove does not
-  Why: A contour milled with a 2 mm cutter has 2 mm corners, so the document must name the
-   tool; a groove only needs its width.
-  Shape: Milling stores a cutter ItemId, depth and offset; a groove stores width and depth;
-   tools are items and the park is its own package; a missing cutter is a diagnostic with the
-   last offsets.
-  Done: A milling record round-trips with its cutter and a cutter outside the park is a
-   diagnostic, never a narrowed cut.
-  `files: crates/model/src/panel/machining.rs,crates/catalog/src/property.rs,crates/kernel/src/lib.rs`
-- `[ ]` **O13** a part document is authored once and instantiated everywhere
-  Why: A door must pick up an edited hinge, and a copy frozen at insertion cannot.
-  Shape: A part-document contract checked on load, an instance node resolved with the cycle,
-   depth and budget guards, catalogue.detach, a placeholder from the recorded bounds, STL
-   import into an empty document.
-  Done: A changed hinge reaches two doors without a rebuild, a cycle is refused with its chain,
-   and detach turns an instance into nodes in one undo entry.
-  `files: crates/model/src/node.rs,crates/model/src/tree.rs,crates/project/src/lib.rs,crates/engine/src/scene_cmds.rs`
-- `[ ]` **O14** insertion and a fastener line are designed operations
-  Why: Inserting an item and adding a fastener line are gestures, not fields in a card.
-  Shape: Two operations by .pi/skills/design-operation: the armed state machine, the preview,
-   the cancel, one undo entry, the feedback budget and the cursor.
-  Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
-   and committed as one entry each.
-  `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
-  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
-   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
-   The reference project measured its a-trous filter at about a third off the error at 8 spp
-   and recorded where the filter stops paying and starts smearing; shipping one without our own
-   numbers would repeat the mistake that project documents.
-  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
-  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
-  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
-  catalogue image is graded in the print pipeline, not in the renderer.
-  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
-   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
-   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
-   1000 mm panel keeps its edge; `cargo xtask ci` is green.
-  `files: crates/render/src,crates/mesh/src/lib.rs`
 - `[ ]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
   Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
    and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
@@ -333,6 +272,98 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
    node and no revision; cargo xtask ci is green.
   `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs`
+
+## Bugs
+## Next
+- `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
+  Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
+   becomes a recorded prototype. The profile is settings (PROJECT.md, §Domain specifications)
+   and there is no card, no record and no path from one to the other, so every build starts
+   from the same defaults.
+  Shape: A profile section in `ui::settings` seeded from the standards the build reads, a
+   skill-card record that names materials, methods and gaps, and a recorded prototype a recipe
+   instantiates. The model picks a card and fills its numbers; the geometry stays code, and a
+   card that names a material the catalogue does not hold is a readable refusal.
+  Done: A test edits the profile to an 18 mm board and asserts that a build through a card uses
+   18 mm and that the inspector's `shelf_fit` follows; a card naming a missing material is
+   refused with the material named; the document carries the card reference, not the card.
+  `files: crates/ui/src/settings.rs,app/src/settings_store.rs,crates/catalog`
+
+- `[ ]` **Q2** the prototype mechanism is recorded as a decision, and the four open questions are the owner's
+  Why: Sections 15 to 18 settle the three kinds, the section frame, the plane skeleton, the
+   dissolve targets and the card, and no task may cite a decision that does not exist. Four
+   questions are still open, so the record waits for the owner's answers.
+  Shape: An ADR from sections 15 to 18, the draft trimmed to what was accepted, and the four
+   open questions in plan/questions.md.
+  Done: cargo xtask docs lists the record, section 18 keeps the seed list, and
+   plan/questions.md carries the four questions.
+  `files: docs/domain/prototypes.md,docs/decisions/README.md`
+- `[ ]` **O2** a workshop's own numbers live in a file the build reads, not in the code
+  Why: Panel thickness, shelf pitch, the maximum span, drill distances and gaps belong to the
+   workshop, and today they are literals in a scenario. Where the file lives is an open
+   question, so the task waits for its answer.
+  Shape: One versioned file read through the atomic writer in app/src/settings_store.rs,
+   validated on load, offering defaults to the card; a value outside its range is a sentence,
+   not a fallback.
+  Done: A test loads a standards file, a command takes its default from it, and a stale file is
+   a notice.
+  `files: app/src/settings_store.rs,crates/model/src/`
+- `[ ]` **Q1** a node can say it is a compartment, what kind of prototype built it, and that it is frozen by hand
+  Why: The prototype work needs three facts the document cannot store today: which container is
+   a section, which prototype and card produced a node, so a command works while the library is
+   missing, and which released node the parent must no longer rewrite.
+  Shape: Three reserved node properties validated by type: compartment (a flag), prototype.kind
+   (case, fitout or assembly) and manual (a flag). A wrong type is readable error; a scene
+   opens without the library.
+  Done: A test round-trips a node carrying all three keys, a wrong type is a readable error,
+   and a missing prototype library changes nothing in the load.
+  `files: crates/model/src/properties.rs,crates/model/src/project/query.rs`
+- `[ ]` **O11** placement rules are typed tables
+  Why: System 32 and a supplier's hinge table are data a workshop owns, not code we write.
+  Shape: RuleTable with typed axes and cells, completeness and overlap checked on load,
+   precedence item then prototype then standard, one command and one undo entry.
+  Done: A 32-panel yields the expected positions, and an uncovered overlay or door thickness is
+   refused with the axis named.
+  `files: crates/catalog/src/directory.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **O12** a contour names its cutter, a groove does not
+  Why: A contour milled with a 2 mm cutter has 2 mm corners, so the document must name the
+   tool; a groove only needs its width.
+  Shape: Milling stores a cutter ItemId, depth and offset; a groove stores width and depth;
+   tools are items and the park is its own package; a missing cutter is a diagnostic with the
+   last offsets.
+  Done: A milling record round-trips with its cutter and a cutter outside the park is a
+   diagnostic, never a narrowed cut.
+  `files: crates/model/src/panel/machining.rs,crates/catalog/src/property.rs,crates/kernel/src/lib.rs`
+- `[ ]` **O13** a part document is authored once and instantiated everywhere
+  Why: A door must pick up an edited hinge, and a copy frozen at insertion cannot.
+  Shape: A part-document contract checked on load, an instance node resolved with the cycle,
+   depth and budget guards, catalogue.detach, a placeholder from the recorded bounds, STL
+   import into an empty document.
+  Done: A changed hinge reaches two doors without a rebuild, a cycle is refused with its chain,
+   and detach turns an instance into nodes in one undo entry.
+  `files: crates/model/src/node.rs,crates/model/src/tree.rs,crates/project/src/lib.rs,crates/engine/src/scene_cmds.rs`
+- `[ ]` **O14** insertion and a fastener line are designed operations
+  Why: Inserting an item and adding a fastener line are gestures, not fields in a card.
+  Shape: Two operations by .pi/skills/design-operation: the armed state machine, the preview,
+   the cancel, one undo entry, the feedback budget and the cursor.
+  Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
+   and committed as one entry each.
+  `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
+- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/render/src,crates/mesh/src/lib.rs`
 - `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
    that end, a negative grows it. The overlay wall is the same mechanism read the other way:
@@ -361,35 +392,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    size; the overlay wall reads its lap through the same field; the schema version moved and no
    migration code exists; cargo xtask ci is green.
   `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
-- `[ ]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
-  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
-   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
-   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
-   degrees against the frontal position is a wall. Today a class is a creation parameter and
-   nothing derives one: panel.create takes a class, no command writes it after the click, so a
-   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
-   ring has no role to carry and a maker would have to type one.
-  Shape: One function in model beside classify_outline — the role a plane implies: take the
-   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
-   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
-   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
-   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
-   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
-   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
-   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
-   derived class into panel.create; the niche fill keeps naming its class, because the class is
-   what picks the section pair (ADR 0099); the card shows the role the part carries and the
-   class picker overrides it through node.property.set, which already owns the reserved class
-   key. One record carries the rule, the frame it is measured in and the two ties, because the
-   tie-breaks are a decision and not a rounding.
-  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
-   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
-   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
-   the frontal answers wall; a board drawn by three points on a leaned face is born with the
-   class its plane implies and the card shows it; an explicit class passed to panel.create
-   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
-   green.
-  `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
   Why: The image the owner points at is lit by one big source the size of a window: shadows
    that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that

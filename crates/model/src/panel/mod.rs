@@ -21,7 +21,7 @@ mod hole;
 mod machining;
 
 pub use banding::{BandingSpec, CornerBanding, EdgeBanding, RingBanding};
-pub use classify::{RING_TOLERANCE_MM, classify_outline};
+pub use classify::{RING_TOLERANCE_MM, classify_outline, role_of_plane};
 pub use contour::{BakedOutline, ContourPath, PanelContourError, SegmentSource};
 pub use geometry::{
     EntryFace, FaceSide, PanelDimensionError, PanelGeometry, PanelGeometryError, PanelNominalSize, PanelRect,

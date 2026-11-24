@@ -15,9 +15,9 @@
 //! Changes when: the classifier gains a candidate family, or the ring generator changes what a
 //! corner treatment draws.
 
-use geom::{Contour as GeometryRing, DVec2, Segment};
+use geom::{Contour as GeometryRing, DVec2, DVec3, Segment};
 
-use crate::{Contour, CornerFeature, CornerFeatureKind, Length, PanelNominalSize, PanelOutline, RectCorner};
+use crate::{ClassCode, Contour, CornerFeature, CornerFeatureKind, Length, PanelNominalSize, PanelOutline, RectCorner};
 
 /// Tolerance for comparing two rings, in millimetres: one micrometre, the document's own step.
 pub const RING_TOLERANCE_MM: f64 = 1.0e-3;
@@ -46,6 +46,43 @@ pub fn classify_outline(ring: &Contour) -> Option<PanelOutline> {
     let features = corner_features_of(&target, nominal_size)?;
     let candidate = PanelOutline::Rect { corner_features: features, edge_bows: Vec::new() };
     draws_exactly(&candidate, nominal_size, &target).then_some(candidate)
+}
+
+/// The role a panel's plane implies: the class a board drawn on that plane is born with (ADR 0238).
+///
+/// `normal` is the panel's face normal — its thickness axis, the way face `A` points — carried into
+/// the parent's frame, so the answer does not depend on the panel's position in the room. The rule
+/// is the owner's, and it is a rule about the plane and not about the tool that drew the board:
+///
+/// - a plane within 45° of the horizontal is a **shelf**, and the tie at exactly 45° is a shelf;
+/// - otherwise the plane is vertical, and its normal within 45° of the parent's `X` axis is a
+///   **post**, anything else — the tie included — a **wall**.
+///
+/// The three answers partition every direction: a normal 45° or more from the vertical cannot also
+/// be more than 45° from `X`, because the two cones are disjoint, and a test walks a sphere of
+/// normals to hold that. The thresholds are compared squared, so 45° is exact on both sides and no
+/// rounding decides a tie.
+///
+/// `None` is a vector that is not a direction — zero length, or a component that is not finite — and
+/// the caller leaves the part unclassified rather than inventing a role for a plane nobody can read
+/// (ADR 0034).
+pub fn role_of_plane(normal: DVec3) -> Option<ClassCode> {
+    if !normal.is_finite() {
+        return None;
+    }
+    let length = normal.length_squared();
+    if length == 0.0 {
+        return None;
+    }
+    // `cos(45°)^2 = 1/2`, so `2 x² >= |n|²` is "at most 45° away": the shelf's side of the tie
+    // keeps the equality and the post's gives it to the wall.
+    if 2.0 * normal.z * normal.z >= length {
+        return Some(ClassCode::HORIZONTAL_PANEL);
+    }
+    if 2.0 * normal.x * normal.x > length {
+        return Some(ClassCode::VERTICAL_PANEL);
+    }
+    Some(ClassCode::BACK_PANEL)
 }
 
 /// Whether `outline`'s generator draws the target ring.
@@ -187,6 +224,72 @@ fn length_of(millimetres: f64) -> Option<Length> {
 mod tests {
     use super::*;
     use crate::{ContourSegment, Panel};
+
+    /// A unit normal `degrees` from the vertical, swung about the `Y` axis (so the leaning is
+    /// towards `X`), which is how a board tipped off the horizon is placed.
+    fn leaned(degrees: f64) -> DVec3 {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        DVec3::new(sin, 0.0, cos)
+    }
+
+    #[test]
+    fn a_plane_within_45_degrees_of_the_horizon_is_a_shelf() {
+        assert_eq!(role_of_plane(DVec3::Z), Some(ClassCode::HORIZONTAL_PANEL), "a horizontal plane is a shelf");
+        assert_eq!(role_of_plane(leaned(30.0)), Some(ClassCode::HORIZONTAL_PANEL));
+        assert_eq!(
+            role_of_plane(leaned(45.0)),
+            Some(ClassCode::HORIZONTAL_PANEL),
+            "the owner's tie at 45 degrees goes to the shelf"
+        );
+        assert_ne!(role_of_plane(leaned(46.0)), Some(ClassCode::HORIZONTAL_PANEL), "and a degree past it does not");
+    }
+
+    #[test]
+    fn a_vertical_plane_is_a_post_along_x_and_a_wall_across_it() {
+        assert_eq!(role_of_plane(DVec3::X), Some(ClassCode::VERTICAL_PANEL), "a side plane is a post");
+        assert_eq!(role_of_plane(DVec3::Y), Some(ClassCode::BACK_PANEL), "the frontal plane is a wall");
+        assert_eq!(
+            role_of_plane(DVec3::new(1.0, 1.0, 0.0)),
+            Some(ClassCode::BACK_PANEL),
+            "45 degrees from the frontal position goes to the wall"
+        );
+        assert_eq!(
+            role_of_plane(DVec3::new(1.0, 0.9, 0.0)),
+            Some(ClassCode::VERTICAL_PANEL),
+            "a hair nearer the frame's X axis is a post"
+        );
+    }
+
+    #[test]
+    fn every_direction_answers_one_role_and_only_one() {
+        // The partition the rule promises: no direction has no role and none has two. A sphere is
+        // walked by stepping the polar angle finely on every meridian the same step reaches.
+        let mut shelf = 0;
+        let mut post = 0;
+        let mut wall = 0;
+        for polar in 0..=180 {
+            let theta = f64::from(polar) * std::f64::consts::PI / 180.0;
+            let (sin, cos) = theta.sin_cos();
+            for azimuth in 0..360 {
+                let phi = f64::from(azimuth) * std::f64::consts::PI / 180.0;
+                let normal = DVec3::new(sin * phi.cos(), sin * phi.sin(), cos);
+                match role_of_plane(normal) {
+                    Some(ClassCode::HORIZONTAL_PANEL) => shelf += 1,
+                    Some(ClassCode::VERTICAL_PANEL) => post += 1,
+                    Some(ClassCode::BACK_PANEL) => wall += 1,
+                    other => panic!("{normal:?} answered {other:?}"),
+                }
+            }
+        }
+        assert!(shelf > 0 && post > 0 && wall > 0, "all three roles are reached: {shelf} {post} {wall}");
+        assert_eq!(shelf + post + wall, 181 * 360, "every direction is counted once");
+    }
+
+    #[test]
+    fn a_direction_nobody_can_read_answers_no_role() {
+        assert_eq!(role_of_plane(DVec3::ZERO), None, "a zero vector is not a plane");
+        assert_eq!(role_of_plane(DVec3::new(f64::NAN, 0.0, 1.0)), None, "and neither is a broken number");
+    }
 
     /// A ring of straight segments through `points`, in whole millimetres.
     fn polygon(points: &[(i64, i64)]) -> Contour {

@@ -576,6 +576,7 @@ pub(super) fn create_panel(
     params.validate_name()?;
     let material = catalog.board(params.material).ok_or(CommandError::UnknownMaterial { material: params.material })?;
     let thickness = material.thickness;
+    let before = project.revision();
     let id = match params.outline.as_ref() {
         Some(PanelOutline::Contour { contour }) => {
             let anchored = Panel::anchored_contour(contour).map_err(ProjectError::from)?;
@@ -634,6 +635,11 @@ pub(super) fn create_panel(
     };
     if let Some(class) = params.class {
         project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class))?;
+        // The role is part of the act of making the part, not a second change to it: the class is
+        // written by the same command, so the document moves one revision and one undo entry covers
+        // the board and its role — a create that took a class was two revisions before this
+        // (ADR 0238, ADR 0234's rule applied to a creation rather than a batch).
+        project.settle_revision(before);
     }
     Ok(id)
 }

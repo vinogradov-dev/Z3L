@@ -241,6 +241,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0235](0235-a-provider-is-data-and-the-endpoint-lists-the-model.md) | A provider is data: presets fill the address, and the endpoint lists the model | Accepted; amends 0189; the anthropic wire is debt |
 | [0236](0236-a-view-no-distance-shows-is-fitted-not-clamped.md) | A view no distance can show is fitted, not clamped | Accepted; amends 0049 |
 | [0237](0237-the-wheel-step-follows-the-scene.md) | The wheel's step follows the scene the view is in | Accepted |
+| [0238](0238-a-panels-role-is-the-plane-it-lies-in.md) | A panel's role is the plane it lies in | Accepted; refines 0034, 0099 |
 
 ## Format
 

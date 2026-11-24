@@ -75,7 +75,7 @@ pub use panel::{
     MACHINING_DESCRIPTORS, Machining, MachiningAnchor, MachiningCapabilities, MachiningCategory, MachiningDescriptor,
     MachiningKind, MachiningParams, MachiningStage, Panel, PanelContourError, PanelDimensionError, PanelError,
     PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM,
-    RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes,
+    RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes, role_of_plane,
 };
 pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
 pub use panel_type::PanelType;

@@ -561,6 +561,68 @@ fn a_panel_draft_refuses_an_open_ring_and_cuts_the_board_on_close() {
     assert!(session.project().container(product).is_some(), "the one undo entry took the board alone");
 }
 
+/// A work plane tipped `degrees` away from the horizontal about `Y`, which is how a board drawn
+/// on a leaned face reaches the commit.
+fn leaned_plane(degrees: f64) -> Placement {
+    Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_y(degrees.to_radians())).expect("a unit rotation")
+}
+
+/// The frontal plane: tipped 90 degrees about `X`, so its normal is the parent's `Y` axis.
+fn frontal_plane() -> Placement {
+    Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_x(std::f64::consts::FRAC_PI_2)).expect("a unit rotation")
+}
+
+/// Draws a 700 × 500 board on `plane` and answers the panel it cut.
+fn commit_board_on(session: &mut Session, editor: &mut Editor, plane: Placement) -> Id {
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+    editor.start_panel_drawing();
+    editor.drawing_point([mm(0), mm(0)]).expect("first corner");
+    editor.drawing_point([mm(700), mm(0)]).expect("second corner");
+    editor.drawing_point([mm(700), mm(500)]).expect("third corner");
+    let drawn = editor.close_and_commit_drawing(session, plane, text::Lang::En).expect("the close cuts the board");
+    drawn.object
+}
+
+#[test]
+fn a_board_drawn_on_a_plane_is_born_with_the_role_that_plane_implies() {
+    // ADR 0238: the ring has no niche to name a class, so the plane under it does — the work
+    // plane's own board is a shelf, a ring on a leaned face is a post once it passes 45 degrees,
+    // and the frontal plane is a wall.
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
+    let mut editor = Editor::new();
+    editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
+    let roles = [
+        (Placement::IDENTITY, model::ClassCode::HORIZONTAL_PANEL, "a board on the work plane is a shelf"),
+        (leaned_plane(60.0), model::ClassCode::VERTICAL_PANEL, "a board on a 60 degree face is a post"),
+        (frontal_plane(), model::ClassCode::BACK_PANEL, "a board on the frontal plane is a wall"),
+    ];
+    for (plane, expected, why) in roles {
+        let board = commit_board_on(&mut session, &mut editor, plane);
+        assert_eq!(session.project().class(board), Some(expected), "{why}");
+    }
+    let panel = commit_board_on(&mut session, &mut editor, Placement::IDENTITY);
+    assert_eq!(session.project().class(panel), Some(model::ClassCode::HORIZONTAL_PANEL));
+    // The role is a node property like any other, so the picker overrides it through
+    // `node.property.set` in one undo entry — the unclassified row is the picker's own first row,
+    // and it needs no host rule to be assigned here (a furniture class would name its host first).
+    let revision = session.project().revision();
+    let params = serde_json::to_value(engine::node_cmds::NodePropertySet {
+        node: panel,
+        key: model::SYSTEM_CLASS.to_owned(),
+        value: model::PropertyValue::class(model::ClassCode::UNCLASSIFIED),
+    })
+    .expect("class parameters");
+    session.dispatch(engine::node_cmds::NODE_PROPERTY_SET_ID, &params).expect("clear the class");
+    assert_eq!(session.project().class(panel), Some(model::ClassCode::UNCLASSIFIED));
+    assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one undo entry");
+    session.undo().expect("undo the assignment");
+    assert_eq!(
+        session.project().class(panel),
+        Some(model::ClassCode::HORIZONTAL_PANEL),
+        "the role the plane implied comes back with the one undo entry"
+    );
+}
+
 /// The project with its revision counter at the end of its range, so the next command is refused.
 fn exhausted_revision(project: Project) -> Project {
     let mut wire = serde_json::to_value(&project).expect("the project serialises");
