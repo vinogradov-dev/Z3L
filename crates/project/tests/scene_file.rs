@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use model::{
     Container, CutoutDepth, EdgeBevel, EdgeId, EdgeRef, Id, LightKind, NodeQuery, Placement, Project, StructuralKind,
 };
-use project::{FORMAT, FORMAT_VERSION, MAX_SCENE_BYTES, SceneFile, SceneFileError};
+use project::{DEFAULT_OVERLAY_LAP, FORMAT, FORMAT_VERSION, MAX_SCENE_BYTES, SceneFile, SceneFileError, SceneSettings};
 use units::{Degrees, Length};
 
 const GOLDEN: &str = include_str!("golden/scene.z3l");
@@ -68,6 +68,35 @@ fn the_golden_file_loads_at_the_current_schema_and_round_trips() {
     assert_eq!(again.document(), scene.document(), "the document survives a round trip");
     assert_eq!(again.extra(), scene.extra(), "the unknown section survives a round trip");
     assert_eq!(rewritten, GOLDEN, "the golden is exactly what this build writes");
+}
+
+#[test]
+fn a_scene_without_the_settings_answers_the_builds_factory_numbers() {
+    // U124, ADR 0240: the factory's numbers are the scene's, not the workspace's, and a file written
+    // before the section existed answers the default instead of making the caller guess.
+    let bare = SceneFile::parse(&GOLDEN).expect("the golden loads");
+    assert_eq!(bare.settings().overlay_lap, DEFAULT_OVERLAY_LAP, "an absent section is the default");
+
+    // A scene that carries its own number answers that one, both to a command and to its own save.
+    let scene = SceneFile::new(bare.document().clone())
+        .with_settings(SceneSettings { overlay_lap: Length::from_millimetres(20).expect("a lap") })
+        .with_extra(bare.extra().clone());
+    let text = scene.to_json().expect("a scene serializes");
+    let again = SceneFile::parse(&text).expect("the scene reads back");
+    assert_eq!(again.settings().overlay_lap, Length::from_millimetres(20).expect("a lap"), "the number rides back");
+    assert_eq!(again.to_json().expect("a scene serializes"), text, "a save gives the same bytes");
+}
+
+#[test]
+fn a_settings_section_this_build_cannot_read_is_a_sentence() {
+    // The section is denied unknown fields, so a misspelling is not silently ignored: a scene whose
+    // lap nobody can read would build parts with one number and say they carry another.
+    let text = GOLDEN.replace(
+        "\"document\":",
+        "\"settings\": { \"overlay_lapp\": 20000 },\n  \"document\":",
+    );
+    let refused = SceneFile::parse(&text).expect_err("a misspelt key is refused");
+    assert!(matches!(refused, SceneFileError::Json(_)), "the envelope names the bad section: {refused}");
 }
 
 #[test]
@@ -273,7 +302,7 @@ fn a_saved_file_holds_only_the_envelope_and_the_document() {
     }
     for key in object.keys() {
         assert!(
-            matches!(key.as_str(), "format" | "format_version" | "document" | "generator"),
+            matches!(key.as_str(), "format" | "format_version" | "document" | "settings" | "generator"),
             "unexpected top-level section `{key}`"
         );
     }

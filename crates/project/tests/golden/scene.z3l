@@ -814,5 +814,8 @@
     },
     "active_camera": 6
   },
+  "settings": {
+    "overlay_lap": 14000
+  },
   "generator": "z3l golden"
 }
