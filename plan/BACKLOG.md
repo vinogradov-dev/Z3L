@@ -442,7 +442,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    stored on the part and the card edits them; a project file without the setting answers 14 mm
    and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
    green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs` — `caae4c6`
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs` — `68bab1d`
 
 - `[x]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
   Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
