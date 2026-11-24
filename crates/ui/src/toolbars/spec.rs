@@ -21,6 +21,7 @@ use text::Message;
 
 use crate::draw::DrawTool;
 use crate::icons::{self, Icon};
+use crate::panel_points::PanelPoints;
 
 /// What a click on a tool runs.
 ///
@@ -58,6 +59,9 @@ pub enum ToolKind {
     ProductContour,
     /// Arms the free-outline tool whose closed ring becomes one panel cut to it.
     PanelContour,
+    /// Arms the by-points tool: the first three clicks fix the plane and the method says what the
+    /// figure becomes — a standard rectangle on the third click, or a ring the maker finishes (U126).
+    PanelPoints(PanelPoints),
     /// Arms the empty-space tool with the build the workspace holds: the class, whose `fill` trait
     /// picks the size pair, and the mode, which says whether the part takes the largest rectangle
     /// that fits or the whole section.
@@ -163,6 +167,18 @@ const PANEL_RECTANGLE: &[VariantSpec] = &[VariantSpec {
     label: Message::PanelMethodRectangle,
     icon: Some(icons::contour::RECTANGLE),
     run: None,
+}];
+
+/// The by-points cell's second method: as many points as the maker wants, finished by the card.
+///
+/// The first method is the cell's own — three points and the board is built — and this one keeps
+/// taking points until the maker says it is done, which is the only way a count above four ever
+/// reaches the document (U126, ADR 0239).
+const PANEL_POINTS_RING: &[VariantSpec] = &[VariantSpec {
+    id: "furniture.panels.points.ring",
+    label: Message::PanelPointsMany,
+    icon: Some(icons::contour::POLYLINE),
+    run: Some(ToolKind::PanelPoints(PanelPoints::Ring)),
 }];
 
 /// The Extrude cell's second method: pull one area of the drawing out as its own body.
@@ -949,9 +965,18 @@ const FURNITURE: [GroupSpec; 6] = [
                 method: None,
                 variants: &[],
             },
-            // A board named by points in space, with the first three fixing its plane. The cell is
-            // in the map and its methods arrive with its own task (U126).
-            planned("furniture.panels.points", Message::ToolPanelPoints),
+            // A board named by points in space, with the first three fixing its plane: the three
+            // clicks that build a standard rectangle, and the ring the maker closes himself
+            // (U126). The plane is drawn by the clicks and not chosen before them, which is what
+            // neither the fill nor the contour cell can do.
+            ToolSpec {
+                id: "furniture.panels.points",
+                label: Message::ToolPanelPoints,
+                icon: Some(icons::scene::POINTS),
+                run: Some(ToolKind::PanelPoints(PanelPoints::Three)),
+                method: Some(Message::PanelPointsThree),
+                variants: PANEL_POINTS_RING,
+            },
         ],
     },
     GroupSpec {
@@ -1373,11 +1398,16 @@ mod tests {
                 "model.primitives.sphere",
             ]
         );
-        // Three cells, one of them live: the panel (which fills a niche and, from its own task,
-        // draws a board), the contour board, and the by-points board whose methods arrive with U126.
+        // Three live cells: the panel (which fills a niche and, from its own task, draws a board),
+        // the contour board, and the by-points board with both its methods (U123, U126).
         assert_eq!(
             live("furniture"),
-            ["furniture.panels.contour", "furniture.panels.panel", "furniture.product.frame"],
+            [
+                "furniture.panels.contour",
+                "furniture.panels.panel",
+                "furniture.panels.points",
+                "furniture.product.frame",
+            ],
             "the post, shelf, wall and niche cells retired (U123)"
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
@@ -1612,6 +1642,8 @@ mod tests {
             ToolKind::ProductBox(DrawTool::Rectangle),
             ToolKind::ProductContour,
             ToolKind::PanelContour,
+            ToolKind::PanelPoints(PanelPoints::Three),
+            ToolKind::PanelPoints(PanelPoints::Ring),
             ToolKind::Fill,
             ToolKind::Assembly,
             ToolKind::Camera,
@@ -1696,9 +1728,8 @@ mod tests {
         // The planned groups draw nothing, so the Model tab is the four primitives, the extrusion and
         // the three body booleans (W1).
         assert_eq!(tab("model").expect("model").columns(), 8);
-        // The Products group's one cell and the Panels group's two live ones — the by-points cell
-        // is planned, so it draws nothing until its own task gives it a method (U123, U126).
-        assert_eq!(tab("furniture").expect("furniture").columns(), 3);
+        // The Products group's one cell and the Panels group's three live ones (U123, U126).
+        assert_eq!(tab("furniture").expect("furniture").columns(), 4);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         // The View tab's three cells beside the group are the projection pair and the shadow
         // switch: the Snaps group of twelve cells is the second row.

@@ -5,8 +5,9 @@
 //! where the modes meet. Each mode keeps its state and the methods that enter, feed and leave it in
 //! its own module: `selection.rs` (the selection and the open set), `visibility.rs` (the hidden
 //! and locked nodes), `mesh.rs` (sub-object editing), `contour.rs` (the contour working copy), `drawing.rs` (the drawing draft and its commit),
-//! `creation.rs` (the armed container, the box tool and the `create` commands), `ribbon.rs` (the
-//! ribbon and the extrusion it offers) and `cards.rs` (the scene tree and the inspector).
+//! `creation.rs` (the armed container, the box tool and the `create` commands), `points.rs` (the
+//! board drawn by points in space), `ribbon.rs` (the ribbon and the extrusion it offers) and
+//! `cards.rs` (the scene tree and the inspector).
 //!
 //! Refuses nothing at this level: a mode that cannot start returns `false` and leaves the state
 //! untouched, so the shell can ignore a gesture it cannot honour.
@@ -26,6 +27,7 @@ use crate::light_card::LightCard;
 use crate::mesh_edit::MeshEdit;
 use crate::object_card::ObjectCard;
 use crate::panel_card::PanelCard;
+use crate::panel_points::PointsDraft;
 use crate::pivot_card::PivotCard;
 use crate::placement_card::PlacementCard;
 use crate::properties_card::PropertiesCard;
@@ -37,7 +39,6 @@ pub use self::boolean::{BooleanArm, BooleanOperand};
 pub use self::creation::PanelShape;
 pub use self::fill::{FillArm, FillSpread, PanelBuild};
 pub use self::selection::{BandRule, BandView, SelectionBand};
-
 mod area;
 mod boolean;
 mod cards;
@@ -47,6 +48,7 @@ mod drawing;
 mod fill;
 mod measure;
 mod mesh;
+mod points;
 mod ribbon;
 mod selection;
 mod visibility;
@@ -83,6 +85,8 @@ pub struct Editor {
     panel_build: PanelBuild,
     /// The ruler: the points of the live measurement while the tool is armed (ADR 0118).
     measure: Option<crate::measure::Measure>,
+    /// The by-points tool: the clicks of the board being drawn, its method and its class (U126).
+    points: Option<PointsDraft>,
     /// The niche under the pointer: one measurement every tool that names a void reads (ADR 0118).
     void: crate::void::Void,
     /// Whether the niche tool itself owns the pointer, rather than a fill that consumes its value.

@@ -191,6 +191,7 @@ impl Editor {
         self.box_draft = None;
         self.fill = None;
         self.measure = None;
+        self.points = None;
         self.drawing = Some(DrawDraft::with_sides(tool, sides));
         self.drawing_intent = DrawIntent::Path;
     }

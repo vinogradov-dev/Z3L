@@ -244,6 +244,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0238](0238-a-panels-role-is-the-plane-it-lies-in.md) | A panel's role is the plane it lies in | Accepted; refines 0034, 0099 |
 | [0239](0239-the-cell-is-the-object-and-the-build-is-the-parts.md) | The cell is the object, and what it becomes is a property of the part | Accepted; supersedes 0110 |
 | [0240](0240-a-lap-is-the-boards-own-number.md) | A lap is the board's own number, and the mounting is the act that lays it | Accepted |
+| [0241](0241-a-board-is-drawn-by-points-in-space.md) | A board is drawn by points in space, and the first three fix its plane | Accepted |
 
 ## Format
 

@@ -230,6 +230,7 @@ impl Editor {
         self.drawing = None;
         self.fill = None;
         self.measure = None;
+        self.points = None;
         // The niche is a measurement of a mode that no longer owns the pointer, so the value goes
         // with the arm: a report row never names a space the pointer left (ADR 0118).
         self.void_armed = false;

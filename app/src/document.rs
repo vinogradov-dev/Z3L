@@ -57,6 +57,7 @@ use crate::measure_gizmo::{MeasureGizmo, MeasureInput, MeasureModifiers};
 use crate::mesh_pick;
 use crate::open_frame;
 use crate::osd;
+use crate::points_gizmo::{PointsAction, PointsGizmo, PointsInput, PointsModifiers};
 use crate::rotate_gizmo::RotateGizmo;
 use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
 use crate::scene_gizmo;
@@ -446,6 +447,8 @@ pub(crate) struct Document {
     pub(crate) fill_gizmo: FillGizmo,
     /// The ruler's snapped point; the measurement itself lives in the editor (ADR 0118).
     pub(crate) measure_gizmo: MeasureGizmo,
+    /// The by-points tool's snapped place; the points themselves live in the editor (U126).
+    pub(crate) points_gizmo: PointsGizmo,
     /// The niche tool's overlay; the cell itself lives in the editor (ADR 0118).
     pub(crate) void_gizmo: VoidGizmo,
     /// The base node whose overlay holds a contour boolean's preview, while one is armed.
@@ -609,6 +612,7 @@ impl Document {
             extrude_gizmo: ExtrudeGizmo::default(),
             fill_gizmo: FillGizmo::default(),
             measure_gizmo: MeasureGizmo::default(),
+            points_gizmo: PointsGizmo::new(),
             void_gizmo: VoidGizmo,
             boolean_preview: None,
             box_grips: BoxGrips::default(),
@@ -775,7 +779,7 @@ impl Document {
     /// The tool section draws the same rows the card at the pointer draws, from the same draft, and
     /// the numbers it commits take the same path as the card's (ADR 0119).
     pub(crate) fn show_card(&mut self, ui: &mut egui::Ui) {
-        let mut tool = self.tool_view();
+        let mut tool = self.tool_view(ui::language(ui.ctx()));
         let reported = self.editor.show_card(ui, &mut self.session, tool.as_mut());
         self.apply_tool_outcome(ui.ctx(), reported);
     }
@@ -1431,6 +1435,27 @@ impl Document {
         self.editor.cancel_drawing();
         self.draw_gizmo.reset();
         self.draft_menu.close();
+    }
+
+    /// Leaves the by-points tool and throws its points away.
+    ///
+    /// The draft never reached the document, so Escape costs no undo entry and leaves no node and no
+    /// revision behind (U126).
+    pub(crate) fn cancel_points(&mut self) {
+        self.editor.cancel_points();
+        self.points_gizmo.reset();
+    }
+
+    /// Commits the points as one board and ends the tool.
+    ///
+    /// One `panel.create` carries the ring or the rectangle and the class, so the click chain is one
+    /// undo entry; a refusal leaves the points live and reports the sentence (U126).
+    pub(crate) fn commit_points(&mut self, lang: Lang) -> Result<(), String> {
+        self.editor.commit_points(&mut self.session, lang)?;
+        self.points_gizmo.reset();
+        self.highlighted.clear();
+        self.highlighted_base = None;
+        self.refresh()
     }
 
     /// Runs what a drawing click, the keyboard or a plate asked for.
@@ -2891,6 +2916,12 @@ impl Document {
         if let Some(view) = self.height_view() {
             return Some(view);
         }
+        if let Some(draft) = self.editor.points() {
+            // The class is chosen before the first click and the ring's finish stays at the hand:
+            // the three-point method commits on its own third click, so its card holds the class
+            // alone, and a refused click leaves its sentence under the row (U126, ADR 0239).
+            return Some(Self::points_view(draft, lang));
+        }
         if let Some(draft) = self.editor.drawing() {
             // A draft the commit would refuse draws no card: a check that answers with a refusal is
             // worse than no check, and the bar still says what the tool waits for. The draft's own
@@ -2935,6 +2966,46 @@ impl Document {
         })
     }
 
+    /// The by-points card: the class the board will carry and, for a ring, its finish.
+    ///
+    /// The three-point method builds its board on the third click, so its card asks for nothing but
+    /// the class; the ring is open-ended, so its card offers the finish — and only once there are
+    /// enough points, because a check that answers with a refusal is worse than none (ADR 0077,
+    /// U126). The class row is a menu the maker reads before the click: the plane's own role, or one
+    /// of the three roles by name (ADR 0239).
+    fn points_view(draft: &ui::PointsDraft, lang: ui::Lang) -> ToolView {
+        let finish = !draft.method().commits_on_click() && draft.is_finished();
+        ToolView {
+            title: Some(Message::ToolPanelPoints),
+            choices: vec![Self::points_class_row(draft)],
+            rows: Vec::new(),
+            toggle: None,
+            commit: if finish {
+                ui::ToolCommit::Pair { apply: Message::FinishEnter, cancel: Message::CancelEsc }
+            } else {
+                ui::ToolCommit::Gesture
+            },
+            note: draft.refusal().map(|message| message.text(lang).to_owned()),
+        }
+    }
+
+    /// The class row of the by-points card: the plane's role first, then the three roles by name.
+    fn points_class_row(draft: &ui::PointsDraft) -> ui::ToolChoice {
+        let chosen = draft
+            .class()
+            .and_then(|class| FILL_CLASSES.iter().position(|other| *other == class))
+            .map_or(0, |index| index + 1);
+        ui::ToolChoice {
+            options: vec![Message::PanelPointsFromPlane, Message::ToolPost, Message::ToolShelf, Message::ToolWall],
+            chosen,
+        }
+    }
+
+    /// The class a press on the by-points card names: `None` gives the role back to the plane.
+    fn points_class(pick: ui::ToolPick) -> Option<ClassCode> {
+        FILL_CLASSES.get(pick.option.checked_sub(1)?).copied()
+    }
+
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
     ///
     /// The same rows the card draws, built from the same draft: a box's height, a pull's height, or
@@ -2942,9 +3013,12 @@ impl Document {
     /// face. A move's two gaps are the third instance: a carried piece draws its fields in the scene
     /// (N26) and the inspector is where the same rows keep the words and the refusal, because the
     /// plates there are one number in the middle of an arrow and cannot say which gap they measure.
-    pub(crate) fn tool_view(&self) -> Option<ToolView> {
+    pub(crate) fn tool_view(&self, lang: ui::Lang) -> Option<ToolView> {
         if let Some(height) = self.height_view() {
             return Some(height);
+        }
+        if let Some(draft) = self.editor.points() {
+            return Some(Self::points_view(draft, lang));
         }
         if let Some(arm) = self.editor.fill_arm() {
             // A front laid over the frame decides its own depth, so the card and the inspector both
@@ -2980,6 +3054,15 @@ impl Document {
     /// own `finish_*`/`cancel_*` paths, so the commit is one command either way.
     pub(crate) fn apply_tool_outcome(&mut self, ctx: &egui::Context, reported: ToolOutcome) {
         let mut repull = false;
+        // A press on the by-points card's class row chooses the role the board will carry; the card
+        // has one choice row, so row 0 is the class (U126, ADR 0239).
+        if let Some(pick) = reported.pick
+            && pick.row == 0
+            && self.editor.points().is_some()
+        {
+            self.editor.set_points_class(Self::points_class(pick));
+            ctx.request_repaint();
+        }
         // The contour edit's one method is a switch, not a number: its press flips the motion the
         // next drag takes and writes nothing (U115).
         if reported.toggle && self.editor.contour_edit().is_some() {
@@ -3052,6 +3135,12 @@ impl Document {
                     if let Err(error) = self.commit_drawing(ui::language(ctx)) {
                         self.last_error = Some(error);
                     }
+                } else if self.editor.points().is_some() {
+                    // The ring's finish is its one command: the points become the board, and the
+                    // tool ends with it (U126).
+                    if let Err(error) = self.commit_points(ui::language(ctx)) {
+                        self.last_error = Some(error);
+                    }
                 } else if self.editor.contour_edit().is_some() {
                     // A contour edit's check is its one command: the working copy becomes the panel's
                     // outline, the object's contour or the machining record, as one undo entry.
@@ -3077,6 +3166,9 @@ impl Document {
                 } else if self.editor.drawing().is_some() {
                     // The cross drops the draft and ends the tool; the document never changed.
                     self.cancel_drawing();
+                } else if self.editor.points().is_some() {
+                    // The cross drops the points and the tool, exactly as Escape does.
+                    self.cancel_points();
                 } else if self.editor.contour_edit().is_some() {
                     self.cancel_contour_edit();
                 } else if self.editor.box_draft().is_some() {
@@ -3403,6 +3495,9 @@ impl Document {
         // A drawing tool owns it too: the left button places points, not selections. A click on the
         // chrome is never a point, so the tool waits for a click on the scene.
         let drawing = interactive && !pointer_on_chrome && self.editor.drawing().is_some();
+        // The by-points tool owns the pointer the same way a draft does: a click names a place in
+        // space, never a selection (U126).
+        let pointing = interactive && !pointer_on_chrome && self.editor.points().is_some();
         let boxing = interactive && !pointer_on_chrome && self.editor.box_draft().is_some();
         // The pull arrow is the live gesture after an extrusion. A contour edit, a draft, a
         // placement or a sub-object mode takes the pointer from it, so the arrow never competes
@@ -3410,6 +3505,7 @@ impl Document {
         if self.extrude_gizmo.is_active()
             && (contour_editing
                 || drawing
+                || pointing
                 || boxing
                 || self.editor.mesh_edit().is_some()
                 || self.editor.fill_arm().is_some()
@@ -3444,19 +3540,27 @@ impl Document {
         let navigating = navigation.is_some()
             && !contour_editing
             && !drawing
+            && !pointing
             && !boxing
             && !pulling
             && !filling
             && !measuring
             && !voiding
             && !area_pulling;
-        let mesh_object =
-            if !interactive || contour_editing || drawing || pulling || filling || measuring || voiding || area_pulling
-            {
-                None
-            } else {
-                self.editor.mesh_edit().map(|edit| edit.object())
-            };
+        let mesh_object = if !interactive
+            || contour_editing
+            || drawing
+            || pointing
+            || pulling
+            || filling
+            || measuring
+            || voiding
+            || area_pulling
+        {
+            None
+        } else {
+            self.editor.mesh_edit().map(|edit| edit.object())
+        };
         let navigating = navigating && mesh_object.is_none();
         // Face mode moves the union of the selected faces, so both sub-object modes feed the same
         // vertex gizmo and dispatch the same vertex command.
@@ -3562,6 +3666,38 @@ impl Document {
             // the last hover and the plates, which is what lets the plates be clicked (ADR 0126).
             self.draw_gizmo.reset();
             self.draft_menu.close();
+        }
+
+        if pointing {
+            // Shift keeps the new point on an axis through the last one; Alt takes the pointer as it
+            // is, without a surface and without the grid. A click names a place, and the
+            // three-point method's last click is the board's commit (U126).
+            let modifiers = PointsModifiers {
+                axis_lock: ui.input(|input| input.modifiers.shift),
+                ignore_snaps: ui.input(|input| input.modifiers.alt),
+            };
+            let input = PointsInput {
+                camera: self.scene.camera,
+                rect,
+                kinds: self.snaps,
+                contact: self.session.contact(),
+                pointer_over_widget,
+                modifiers,
+            };
+            let lang = ui::language(ui.ctx());
+            match self.points_gizmo.update(&response, self.session.project(), &mut self.editor, input) {
+                Ok(PointsAction::Nothing) => {}
+                Ok(PointsAction::Point) => ui.ctx().request_repaint(),
+                Ok(PointsAction::Complete) => {
+                    if let Err(error) = self.commit_points(lang) {
+                        self.last_error = Some(error);
+                    }
+                }
+                Err(error) => self.last_error = Some(error.message().text(lang).to_owned()),
+            }
+        } else if self.editor.points().is_none() {
+            // The tool ended: the hover goes with it, so the next arming starts from the hand again.
+            self.points_gizmo.reset();
         }
 
         if measuring {
@@ -4159,6 +4295,10 @@ impl Document {
                 }
                 Err(error) => self.last_error = Some(error),
             }
+        } else if let Some(draft) = self.editor.points() {
+            // The by-points tool draws its own preview: the rectangle with its ghost corner, or the
+            // ring projected onto the plane the first three points span (U126).
+            self.points_gizmo.paint(ui, rect, self.scene.camera, draft);
         } else if let Some(draft) = self.editor.box_draft().cloned() {
             let plane = WorkPlane::from_camera(self.scene.camera);
             box_gizmo::paint_box(ui, rect, self.scene.camera, plane, response.hover_pos(), &draft);
@@ -4767,6 +4907,19 @@ impl Document {
                     }
                     None => {}
                 }
+            }
+        } else if self.editor.points().is_some() {
+            // Escape drops the points and the tool; Enter closes the ring the card's finish would.
+            // The three-point method has already committed on its click, so Enter reaches a ring
+            // alone, and only once it holds enough points (U126).
+            if escape {
+                self.cancel_points();
+            } else if enter
+                && !ui.ctx().text_edit_focused()
+                && self.editor.points().is_some_and(ui::PointsDraft::is_finished)
+                && let Err(error) = self.commit_points(ui::language(ui.ctx()))
+            {
+                self.last_error = Some(error);
             }
         } else if self.editor.box_draft().is_some() || self.box_grips.is_dragging() {
             // Escape drops the base, the pull or the grip drag; the grip's edit scope is rolled

@@ -162,6 +162,25 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 action: enabled.then_some(ToolAction::DrawPanelContour),
             }
         }
+        ToolKind::PanelPoints(method) => {
+            // A board drawn by points is a part of the open product (ADR 0098) and takes its
+            // thickness from a catalogue material, exactly as the contour cell does. The plane is
+            // the one the first three clicks span, so the hint says what to do rather than naming a
+            // plane to choose first (U126).
+            // The two methods are two rows of one cell, so the hint names the tool and then the
+            // method — «Panel by points: Three points» — exactly as a fill's does (U123, U126).
+            let method_hint = Message::ToolMethodName.with(lang, [tool.label.text(lang), method.label().text(lang)]);
+            let hint = if !has_panel_material { Message::FillNeedsMaterial.text(lang) } else { method_hint.as_str() };
+            let enabled = product_open && has_panel_material;
+            Ready {
+                enabled,
+                // The cell is one and its two methods are two rows, so the pressed state names the
+                // method that owns the pointer (U74, U126).
+                armed: is_armed(active, kind),
+                hint: tool_hint(hint, tool.key()),
+                action: enabled.then_some(ToolAction::DrawPanelPoints { method }),
+            }
+        }
         ToolKind::Fill => {
             // A niche belongs to the open product (ADR 0098) and a part needs a material to take its
             // thickness from; the class must actually carry the `fill` trait, so a card that chose a

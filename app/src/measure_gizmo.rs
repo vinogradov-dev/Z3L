@@ -17,15 +17,13 @@
 //! Changes when: the ruler gains a method, or the point it measures from changes.
 
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
-use geom::DVec3;
-use model::{Project, Sight};
+use model::Project;
 use scene::Camera;
 use ui::{Measure, MeasureStage, theme};
 use units::Length;
 
-use crate::gizmo_math::{
-    Aim, PlaneSnap, WorkPlane, length_from_millimetres, paint_snap_marker, screen_point, surface_under,
-};
+use crate::gizmo_math::{Aim, paint_snap_marker, screen_point};
+use crate::scene_snap::{self, ScenePoint, SceneSnap};
 /// Radius of a placed measurement point, in points.
 const POINT_RADIUS: f32 = 3.0;
 /// Gap between the pointer and the length label, in points.
@@ -61,18 +59,8 @@ pub(crate) struct MeasureModifiers {
     pub(crate) ignore_snaps: bool,
 }
 
-/// The point a click would measure, why it moved, and where it draws.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct MeasurePoint {
-    /// The point in world micrometres, exactly as the atom stores it.
-    pub(crate) point: [Length; 3],
-    /// Where that point draws on the viewport.
-    pub(crate) screen: Pos2,
-    /// What captured it, or `None` for the pointer's own point.
-    pub(crate) kind: Option<model::SnapKind>,
-    /// Whether Shift's axis lock moved it onto a plane axis through the first point.
-    pub(crate) locked: bool,
-}
+/// The point a click would measure: the resolver's own answer, under the ruler's name.
+pub(crate) type MeasurePoint = ScenePoint;
 
 /// The ruler's live pointer state: the snapped point, or nothing while it waits for one.
 #[derive(Debug, Default)]
@@ -125,7 +113,15 @@ impl MeasureGizmo {
         // The ruler measures what the eye sees: a part switched off is crossed, not stopped at.
         let sight = editor.flags().sight();
         let aim = Aim { camera, rect, pointer };
-        let Some(point) = resolve(project, Some(contact), aim, first, input.kinds, input.modifiers, sight) else {
+        let snap = SceneSnap {
+            kinds: input.kinds,
+            contact: Some(contact),
+            first,
+            axis_lock: input.modifiers.axis_lock,
+            ignore_snaps: input.modifiers.ignore_snaps,
+            sight,
+        };
+        let Some(point) = scene_snap::resolve(project, aim, snap) else {
             self.reset();
             return false;
         };
@@ -172,83 +168,9 @@ impl MeasureGizmo {
     }
 }
 
-/// Resolves a viewport position to the point a click would measure.
-///
-/// The surface under the ray is the tool's own reading — the probe steps past a product's reserved
-/// box to the board behind it — and it wins because a face is a place the person can see. A ray that
-/// meets nothing falls back to the work plane, and there the one resolver applies every kind the
-/// workspace allows, the grid, the axis through the first point and Alt's "take the pointer as it
-/// is" (ADR 0051, U116). A point that is not a finite micrometre value is no point at all, so a
-/// broken camera or a hostile document resolves to `None` instead of a number.
-fn resolve(
-    project: &Project,
-    contact: Option<&dyn geom::Contact>,
-    aim: Aim,
-    first: Option<[Length; 3]>,
-    kinds: model::SnapKinds,
-    modifiers: MeasureModifiers,
-    sight: Sight<'_>,
-) -> Option<MeasurePoint> {
-    let Aim { camera, rect, pointer } = aim;
-    let plane = WorkPlane::from_camera(camera);
-    let face = if modifiers.ignore_snaps {
-        None
-    } else {
-        PlaneSnap::at(camera, rect, pointer, plane)
-            .and_then(|snap| face_under(project, contact, snap.ray.origin(), snap.ray.direction(), sight))
-    };
-    let Some(snap) = PlaneSnap::at(camera, rect, pointer, plane) else {
-        return face.and_then(|point| measure_point(point, camera, rect, Some(model::SnapKind::Face), false));
-    };
-    let anchor = first.map(world_point);
-    let kinds = if modifiers.ignore_snaps { model::SnapKinds::none() } else { kinds };
-    // The ruler measures what the eye sees, so it takes the candidate where it is: a corner 300 mm
-    // above the floor is a place of its own, not a shadow, and the mode never reaches it (U119).
-    let target = model::SnapTarget::Free;
-    let answer =
-        project.snap(snap.request(kinds, target, anchor, &[], modifiers.axis_lock && anchor.is_some(), face), sight)?;
-    measure_point(answer.point, camera, rect, answer.kind, answer.locked)
-}
-
-/// The first surface the ray really meets, stepping past the near face of a product's reserved box.
-///
-/// A product envelope is a probe surface (ADR 0103), but from outside the piece it is the first
-/// thing the ray meets, so a ruler that took it would report the front of the reserved box while
-/// the person points at a shelf behind it. [`surface_under`] steps past it and answers the point of
-/// the face, which is the place this ruler measures.
-fn face_under(
-    project: &Project,
-    contact: Option<&dyn geom::Contact>,
-    origin: DVec3,
-    direction: DVec3,
-    sight: Sight<'_>,
-) -> Option<DVec3> {
-    let contact = contact?;
-    surface_under(project, contact, origin, direction, sight).map(|probe| probe.face.point)
-}
-
-/// One world point in document units and on screen, or nothing when it is not representable.
-fn measure_point(
-    world: DVec3,
-    camera: Camera,
-    rect: Rect,
-    kind: Option<model::SnapKind>,
-    locked: bool,
-) -> Option<MeasurePoint> {
-    let point =
-        [length_from_millimetres(world.x)?, length_from_millimetres(world.y)?, length_from_millimetres(world.z)?];
-    let screen = screen_point(camera, rect, world)?;
-    Some(MeasurePoint { point, screen, kind, locked })
-}
-
-/// A stored point back in world millimetres, the boundary the geometry works in.
-fn world_point(point: [Length; 3]) -> DVec3 {
-    DVec3::new(point[0].millimetres_f64(), point[1].millimetres_f64(), point[2].millimetres_f64())
-}
-
 /// A stored point on the viewport, or `None` when it is behind the camera.
 fn draw_point(camera: Camera, rect: Rect, point: [Length; 3]) -> Option<Pos2> {
-    screen_point(camera, rect, world_point(point))
+    screen_point(camera, rect, scene_snap::world_point(point))
 }
 
 /// The middle of the measured segment, for the fixed label.

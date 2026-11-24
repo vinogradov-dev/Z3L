@@ -650,7 +650,11 @@ impl Document {
             row: self.fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count),
             holding: self.holding_piece(),
             grid: self.snaps().grid,
-            snap: self.draw_gizmo.snap_kind().or_else(|| self.measure_gizmo.snap_kind()),
+            snap: self
+                .draw_gizmo
+                .snap_kind()
+                .or_else(|| self.measure_gizmo.snap_kind())
+                .or_else(|| self.points_gizmo.snap_kind()),
             mesh: self.editor.mesh_edit().map(|edit| {
                 let count = match edit.element() {
                     MeshElement::Vertex => edit.vertices().len(),

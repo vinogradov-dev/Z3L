@@ -19,6 +19,7 @@ mod contour;
 mod geometry;
 mod hole;
 mod machining;
+mod points;
 
 pub use banding::{BandingSpec, CornerBanding, EdgeBanding, RingBanding};
 pub use classify::{RING_TOLERANCE_MM, classify_outline, role_of_plane};
@@ -32,6 +33,7 @@ pub use machining::{
     CoreViolation, Cutout, CutoutDepth, CutoutShape, EdgeRef, MACHINING_DESCRIPTORS, Machining, MachiningAnchor,
     MachiningCapabilities, MachiningCategory, MachiningDescriptor, MachiningKind, MachiningParams, MachiningStage,
 };
+pub use points::{PointsBoard, PointsError, PointsPlane, PointsRing, board_from_three, ring_from_points};
 
 pub(crate) use banding::validate_ring_banding;
 pub(crate) use geometry::rects_overlap;

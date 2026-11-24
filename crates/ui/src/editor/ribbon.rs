@@ -65,6 +65,7 @@ impl Editor {
             self.measure().is_some(),
             self.area_pull().is_some(),
             self.boolean_arm().map(|arm| (arm.kind(), arm.op())),
+            self.points.as_ref().map(crate::panel_points::PointsDraft::method),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
         let context = toolbars::RibbonContext {
@@ -130,6 +131,16 @@ impl Editor {
                 ToolAction::DrawPanelContour => {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;
+                }
+                ToolAction::DrawPanelPoints { method } => {
+                    // A second press on the same method drops the tool, like the ruler and the fill:
+                    // the mode owns the next clicks until the person leaves it (U126).
+                    if self.points().is_some_and(|draft| draft.method() == method) {
+                        self.cancel_points();
+                    } else {
+                        self.start_points(method);
+                        outcome.started_drawing = true;
+                    }
                 }
                 ToolAction::Measure => {
                     // A second press drops the ruler, like the fill arm: the mode owns the next

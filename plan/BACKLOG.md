@@ -104,7 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
+- `[~]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
   Why: The owner: a point tool that names points in space, the first three fixing the plane, as
    many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
    rather than one — a board by three points, which builds the standard four-corner panel, and

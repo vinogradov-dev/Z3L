@@ -74,8 +74,9 @@ pub use panel::{
     DerivedHoles, Drilling, EdgeBanding, EdgeRef, EntryFace, FaceSide, Hole, HoleDiagnostic, HoleError,
     MACHINING_DESCRIPTORS, Machining, MachiningAnchor, MachiningCapabilities, MachiningCategory, MachiningDescriptor,
     MachiningKind, MachiningParams, MachiningStage, Panel, PanelContourError, PanelDimensionError, PanelError,
-    PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM,
-    RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes, role_of_plane,
+    PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, PointsBoard,
+    PointsError, PointsPlane, PointsRing, RING_TOLERANCE_MM, RectCorner, RectEdge, RingBanding, SegmentSource,
+    board_from_three, classify_outline, derive_holes, ring_from_points, role_of_plane,
 };
 pub use panel_features::{
     BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE, MAX_TRIM, PanelTrims, TrimError,

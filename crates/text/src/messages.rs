@@ -997,6 +997,18 @@ messages! {
     FillSpreadEven = ["Evenly", "Равномерно"],
     PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
     PanelMethodRectangle = ["Rectangle", "Прямоугольник"],
+    PanelPointsThree = ["Three points", "Три точки"],
+    PanelPointsMany = ["Any number of points", "Любое число точек"],
+    PanelPointsFromPlane = ["From the plane", "По плоскости"],
+    PanelPointsCollinear = [
+        "The first three points lie on one line, so they span no plane",
+        "Первые три точки лежат на одной прямой — плоскость не задана"
+    ],
+    PanelPointsDuplicate = ["That point is the one before it", "Эта точка совпадает с предыдущей"],
+    PanelPointsNeedThree = ["A board needs three points", "Для панели нужны три точки"],
+    PanelPointsComplete = ["This board is already built", "Эта панель уже построена"],
+    PanelPointsFull = ["A ring holds no more points", "Больше точек в контур не входит"],
+    PanelPointsUnusable = ["These points make no usable board", "Из этих точек панель не получится"],
     CmdSetPanelBuild = ["Build the part another way", "Собрать деталь иначе"],
     GroupObjects = ["Objects", "Объекты"],
     GroupViews = ["Views", "Виды"],

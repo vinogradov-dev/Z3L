@@ -93,6 +93,12 @@ pub enum ToolAction {
     DrawProductFrameContour,
     /// Arms the free-outline tool, whose closed ring becomes one panel cut to it.
     DrawPanelContour,
+    /// Arms the by-points tool: the first three clicks fix the plane, and the method says what the
+    /// figure becomes.
+    DrawPanelPoints {
+        /// Which of the two by-points tools takes the clicks.
+        method: crate::panel_points::PanelPoints,
+    },
     /// Arms the empty-space tool with the class whose `fill` trait picks the axis pair.
     Fill {
         /// The class a post or a shelf fills the void with.
@@ -193,6 +199,8 @@ pub enum ToolActivity {
     /// The draft is the same; only what its close becomes differs, so the pressed cell is the contour
     /// cell and not the sketch tool whose glyph the draft borrows (ADR 0114).
     PanelContour,
+    /// The by-points tool is collecting points, with one of its two methods (U126).
+    PanelPoints(crate::panel_points::PanelPoints),
     /// A primitive is waiting for its work-plane click.
     Primitive(PrimitiveKind),
     /// A rectangle method is drawing a product frame's reserved box.
@@ -234,6 +242,7 @@ pub fn tool_activity(
     measure: bool,
     pull: bool,
     boolean: Option<(crate::editor::BooleanOperand, ContourOp)>,
+    points: Option<crate::panel_points::PanelPoints>,
 ) -> Option<ToolActivity> {
     let drawing = match (drawing, frame, fill, measure) {
         (Some((tool, DrawIntent::Path)), _, _, _) => Some(ToolActivity::Draw(tool)),
@@ -251,6 +260,9 @@ pub fn tool_activity(
     // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
     // a running draft or a fill (G3). The two operand kinds are two cells on two tabs, and the kind
     // decides which one draws pressed (W1).
+    // The by-points tool is a mode of its own over the pointer, and the cell is one, so the method
+    // decides which row draws pressed (U126).
+    let drawing = drawing.or(points.map(ToolActivity::PanelPoints));
     drawing.or(pull.then_some(ToolActivity::AreaPull)).or(boolean.map(|(kind, op)| match kind {
         crate::editor::BooleanOperand::Rings => ToolActivity::ContourBoolean(op),
         crate::editor::BooleanOperand::Bodies => ToolActivity::BodyBoolean(op),
@@ -266,6 +278,7 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         (Some(ToolActivity::Draw(armed)), ToolKind::Draw(tool)) => armed == tool,
         (Some(ToolActivity::Body(armed)), ToolKind::Body(tool)) => armed == tool,
         (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
+        (Some(ToolActivity::PanelPoints(armed)), ToolKind::PanelPoints(method)) => armed == method,
         (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive { kind, .. }) => armed == kind,
         (Some(ToolActivity::ProductBox(armed)), ToolKind::ProductBox(tool)) => armed == tool,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
@@ -776,7 +789,13 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 Some(ready)
                     if matches!(
                         method.run,
-                        Some(ToolKind::Fill | ToolKind::Body(_) | ToolKind::Extrude | ToolKind::AreaPull)
+                        Some(
+                            ToolKind::Fill
+                                | ToolKind::Body(_)
+                                | ToolKind::Extrude
+                                | ToolKind::AreaPull
+                                | ToolKind::PanelPoints(_)
+                        )
                     ) =>
                 {
                     ready.hint.clone()
@@ -1028,7 +1047,12 @@ mod tests {
             ),
             (
                 "furniture",
-                &["Panel from contour: click the outline, then close the ring", "Panel: Rectangle", "Product frame"],
+                &[
+                    "Panel by points: Three points",
+                    "Panel from contour: click the outline, then close the ring",
+                    "Panel: Rectangle",
+                    "Product frame",
+                ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
             (
@@ -1317,7 +1341,7 @@ mod tests {
                 _ => None,
             };
             assert_eq!(
-                tool_activity(drawing, frame, fill, measure, false, boolean),
+                tool_activity(drawing, frame, fill, measure, false, boolean, None),
                 expected,
                 "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} boolean={boolean:?}"
             );
@@ -1326,9 +1350,9 @@ mod tests {
 
     #[test]
     fn an_armed_area_pull_is_the_pressed_extrude_cell() {
-        let activity = tool_activity(None, false, None, false, true, None);
+        let activity = tool_activity(None, false, None, false, true, None, None);
         assert_eq!(activity, Some(ToolActivity::AreaPull));
-        assert_eq!(tool_activity(None, false, None, false, false, None), None, "no pull, no armed cell");
+        assert_eq!(tool_activity(None, false, None, false, false, None, None), None, "no pull, no armed cell");
     }
 
     #[test]

@@ -424,6 +424,13 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
     }
     let choices_only = view.rows.is_empty() && !view.choices.is_empty();
     if choices_only {
+        // A card of choices alone still offers its commit when the tool has one: the by-points
+        // ring's finish sits under its class row (U126). A tool that commits on its own click draws
+        // the choices and nothing else.
+        if matches!(view.commit, ToolCommit::Pair { .. }) {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| pair_ui(ui, view.commit, &mut outcome, lang));
+        }
         note_ui(ui, view.note.as_deref());
         return outcome;
     }

@@ -229,6 +229,11 @@ impl Harness {
         self.settle()
     }
 
+    /// The `egui` context the harness drives, for a test that hands a surface one frame of it.
+    fn context(&self) -> egui::Context {
+        self.ctx.clone()
+    }
+
     /// The scene rectangle the last frame gave the split views.
     fn scene(&self) -> egui::Rect {
         self.app.tabs.active().scene_rect().expect("a drawn frame gives the scene a rectangle")
@@ -2605,7 +2610,7 @@ fn the_frame_pull_draws_the_plate_the_solid_pull_draws() {
         document.editor.start_product_pull(Lang::En).expect("the base is fixed");
         document.editor.pull_box_height(mm(720)).expect("the pull");
     }
-    let frame_view = frame.app.tabs.active().tool_view().expect("the frame's pull draws a plate");
+    let frame_view = frame.app.tabs.active().tool_view(Lang::En).expect("the frame's pull draws a plate");
     assert_eq!(frame_view.rows.first().map(|row| row.value), Some(720.0), "the plate shows the pull");
 
     let (session, body) = one_body();
@@ -2616,7 +2621,7 @@ fn the_frame_pull_draws_the_plate_the_solid_pull_draws() {
         document.editor.select_node(Some(body));
         document.extrude_gizmo.start(body, mm(40));
     }
-    let solid_view = solid.app.tabs.active().tool_view().expect("the solid's pull draws a plate");
+    let solid_view = solid.app.tabs.active().tool_view(Lang::En).expect("the solid's pull draws a plate");
 
     assert_eq!(without_the_number(&frame_view), without_the_number(&solid_view), "one plate, one tool");
     assert_eq!(frame_view.title, None, "no word stands above the number");
@@ -3080,7 +3085,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         assert!(document.extrude_gizmo.is_active(), "{tool:?}: the pull is open");
         assert_eq!(document.extrude_gizmo.object(), Some(object));
         assert_eq!(document.extrude_gizmo.top(), Some(Length::ZERO), "{tool:?}: the taper starts at the apex");
-        let view = document.tool_view().expect("{tool:?}: the pull draws a card");
+        let view = document.tool_view(Lang::En).expect("{tool:?}: the pull draws a card");
         assert_eq!(view.rows.len(), 2, "{tool:?}: the height and the top radius");
         // Dragging previews the solid without writing it.
         let revision = document.session.project().revision();
@@ -8581,4 +8586,132 @@ fn a_view_the_person_framed_is_left_alone_until_frame_all_asks_again() {
     assert_ne!(clicked, turned, "the cluster's Frame all reframed the view");
     let centre = scene_centre(&harness);
     assert!((clicked.target() - centre).length() < 1.0, "on the scene's centre: {clicked:?}");
+}
+
+#[test]
+fn the_by_points_cell_takes_its_clicks_from_the_face_under_the_pointer() {
+    // U126: the points are the snap resolver's own, so the first click may stand on a face, an edge
+    // or a corner and no work plane is chosen before it. Three clicks on one face give a board whose
+    // plane that face is, which is what the contour cell cannot do.
+    let mut harness = Harness::with_session("points-face", body_and_ball_session());
+    sketch_in_mode(&mut harness, model::SnapMode::Space);
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.cancel_drawing();
+        document.editor.start_points(ui::PanelPoints::Three);
+    }
+    harness.settle();
+    let project = harness.app.tabs.active().session.project();
+    let boxed =
+        project.object(Id::new(2).expect("the box id")).expect("the box").geometry().as_constructive().expect("a body");
+    let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+    // Three places on the body's top face: the first edge and the width the third fixes.
+    let spots = [(x, y, 300.0), (x + 150.0, y, 300.0), (x, y + 120.0, 300.0)];
+    for spot in spots {
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), geom::DVec3::from(spot))
+            .expect("the spot is on screen");
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        let document = harness.app.tabs.active();
+        let point = document.points_gizmo.hover_point().expect("the pointer names a place");
+        assert!(
+            (point[2].millimetres_f64() - 300.0).abs() < 0.01,
+            "the point is on the face, not on the view plane: {point:?}"
+        );
+        assert!(
+            document.points_gizmo.snap_kind().is_some_and(|kind| kind != model::SnapKind::Grid),
+            "a face is a place of the scene, not the plane's grid"
+        );
+        let marker = document.points_gizmo.hover_screen().expect("the marker draws where the click lands");
+        assert!((marker - at).length() < 0.5, "the marker stands on the point: {marker:?} against {at:?}");
+        harness.click(at, egui::PointerButton::Primary);
+        harness.settle();
+    }
+    // The third click finished the rectangle and asked for the commit; the commit is refused only
+    // because this scene has no open frame to receive a part, and a refusal keeps the draft so the
+    // maker can open one instead of drawing the board again.
+    let document = harness.app.tabs.active();
+    let draft = document.editor.points().expect("a refused commit keeps the points");
+    assert_eq!(draft.points().len(), 3, "three clicks fixed the rectangle");
+    assert!(draft.is_complete(), "and the rectangle is finished");
+    assert_eq!(
+        document.last_error.as_deref(),
+        Some(Message::CreationNeedsProduct.text(Lang::En)),
+        "a part is offered inside the open piece alone"
+    );
+}
+
+#[test]
+fn the_by_points_card_offers_the_class_and_the_rings_finish_and_commits_one_board() {
+    // U126: the class is chosen on the card before the first click, the ring's finish appears once
+    // the ring holds enough points, and one finish is one `panel.create`.
+    let mut harness = Harness::new("points-card");
+    harness.settle();
+    let draft = ui::product_card::ProductDraft {
+        envelope: Envelope::new(testkit::millimetres(900), testkit::millimetres(600), testkit::millimetres(720))
+            .expect("a valid box"),
+        class: ClassCode::GENERAL_PRODUCT,
+    };
+    harness.app.tabs.active_mut().create_product(draft, Lang::En).expect("create the frame");
+    let product = harness.app.tabs.active().session.active_product().expect("the frame is open");
+    let before = harness.revision();
+    let mm = testkit::millimetres;
+    // The cell lives on the Furniture tab and its first method is the three-point board.
+    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
+        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    harness.settle();
+    let hint = Message::ToolMethodName
+        .with(Lang::En, [Message::ToolPanelPoints.text(Lang::En), Message::PanelPointsThree.text(Lang::En)]);
+    let cell = harness.face(&hint).expect("the by-points cell is on the strip");
+    harness.click(cell, egui::PointerButton::Primary);
+    let document = harness.app.tabs.active();
+    assert_eq!(
+        document.editor.points().map(ui::PointsDraft::method),
+        Some(ui::PanelPoints::Three),
+        "the cell arms the three-point method"
+    );
+    assert_eq!(document.session.project().revision(), before, "arming writes nothing");
+    harness.app.tabs.active_mut().editor.cancel_points();
+    let ctx = harness.context();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.start_points(ui::PanelPoints::Ring);
+        let view = document.card_view(Lang::En).expect("the ring's card");
+        assert_eq!(view.choices.len(), 1, "the class row");
+        assert_eq!(
+            view.choices[0].options,
+            vec![Message::PanelPointsFromPlane, Message::ToolPost, Message::ToolShelf, Message::ToolWall],
+            "the plane's role first, then the three roles by name"
+        );
+        assert_eq!(view.commit, ui::ToolCommit::Gesture, "no finish before the ring can be closed");
+        for corner in [(0, 0, 0), (600, 0, 0), (0, 400, 0)] {
+            document.editor.points_push([mm(corner.0), mm(corner.1), mm(corner.2)]).expect("a corner");
+        }
+        let view = document.card_view(Lang::En).expect("the ring's card");
+        assert!(
+            matches!(view.commit, ui::ToolCommit::Pair { apply: Message::FinishEnter, .. }),
+            "three points are enough for the finish"
+        );
+        // The class row is a menu key: a press chooses a role instead of the plane's own answer.
+        document.apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome { pick: Some(ui::ToolPick { row: 0, option: 3 }), ..Default::default() },
+        );
+        assert_eq!(document.editor.points().and_then(ui::PointsDraft::class), Some(ClassCode::BACK_PANEL));
+        document.commit_points(Lang::En).expect("the finish cuts the board");
+    }
+    let document = harness.app.tabs.active();
+    assert!(document.editor.points().is_none(), "the commit ends the tool");
+    assert_eq!(harness.revision().get(), before.get() + 1, "the board is one command");
+    let board = *document.editor.selected_nodes().first().expect("the board is selected");
+    assert_eq!(document.session.project().parent_of(board), Some(product), "it lands in the open frame");
+    let panel = document.session.project().panel(board).expect("a panel");
+    assert!(panel.is_contour(), "the ring is the outline");
+    assert_eq!(panel.outline_contour().expect("ring").segments().count(), 3, "three points enclose a triangle");
+    assert_eq!(
+        document.session.project().class(board),
+        Some(ClassCode::BACK_PANEL),
+        "the card's class is the one the board carries"
+    );
+    assert!(document.session.can_undo(), "and one undo entry");
 }
