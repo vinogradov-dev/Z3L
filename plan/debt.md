@@ -558,3 +558,13 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   sized in the card — is in the map and planned (`run: None`): cutting it needs a drawing intent that
   turns the drawn ring into a `Rect` outline so the card can still edit the sides, and U123 shipped
   without it. The cell draws one live method and no caret until that intent lands (U123, ADR 0239).
+· `[ui]` The evenly fill's plate reads its two distances through a `Distances` that holds one
+  part's extent, so while the *far* gap is pinned the near field can show one frame of the number
+  the previous row left: a typed far distance (U125) lands with the neighbours re-divided on the next
+  frame, and the near field follows. Nothing is written wrongly and the settled frame is right, so
+  the fix is a row that owns its two ends instead of borrowing a part's; it waits for a second
+  consumer of the row gesture. The count of a row is reached by clicking its field, not by Tab: the
+  shared `Distances::tab` walks the two gaps only (U125).
+· `[ui]` `Document::update_row` repeats the plate's tail of `Document::update_fill` — the choices, the
+  pick, the re-plan — while the two share `gap_fields` and `apply_fill_pick`. A third fill gesture
+  would make the tail an atom of its own; two is not yet a pattern (U125).
