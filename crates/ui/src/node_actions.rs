@@ -413,10 +413,18 @@ pub fn entries(subject: Subject, source: &MenuSource<'_>) -> Vec<Entry> {
 /// how it sits in the frame — and the mounting is absent where it means nothing (ADR 0240, U128).
 fn fill_entries(build: PanelBuild) -> Vec<Entry> {
     let mut entries = Vec::new();
-    for class in FILL_CLASSES {
+    // The menu reads as the tool reads: a post, a shelf, a wall. The class registry's own words
+    // ("upright") belong to the tree, where a class is a part's semantics and not the next click
+    // (U128).
+    let words = [
+        (ClassCode::VERTICAL_PANEL, Message::ToolPost),
+        (ClassCode::HORIZONTAL_PANEL, Message::ToolShelf),
+        (ClassCode::BACK_PANEL, Message::ToolWall),
+    ];
+    for (class, label) in words {
         entries.push(Entry {
             id: None,
-            label: class.label().unwrap_or(Message::ToolPanel),
+            label,
             action: NodeAction::Fill(FillPick::Class(class)),
             enabled: true,
             reason: None,
@@ -424,6 +432,7 @@ fn fill_entries(build: PanelBuild) -> Vec<Entry> {
             mark: Mark::Chosen(build.class == class),
         });
     }
+    debug_assert_eq!(words.map(|(class, _)| class), FILL_CLASSES, "the menu and the arm offer one set of classes");
     for (mode, label) in [(FillMode::Fit, Message::FillMethodFit), (FillMode::Shape, Message::FillMethodShape)] {
         entries.push(Entry {
             id: None,
@@ -759,9 +768,9 @@ mod tests {
         assert_eq!(
             labels(&entries),
             vec![
-                Message::ClassVerticalPanel,
-                Message::ClassHorizontalPanel,
-                Message::ClassBackPanel,
+                Message::ToolPost,
+                Message::ToolShelf,
+                Message::ToolWall,
                 Message::FillMethodFit,
                 Message::FillMethodShape,
                 Message::FillSpreadEven,
@@ -790,8 +799,8 @@ mod tests {
         let mark = |label: Message| {
             entries.iter().find(|entry| entry.label == label).map(|entry| entry.mark).expect("the row is drawn")
         };
-        assert_eq!(mark(Message::ClassHorizontalPanel), Mark::Chosen(true));
-        assert_eq!(mark(Message::ClassVerticalPanel), Mark::Chosen(false));
+        assert_eq!(mark(Message::ToolShelf), Mark::Chosen(true));
+        assert_eq!(mark(Message::ToolPost), Mark::Chosen(false));
         assert_eq!(mark(Message::FillMethodShape), Mark::Chosen(true));
         assert_eq!(mark(Message::FillMethodFit), Mark::Chosen(false));
         assert_eq!(mark(Message::FillSpreadEven), Mark::Switch(true));
@@ -833,12 +842,12 @@ mod tests {
         output.drop_without_applying_deltas();
         let marked = rects
             .iter()
-            .find(|(_, text)| text == Message::ClassHorizontalPanel.text(crate::Lang::En))
+            .find(|(_, text)| text == Message::ToolShelf.text(crate::Lang::En))
             .map(|(rect, _)| *rect)
             .expect("the chosen class is drawn");
         let unmarked = rects
             .iter()
-            .find(|(_, text)| text == Message::ClassVerticalPanel.text(crate::Lang::En))
+            .find(|(_, text)| text == Message::ToolPost.text(crate::Lang::En))
             .map(|(rect, _)| *rect)
             .expect("the other class is drawn");
         assert!(

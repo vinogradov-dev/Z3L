@@ -1748,15 +1748,8 @@ fn a_carried_piece_measures_its_gaps_in_the_scene_and_a_press_over_one_puts_it_d
     harness.hover(body - up * 10.0);
     assert!(harness.app.tabs.active().holding_piece(), "the shelf is in hand");
     assert!(!harness.app.tabs.active().tool_card_is_up(), "a carried piece draws no card");
-    let chrome = harness.settle();
-    let scene = harness.scene();
-    let fields: Vec<egui::Rect> = harness
-        .drawn_rects
-        .iter()
-        .filter(|(rect, text)| scene.contains_rect(*rect) && text == "mm")
-        .map(|(rect, _)| *rect)
-        .filter(|rect| !chrome.panels.panels().any(|panel| panel.contains_rect(*rect)))
-        .collect();
+    let _chrome = harness.settle();
+    let fields: Vec<egui::Rect> = harness.app.tabs.active().distance_plate_rects().into_iter().flatten().collect();
     assert_eq!(fields.len(), 2, "one field per gap, drawn in the scene: {fields:?}");
     assert!(harness.drew(Message::ToolGapLow.text(Lang::En)), "the inspector names the low gap");
     assert!(harness.drew(Message::ToolGapHigh.text(Lang::En)), "and the high one");
@@ -3761,7 +3754,22 @@ fn an_evenly_fill_anchors_first_and_lays_the_row_in_one_undo_entry() {
     assert_eq!(harness.revision(), before, "anchoring writes nothing");
     {
         let document = harness.app.tabs.active();
-        assert!(document.fill_gizmo.row().is_some(), "the first click anchored the row");
+        let row = document.fill_gizmo.row().expect("the first click anchored the row");
+        let count = row.plan.as_ref().expect("the row is a model answer").count;
+        // U128: the count is not a distance, so it rides beside the hand instead of on a run, and it
+        // says how many boards the row holds.
+        let plate = document.count_plate_rect().expect("the row's count drew beside the hand");
+        assert!(screen().contains_rect(plate), "the count is on screen: {plate:?}");
+        assert!(
+            plate.center().x > pointer.x && plate.center().y > pointer.y,
+            "the count sits below and right of the hand: {plate:?} against {pointer:?}"
+        );
+        assert!(
+            plate.center().distance(pointer) < 80.0,
+            "the count stays within a glance of the hand: {plate:?} against {pointer:?}"
+        );
+        let shown = texts_inside(&harness, plate);
+        assert!(shown.iter().any(|text| text == &count.to_string()), "the count shows {count}: {shown:?}");
     }
 
     harness.hover(higher);
@@ -3894,8 +3902,10 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     // maker types into the number the gesture is driving.
     harness.run(vec![egui::Event::PointerMoved(pointer)]);
     harness.settle();
-    let card = harness.app.tabs.active().tool_card_rect().expect("the fill's card drew beside the pointer");
-    assert!(screen().contains_rect(card), "the card is on screen: {card:?}");
+    let plates = harness.app.tabs.active().distance_plate_rects();
+    let low = plates[0].expect("the low gap's field drew in the middle of its run");
+    assert!(screen().contains_rect(low), "the field is on screen: {low:?}");
+    assert!(!texts_at(&harness, low.center()).is_empty(), "the field shows the number it holds");
     harness.run(vec![egui::Event::Text("120".to_owned())]);
     harness.press(egui::Key::Enter, egui::Modifiers::NONE);
 
@@ -4070,6 +4080,21 @@ fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
 }
 
 /// Every text the last frame drew inside `rect`.
+/// The words drawn within one plate's own reach of `at`, in points.
+///
+/// A plate is a frame around one number, and the frame's rectangle is laid out a frame after the
+/// field it holds, so a test reads the words where the number is drawn and not where the frame was
+/// reported (U128).
+fn texts_at(harness: &Harness, at: egui::Pos2) -> Vec<String> {
+    const REACH: f32 = 60.0;
+    harness
+        .drawn_rects
+        .iter()
+        .filter(|(rect, _)| rect.center().distance(at) <= REACH)
+        .map(|(_, text)| text.clone())
+        .collect()
+}
+
 fn texts_inside(harness: &Harness, rect: egui::Rect) -> Vec<String> {
     harness.drawn_rects.iter().filter(|(at, _)| rect.contains_rect(*at)).map(|(_, text)| text.clone()).collect()
 }
@@ -4120,7 +4145,7 @@ fn a_frame_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagre
 }
 
 #[test]
-fn a_fill_shows_its_two_gaps_in_the_card_and_the_inspector_and_they_never_disagree() {
+fn a_fill_shows_its_two_gaps_on_their_arrows_and_the_inspector_never_disagrees() {
     let mut harness =
         Harness::with_session("frame-tool-card-fill", crate::scene_build::empty_session().expect("empty"));
     harness.settle();
@@ -4150,11 +4175,24 @@ fn a_fill_shows_its_two_gaps_in_the_card_and_the_inspector_and_they_never_disagr
     harness.hover(pointer);
     let chrome = harness.settle();
     let document = harness.app.tabs.active();
-    let card = document.tool_card_rect().expect("the fill's card drew beside the pointer");
-    let in_card = texts_inside(&harness, card);
-    assert!(in_card.iter().any(|text| text == "Low gap"), "the card names both gaps: {in_card:?}");
-    assert!(in_card.iter().any(|text| text == "High gap"), "the card names both gaps: {in_card:?}");
-    assert_the_card_and_the_inspector_agree(&harness, &chrome);
+    // U128: no card at the pointer — each gap is one number in the middle of the arrow that
+    // measures it, and the arrow itself says which gap it is.
+    assert!(document.tool_card_rect().is_none(), "the fill draws no card");
+    let plates = document.distance_plate_rects();
+    for (index, plate) in plates.iter().enumerate() {
+        let plate = plate.unwrap_or_else(|| panic!("gap {index} drew its field"));
+        assert!(screen().contains_rect(plate), "the field is on screen: {plate:?}");
+    }
+    // The two numbers the inspector writes are the two the scene draws: one source of truth, two
+    // surfaces (ADR 0103, U128).
+    let inspector = chrome.panels.right.expect("the inspector is on");
+    let in_inspector = texts_inside(&harness, inspector);
+    let scene = texts_inside(&harness, screen());
+    for word in ["Low gap", "High gap"] {
+        let at = in_inspector.iter().position(|text| text == word).unwrap_or_else(|| panic!("{word} is listed"));
+        let value = in_inspector.get(at + 1).unwrap_or_else(|| panic!("{word} shows a number"));
+        assert!(scene.contains(value), "the scene draws {value:?} where the inspector writes it: {scene:?}");
+    }
 }
 
 /// A scene holding one extruded body: a 600 x 400 mm rectangle pulled 18 mm, and its id.

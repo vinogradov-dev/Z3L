@@ -1300,13 +1300,16 @@ fn empty_product() -> (model::Project, model::Id) {
     (project, product)
 }
 
-/// Draws the empty-space tool's ghost into one picture, so its accent and callouts can be looked at.
+/// Draws the empty-space tool into two pictures, so its ghost and its menu can be looked at.
 ///
 /// The matrix above varies the window's look; this shot varies the tool. It arms the shelf fill
 /// inside an open product, moves the pointer onto the piece and renders the real frame offscreen, so
-/// the ghost's wireframe and its three sizes are checked as pixels and not only as shapes.
+/// the ghost's wireframe, its three sizes and the two gap arrows with their fields are checked as
+/// pixels and not only as shapes. A right click then opens the operation's own menu — the class, the
+/// build and the spread, each with its tick in a column left of the label (U128) — and the second
+/// picture is that frame.
 #[test]
-#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-ghost.png"]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-ghost.png and fill-menu.png"]
 fn the_empty_space_ghost_is_painted_offscreen() {
     let render_state = match render_state() {
         Ok(render_state) => render_state,
@@ -1378,10 +1381,46 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     let directory = testkit::ui_shots_dir().expect("the shots directory is created");
     let path = directory.join("fill-ghost.png");
     testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
-    app.tabs.active_mut().release_target();
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the fill ghost is in {}", path.display());
+
+    // The operation's own menu opens on a right click, so the second picture is the same frame with
+    // the choices in front of it.
+    let button = |pressed| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for frame in 0..SETTLE_FRAMES {
+        let events = if frame == 0 { vec![button(true), button(false)] } else { Vec::new() };
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+    assert!(app.tabs.active().menu_rect().is_some(), "the right click opened the operation's menu");
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let menu = directory.join("fill-menu.png");
+    testkit::write_png(&menu, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", menu.display());
+    println!("the fill's menu is in {}", menu.display());
 }
 
 /// A scene whose tree is taller than a panel and whose inspector card is the longest one.

@@ -555,11 +555,15 @@ impl DistanceFields {
 
     /// Draws one gap's field where the gap is, and reads the keyboard for the active one.
     ///
-    /// This is the carried piece's layout (N26, ADR 0161): the shell measured the arrow that runs
-    /// from the piece's face to the surface that stops it, and each measured side receives a plate
-    /// of its own in the middle of that run. The plate takes no pointer — a press anywhere in the
-    /// work area is the click that puts the piece down (X66) — so this layout asks for no chrome
-    /// rectangle; its fields take the keyboard exactly as the card's rows do.
+    /// This is the carried piece's layout (N26, ADR 0161) and the fill's (U128): the shell measured
+    /// the arrow that runs from the part's face to the surface that stops it, and each measured side
+    /// receives a plate of its own in the middle of that run. The plate takes no pointer — a press in
+    /// the work area is the click that makes or puts down the part (X66) — so this layout asks for no
+    /// chrome rectangle; its fields take the keyboard exactly as the card's rows do.
+    ///
+    /// A plate carries the number alone: no label word, because the arrow says what is measured, and
+    /// no unit, because a dimension is read in the program's own units and the inspector is where the
+    /// unit is written (the owner, 2026-11-24).
     pub fn show_in_scene(
         &mut self,
         ui: &mut Ui,
@@ -570,6 +574,11 @@ impl DistanceFields {
     ) -> DistanceOutcome {
         let (request, escape, enter) = self.begin(ui, state, placements);
         let mut rows = state.rows();
+        // A dimension in the scene is a number and nothing else (U128): the unit stays in the
+        // inspector, where the same value is written out beside its word.
+        for row in &mut rows {
+            row.unit = "";
+        }
         let mut reported = ToolOutcome::default();
         let mut outcome = DistanceOutcome::default();
         for placement in placements {
@@ -578,7 +587,8 @@ impl DistanceFields {
             };
             let id = Id::unique(("distance_plate", placement.side.index()));
             let focus = request == Some(placement.side);
-            let (plate, rect) = crate::tool_card::plate(ui, viewport, placement.position, id, row, focus, opacity);
+            let (plate, rect) =
+                crate::tool_card::plate(ui, viewport, placement.position, id, row, focus, false, opacity);
             outcome.plates[placement.side.index()] = Some(rect);
             reported.edits.extend(plate.edits);
             reported.lock = reported.lock.or(plate.lock);

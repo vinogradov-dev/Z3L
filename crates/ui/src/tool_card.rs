@@ -359,10 +359,13 @@ pub fn show(
 /// else — no title, no label word and no button pair. Two surfaces are told apart by their id, so
 /// each gap's field keeps its own keyboard focus as the plate travels with the piece.
 ///
-/// The plate takes no pointer. A carried piece holds no button, so a press anywhere in the work area
-/// is the click that puts it down; a plate that sensed the hand would take that click and scrub a
-/// number into the gap the piece would then jump to (X66). Its field still takes the keyboard, which
-/// is how a gap is typed.
+/// `takes_the_pointer` decides whether the plate senses the hand. A gap's plate does not: a carried
+/// piece holds no button, so a press anywhere in the work area is the click that puts it down, and a
+/// plate that sensed the hand would take that click and scrub a number into the gap the piece would
+/// then jump to (X66). Its field still takes the keyboard, which is how a gap is typed. A count is
+/// the case the other way round (U128): it stands beside the hand and on nothing, so a press on it is
+/// a press on the number and the only way to reach it.
+#[allow(clippy::too_many_arguments)]
 pub fn plate(
     ui: &mut Ui,
     viewport: Rect,
@@ -370,6 +373,7 @@ pub fn plate(
     id: Id,
     row: &mut ToolRow,
     focus: bool,
+    takes_the_pointer: bool,
     opacity: u32,
 ) -> (ToolOutcome, Rect) {
     let fill = theme::at_opacity(theme::floating(ui), opacity.clamp(80, 100));
@@ -378,7 +382,7 @@ pub fn plate(
         .order(Order::Middle)
         .pivot(Align2::CENTER_CENTER)
         .fixed_pos(at)
-        .interactable(false)
+        .interactable(takes_the_pointer)
         .constrain_to(viewport)
         .show(ui.ctx(), |ui| {
             let frame = egui::Frame::new()
@@ -470,7 +474,7 @@ fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutco
     let labels = view.rows.len() > 1 || view.rows.iter().any(|row| row.label.is_some());
     let mut entered = false;
     for row in &mut view.rows {
-        entered |= row_ui(ui, row, labels, focus == Some(row.param), &mut outcome);
+        entered |= row_ui(ui, row, labels, crate::scrub::FIELD_WIDTH, focus == Some(row.param), &mut outcome);
     }
     // Enter in a focused field is the tool's commit as much as the ✓ is, and it is read after the
     // field drew: the number it just committed is the number the tool applies (M71, U104).
@@ -533,7 +537,7 @@ fn one_row(ui: &mut Ui, row: &mut ToolRow, focus: bool) -> ToolOutcome {
         ui.label(RichText::new(Message::DistanceNoNeighbour.text(lang)).small().color(theme::text_dim(ui)));
         return outcome;
     }
-    row_ui(ui, row, false, focus, &mut outcome);
+    row_ui(ui, row, false, crate::scrub::PLATE_FIELD_WIDTH, focus, &mut outcome);
     if let Some(message) = outcome.error {
         ui.colored_label(theme::danger(ui), message.text(lang));
     }
@@ -544,7 +548,7 @@ fn one_row(ui: &mut Ui, row: &mut ToolRow, focus: bool) -> ToolOutcome {
 ///
 /// The answer is whether the row's field took Enter, which is the card's commit and not only a
 /// number: a field reports both from one frame (M71, U104).
-fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &mut ToolOutcome) -> bool {
+fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, width: f32, focus: bool, outcome: &mut ToolOutcome) -> bool {
     let lang = language(ui.ctx());
     let mut submitted = false;
     ui.horizontal(|ui| {
@@ -577,6 +581,7 @@ fn row_ui(ui: &mut Ui, row: &mut ToolRow, labels: bool, focus: bool, outcome: &m
             .range(row.range.clone())
             .decimals(row.decimals)
             .unit(row.unit)
+            .width(width)
             .focus(focus)
             .show(ui);
         if field.response.has_focus() {
@@ -717,7 +722,7 @@ mod tests {
         let mut layer = None;
         for _ in 0..3 {
             let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
-                let shown = plate(ui, viewport(), at, Id::unique("gap_plate"), &mut row, false, 92);
+                let shown = plate(ui, viewport(), at, Id::unique("gap_plate"), &mut row, false, false, 92);
                 rect = shown.1;
                 layer = ui.ctx().layer_id_at(at).map(|layer| layer.id);
             });
@@ -736,7 +741,7 @@ mod tests {
         for frame in 0..4 {
             let focus = frame < 2;
             let output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport()), ..Default::default() }, |ui| {
-                plate(ui, viewport(), Pos2::new(200.0, 200.0), Id::unique("gap_plate"), &mut row, focus, 92);
+                plate(ui, viewport(), Pos2::new(200.0, 200.0), Id::unique("gap_plate"), &mut row, focus, false, 92);
                 focused = ui.ctx().text_edit_focused();
             });
             output.drop_without_applying_deltas();

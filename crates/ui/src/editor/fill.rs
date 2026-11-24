@@ -135,6 +135,9 @@ impl Editor {
             .ok_or_else(|| Message::FillNeedsFillTrait.text(lang).to_owned())?;
         self.leave_pointer_modes();
         self.fill = Some(FillArm { class, fill, mode });
+        // The build the tool card, the operation's menu and the click all read follows the arm
+        // wherever it was made: a cell, a menu row or a test that arms the tool directly (U128).
+        self.set_panel_build(PanelBuild { class, mode, ..self.panel_build() });
         Ok(())
     }
 
