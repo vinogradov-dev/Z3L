@@ -187,6 +187,10 @@ impl Editor {
                 }
             }
             NodeAction::CloseProduct => self.close_product(session),
+            NodeAction::PanelBuild { panel, mode } => {
+                let params = json(&engine::panel_cmds::PanelBuildSet { panel, mode })?;
+                dispatch(session, engine::panel_cmds::BUILD_SET_ID, &params)?;
+            }
             NodeAction::Duplicate { node } => {
                 let params = json(&NodeDuplicate { node })?;
                 let outcome = dispatch(session, NODE_DUPLICATE_ID, &params)?;

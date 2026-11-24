@@ -67,6 +67,15 @@ pub enum NodeAction {
     },
     /// Leaves the open product, so no product receives new parts.
     CloseProduct,
+    /// Rewrites a panel's build: how the part reads the section of the void it fills (U123).
+    ///
+    /// The class does not travel with it: a created part keeps the role it was born with.
+    PanelBuild {
+        /// The panel whose build changes.
+        panel: model::Id,
+        /// The build the part takes; the row offers the one it does not have.
+        mode: model::FillMode,
+    },
     Duplicate {
         node: Id,
     },
@@ -178,6 +187,27 @@ pub fn entries(subject: Subject, source: &MenuSource<'_>) -> Vec<Entry> {
             reason: None,
             section: false,
         });
+        // A panel's build is the one property its own menu rewrites, and its words name the build the
+        // board does not have, so they come from the table's `live_words` (U123). A part whose class
+        // fills nothing has no void to re-read and offers nothing.
+        if let Some(id) = node
+            && project.panel(id).is_some()
+            && let Some(label) = inventory::live_words("panel.build.set", project, id)
+            && project.class(id).and_then(|class| class.traits()).and_then(|traits| traits.fill()).is_some()
+        {
+            let mode = match label {
+                Message::FillMethodShape => model::FillMode::Shape,
+                _ => model::FillMode::Fit,
+            };
+            entries.push(Entry {
+                id: Some("panel.build.set"),
+                label,
+                action: NodeAction::PanelBuild { panel: id, mode },
+                enabled: true,
+                reason: None,
+                section: true,
+            });
+        }
         // Isolate needs a subject; show all is how a person finds a model that disappeared, so it
         // is the one entry empty space owns.
         entries.push(Entry {
@@ -680,11 +710,61 @@ mod tests {
     }
 
     #[test]
+    fn a_panel_offers_the_build_it_does_not_have() {
+        // U123: the row is named after what pressing it makes, and the words come from the table, so
+        // a rectangle board offers the niche's shape and a shaped board offers the rectangle.
+        let (mut project, _product) = sample_product_project();
+        project
+            .set_property(id(2), model::SYSTEM_CLASS, model::PropertyValue::class(model::ClassCode::HORIZONTAL_PANEL))
+            .expect("the panel takes a class");
+        let flags = ViewFlags::default();
+        let build = |project: &Project| {
+            menu(project, &flags, &[id(2)], Subject::Node(id(2)))
+                .into_iter()
+                .find(|entry| entry.id == Some("panel.build.set"))
+                .map(|entry| (entry.label, entry.action))
+        };
+        assert_eq!(
+            build(&project),
+            Some((Message::FillMethodShape, NodeAction::PanelBuild { panel: id(2), mode: model::FillMode::Shape })),
+            "a rectangle board offers the niche's shape"
+        );
+        // Store a ring, and the row reads the other way: a shaped board offers the rectangle.
+        let nominal = project.panel(id(2)).expect("panel").nominal_size();
+        let l = nominal.length().micrometres();
+        let w = nominal.width().micrometres();
+        let corners = [(0, 0), (l, 0), (l, w), (0, w)];
+        let point = |c: (i64, i64)| [units::Length::from_micrometres(c.0), units::Length::from_micrometres(c.1)];
+        let ring = model::Contour::new(
+            (0..corners.len())
+                .map(|index| {
+                    model::ContourSegment::line(point(corners[index]), point(corners[(index + 1) % corners.len()]))
+                        .expect("a straight edge")
+                })
+                .collect(),
+        )
+        .expect("a closed rectangle");
+        project
+            .set_panel_shape(id(2), nominal, model::PanelOutline::Contour { contour: ring }, &[])
+            .expect("the board takes a shaped outline");
+        assert_eq!(
+            build(&project),
+            Some((Message::FillMethodFit, NodeAction::PanelBuild { panel: id(2), mode: model::FillMode::Fit })),
+            "a shaped board offers the rectangle"
+        );
+    }
+
+    #[test]
     fn every_context_menu_row_is_reachable_from_some_node() {
         // The table and the menu agree in both directions: an id declared for a context menu that
         // this module cannot run would be an entry that exists nowhere.
         let (mut project, product) = sample_product_project();
         let group = project.group_nodes(&[id(2), id(3)], "Group").expect("the sample nodes group");
+        // A panel's build row asks the class to fill a void, so the fixture's panel is classed: a
+        // row declared for the menu must be reachable from a node that can run it (U123).
+        project
+            .set_property(id(2), model::SYSTEM_CLASS, model::PropertyValue::class(model::ClassCode::HORIZONTAL_PANEL))
+            .expect("the sample panel takes a class");
         let flags = ViewFlags::default();
         let subjects = [Subject::Node(id(2)), Subject::Node(id(3)), Subject::Node(group), Subject::Node(product)];
         for row in inventory::in_place(Place::ContextMenu) {

@@ -275,6 +275,22 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "probe.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
 ];
 
+/// The words a capability prints for one node, when they depend on what the node is now (U123).
+///
+/// A row carries one fixed label, which is the right name for a capability whose effect does not
+/// depend on the subject. A part's build does: the row offers the build the board does *not* have, so
+/// the table answers its words here instead of the entry inventing them, and the inventory stays the
+/// one place that says what a capability is called.
+pub fn live_words(id: &str, project: &model::Project, node: model::Id) -> Option<Message> {
+    match id {
+        "panel.build.set" => {
+            let shaped = project.panel(node).is_some_and(|panel| panel.outline_contour().is_some());
+            Some(if shaped { Message::FillMethodFit } else { Message::FillMethodShape })
+        }
+        _ => None,
+    }
+}
+
 /// The binding with `id`, if a key runs it.
 pub fn binding(id: &str) -> Option<&'static Binding> {
     KEYS.iter().find(|binding| binding.id == id)
@@ -461,14 +477,12 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Node),
         icon: None,
     },
-    // A part's own build is rewritten by one command, and no surface draws it yet: the row a board's
-    // menu will carry is named after the build it makes, and a table row carries one fixed label, so
-    // the words are settled before the place is (U123, ADR 0239). Until then the API and the assistant
-    // reach it.
+    // The build a part was made with is the one property its own menu rewrites; the row it draws is
+    // named after the build it makes, so the table answers those words through `live_words` (U123).
     Row {
         id: "panel.build.set",
         label: Message::CmdSetPanelBuild,
-        places: &[Place::Api],
+        places: &[Place::ContextMenu],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,
     },
