@@ -1687,12 +1687,14 @@ mod tests {
             .expect("the end is let out");
         let panel = session.project().panel(panel_id).expect("panel");
         assert_eq!(panel.trims().get(RectEdge::Bottom.id()), lap, "the number is stored on the end");
+        assert_eq!(panel.nominal_size(), before, "the frame — and so the origin — did not move");
+        let geometry = panel.geometry_with_fallbacks().expect("the board resolves");
         assert_eq!(
-            panel.nominal_size().width(),
+            geometry.core_width(),
             before.width().checked_add(Length::from_millimetres(14).expect("a lap")).expect("a width"),
-            "the side the number names grew by it"
+            "the material the number names grew by it"
         );
-        assert_eq!(panel.nominal_size().length(), before.length(), "the other pair is untouched");
+        assert_eq!(geometry.core_length(), before.length(), "the other pair is untouched");
     }
 
     #[test]

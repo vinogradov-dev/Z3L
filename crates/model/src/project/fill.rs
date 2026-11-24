@@ -517,7 +517,6 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
             stance,
             gap,
             asked: mount.laps().map(Length::millimetres_f64),
-            thickness,
             bodies,
         });
     }
@@ -596,8 +595,6 @@ struct OverlayInput<'a> {
     gap: f64,
     /// The lap each end asks for, millimetres, in outline-edge order.
     asked: [f64; 4],
-    /// The material's thickness, which is the part's third side.
-    thickness: Length,
     /// Every body's box in the product frame.
     bodies: &'a [HiddenBox],
 }
@@ -624,7 +621,7 @@ struct OverlayFrame<'a> {
 /// the other answer: the board stops at its near face and never runs over it, which is the rule the
 /// maker reads as "it does not ride onto the neighbour".
 fn overlay_board(input: OverlayInput<'_>) -> Result<(Part, Placement), FillRefusal> {
-    let OverlayInput { niche, stance, gap, asked, thickness, bodies } = input;
+    let OverlayInput { niche, stance, gap, asked, bodies } = input;
     if !(gap.is_finite() && gap > 0.0 && asked.iter().all(|lap| lap.is_finite() && *lap >= 0.0)) {
         return Err(FillRefusal::TooSmall);
     }
@@ -650,26 +647,39 @@ fn overlay_board(input: OverlayInput<'_>) -> Result<(Part, Placement), FillRefus
             return Err(FillRefusal::InTheWay);
         }
     }
-    let grown = [grown_low, DVec2::new(grown_high.x, grown_low.y), grown_high, DVec2::new(grown_low.x, grown_high.y)];
-    let places = [grown_low.y, grown_high.x, grown_high.y, grown_low.x];
-    let shape = PartShape {
-        footprint: &grown,
-        trims: overlay_trims(places, low, high)?,
-        mode: FillMode::Fit,
-        stance: &stance,
-        angles: &[],
-        thickness,
-        exact: None,
-        pointer: DVec2::new((low.x + high.x) * 0.5, (low.y + high.y) * 0.5),
+    let trims = overlay_trims([grown_low.y, grown_high.x, grown_high.y, grown_low.x], low, high)?;
+    // The panel's frame is the opening's rectangle and the material is what the trims make of it
+    // (ADR 0240): the frame's corner is where the part is placed, so the person controls the
+    // position by the opening and never by a lap.
+    let size = PanelNominalSize::new(
+        length_of(high.x - low.x).ok_or(FillRefusal::TooSmall)?,
+        length_of(high.y - low.y).ok_or(FillRefusal::TooSmall)?,
+    )
+    .map_err(|_| FillRefusal::TooSmall)?;
+    let local = |point: DVec2| DVec2::new(point.x - low.x, point.y - low.y);
+    let corners = vec![
+        local(grown_low),
+        DVec2::new(grown_high.x - low.x, grown_low.y - low.y),
+        local(grown_high),
+        DVec2::new(grown_low.x - low.x, grown_high.y - low.y),
+    ];
+    if corners.iter().any(|corner| !corner.is_finite()) {
+        return Err(FillRefusal::TooSmall);
+    }
+    let part = Part {
+        outline: PanelOutline::Rect { corner_features: Vec::new(), edge_bows: Vec::new() },
+        nominal_size: size,
+        corners: corners.clone(),
+        far_corners: corners,
+        bevels: Vec::new(),
+        trims,
     };
-    let (part, anchor) = part_of(shape)?;
     // The board's body runs one thickness from the plane its inner face lies on, so the panel's own
     // base face is the front one and the stance decides which end that is in the product frame.
-    let value = start - gap;
     let mut translation = DVec3::ZERO;
-    translation[stance.u] = anchor.x;
-    translation[stance.v] = anchor.y;
-    translation[stance.t] = stance.face(value, gap);
+    translation[stance.u] = low.x;
+    translation[stance.v] = low.y;
+    translation[stance.t] = stance.face(start - gap, gap);
     let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
     Ok((part, placement))
 }
@@ -1827,17 +1837,35 @@ mod tests {
         )
     }
 
+    /// The board a plan describes: the material's own span, in panel-local millimetres.
+    ///
+    /// A panel's frame is its nominal rectangle and its material is what the trims make of it, so a
+    /// front's *board* is the polygon and not the size (ADR 0240).
+    fn board_span(plan: &FillPlan) -> (f64, f64) {
+        let first = plan.corners.first().copied().expect("a corner");
+        let (low, high) =
+            plan.corners.iter().copied().fold((first, first), |(low, high), point| (low.min(point), high.max(point)));
+        (high.x - low.x, high.y - low.y)
+    }
+
     #[test]
     fn an_overlay_front_runs_a_lap_past_the_opening_and_lies_on_its_face() {
         // The task's own case (U124): a 600 x 720 opening, an 18 mm board and a 14 mm lap from the
         // workshop's numbers give a 628 x 748 front whose inner face is the plane the void opens
-        // onto and whose body stands in front of it (ADR 0240).
+        // onto and whose body stands in front of it (ADR 0240). The frame stays the opening, so the
+        // part's position is controlled by the corner of the opening and never by a lap.
         let (project, product) = framed_product();
         let plan = overlay(&project, product, millimetres(14)).expect("the frame gives the front its lap");
-        assert_eq!(plan.nominal_size.length(), millimetres(748), "the height plus a lap at each end");
-        assert_eq!(plan.nominal_size.width(), millimetres(628), "the width plus a lap at each end");
-        assert_eq!(plan.trims.as_array(), [millimetres(-14); 4], "each end carried the lap the frame allowed");
+        assert_eq!(plan.nominal_size.length(), millimetres(720), "the frame is the opening's height");
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "and its width");
+        assert_eq!(plan.trims.as_array(), [millimetres(-14); 4], "each end carries the lap the frame allowed");
+        let (length, width) = board_span(&plan);
+        assert!((length - 748.0).abs() < 1.0e-9, "the board is 748 long, got {length}");
+        assert!((width - 628.0).abs() < 1.0e-9, "and 628 wide, got {width}");
         assert!(!plan.outline.has_contour_features() && plan.outline.contour().is_none(), "a front is a rectangle");
+        // The frame's corner is the opening's own corner, and the board runs a lap past it.
+        let placed = plan.placement.translation();
+        assert!((placed.z - 18.0).abs() < 1.0e-9 && (placed.x - 18.0).abs() < 1.0e-9, "the opening's corner");
         // The body runs one thickness in front of the start plane, so its inner face is that plane.
         let gap = 18.0;
         for corner in &plan.corners {
@@ -1858,8 +1886,10 @@ mod tests {
         // over. An empty case leaves every end on the opening's own edge.
         let (project, product) = empty_product(600, 560, 720);
         let plan = overlay(&project, product, millimetres(14)).expect("an empty case still takes a front");
-        assert_eq!(plan.nominal_size.length(), millimetres(720), "no lap on the height");
-        assert_eq!(plan.nominal_size.width(), millimetres(600), "no lap on the width");
+        assert_eq!(plan.nominal_size.length(), millimetres(720), "the frame is the opening's height");
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "and its width");
+        let (length, width) = board_span(&plan);
+        assert!((length - 720.0).abs() < 1.0e-9 && (width - 600.0).abs() < 1.0e-9, "the board is the opening");
         assert!(plan.trims.is_zero(), "no end carries a trim");
     }
 
@@ -1878,11 +1908,16 @@ mod tests {
         let plan = overlay(&project, product, millimetres(14)).expect("the front still lies");
         // The board's own axes: its length runs up the case and its width across it, so the neighbour
         // is at the end the card calls the bottom.
-        assert_eq!(plan.nominal_size.width(), millimetres(592), "the opening plus one lap, cut back at the neighbour");
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "the frame is the opening, whatever the board does");
+        let (_, board_width) = board_span(&plan);
+        assert!(
+            (board_width - 592.0).abs() < 1.0e-9,
+            "the opening plus one lap, cut back at the neighbour: {board_width}"
+        );
         assert_eq!(plan.trims.get(RectEdge::Bottom.id()), millimetres(22), "the end stops 22 mm inside the opening");
         assert_eq!(plan.trims.get(RectEdge::Top.id()), millimetres(-14), "the other end keeps its lap");
-        // The board keeps the opening: its cut end is the neighbour's far edge, not its near one.
-        assert_eq!(plan.nominal_size.length(), millimetres(748), "the height is untouched");
+        let (board_length, _) = board_span(&plan);
+        assert!((board_length - 748.0).abs() < 1.0e-9, "the height is untouched");
     }
 
     #[test]

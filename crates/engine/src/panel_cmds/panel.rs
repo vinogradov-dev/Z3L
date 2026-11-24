@@ -804,31 +804,38 @@ fn build_plan(
         size.width().millimetres_f64() * 0.5,
         thickness.millimetres_f64() * 0.5,
     ));
-    // A front laid over the frame's face stands *outside* the void it covers, so the point that
-    // measures its cell is its inner face stepped one micrometre into the opening (ADR 0240); the
-    // ends it already carries are the laps it asks for, so a frame that lost a neighbour does not
-    // silently widen a front the person sized.
-    let (point, mount) = if trims.is_zero() {
-        (centre, FillMount::Inset)
-    } else {
-        let inner = frame.transform_point(DVec3::new(
-            size.length().millimetres_f64() * 0.5,
-            size.width().millimetres_f64() * 0.5,
-            thickness.millimetres_f64(),
-        ));
-        let into = frame.transform_vector(DVec3::Z);
-        let mut laps = [Length::ZERO; 4];
-        for (index, trim) in trims.as_array().into_iter().enumerate() {
-            if let Some(slot) = laps.get_mut(index) {
-                *slot = Length::from_micrometres(
-                    trim.micrometres().checked_neg().ok_or_else(|| refused("an end trim is not a usable number"))?,
-                );
-            }
-        }
-        (inner + into * INTO_THE_VOID_MM, FillMount::Overlay { laps })
-    };
     let mut probe = project.clone();
     probe.remove_node(params.panel)?;
+    // Which board this is, read from where it stands rather than from a stored form: a part inside
+    // the void measures at its own centre, and a front laid over the frame's face stands outside it,
+    // so its cell is measured from its inner face stepped one micrometre into the opening. The ends a
+    // front already carries are the laps it asks for, so a frame that lost a neighbour does not
+    // silently widen a front the person sized (ADR 0240).
+    let (point, mount) = match probe.niche(centre, Sight::none(), Some(contact)) {
+        Ok(_) => (centre, FillMount::Inset),
+        Err(_) if !trims.is_zero() => {
+            let inner = frame.transform_point(DVec3::new(
+                size.length().millimetres_f64() * 0.5,
+                size.width().millimetres_f64() * 0.5,
+                thickness.millimetres_f64(),
+            ));
+            let into = frame.transform_vector(DVec3::Z);
+            let mut laps = [Length::ZERO; 4];
+            for (index, trim) in trims.as_array().into_iter().enumerate() {
+                if let Some(slot) = laps.get_mut(index) {
+                    *slot = Length::from_micrometres(
+                        trim.micrometres()
+                            .checked_neg()
+                            .ok_or_else(|| refused("an end trim is not a usable number"))?,
+                    );
+                }
+            }
+            (inner + into * INTO_THE_VOID_MM, FillMount::Overlay { laps })
+        }
+        Err(refusal) => {
+            return Err(CommandError::NoNiche { message: crate::read::no_niche_sentence(centre.to_array(), refusal) });
+        }
+    };
     let niche = probe.niche(point, Sight::none(), Some(contact)).map_err(|refusal| CommandError::NoNiche {
         message: crate::read::no_niche_sentence(point.to_array(), refusal),
     })?;
@@ -836,7 +843,10 @@ fn build_plan(
     let plan = probe
         .fill_plan_in(&niche, parent, request, Sight::none())
         .map_err(|refusal| CommandError::FillRefused { command: BUILD_SET_ID, refusal })?;
-    Ok((plan.placement, plan.nominal_size, plan.outline, plan.bevels, plan.trims))
+    // A board that fills the opening keeps the ends it was trimmed with; a front takes the laps the
+    // plan measured again.
+    let trims = if mount.is_overlay() { plan.trims } else { trims };
+    Ok((plan.placement, plan.nominal_size, plan.outline, plan.bevels, trims))
 }
 
 /// Stable id of the panel rename command.
@@ -1066,10 +1076,15 @@ mod tests {
         assert!(spec.enabled(&session, &asked), "a rectangle panel takes an end trim");
         let revision = session.project().revision();
         session.dispatch(TRIM_SET_ID, &asked).expect("the end is let out");
-        let grown = session.project().panel(panel).expect("the panel").nominal_size();
+        // The frame — the size and the origin a person controls the position by — did not move.
+        let panel_now = session.project().panel(panel).expect("the panel");
+        assert_eq!(panel_now.nominal_size(), before, "the nominal frame is where it was");
+        assert_eq!(panel_now.placement(), Placement::IDENTITY, "and the origin never moved");
+        let grown = panel_now.geometry_with_fallbacks().expect("the board resolves").core_length();
         assert_eq!(
-            grown.length(),
-            before.length().checked_add(Length::from_millimetres(14).expect("a lap")).expect("a length")
+            grown,
+            before.length().checked_add(Length::from_millimetres(14).expect("a lap")).expect("a length"),
+            "the material laps 14 mm past the frame"
         );
         assert_eq!(
             session.project().panel(panel).expect("the panel").trims().get(RectEdge::Left.id()),

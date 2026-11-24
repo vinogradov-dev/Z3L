@@ -12,7 +12,8 @@ use thiserror::Error;
 
 use crate::{
     BandingSpec, ContourSegmentId, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Length,
-    Panel, PanelDimensionError, PanelNominalSize, PanelOutline, RectCorner, RectEdge, RingBanding, VertexId,
+    Panel, PanelDimensionError, PanelNominalSize, PanelOutline, PanelTrims, RectCorner, RectEdge, RingBanding,
+    VertexId,
 };
 
 /// The ring of a contour panel as the nominal outline, with one source per segment.
@@ -56,6 +57,12 @@ pub enum PanelContourError {
     /// Corner treatments consume the whole edge between them.
     #[error("corner features leave no straight edge on edge {edge}")]
     FeatureOverlap {
+        /// The edge whose clear length is not positive.
+        edge: EdgeId,
+    },
+    /// The end trims of two opposite ends consume the board between them.
+    #[error("the end trims leave no board on edge {edge}")]
+    TrimLeavesNoEdge {
         /// The edge whose clear length is not positive.
         edge: EdgeId,
     },
@@ -627,7 +634,7 @@ impl Panel {
     ) -> Result<(Contour, Vec<SegmentSource>), PanelContourError> {
         match &self.outline {
             PanelOutline::Contour { contour } => ring_segments(contour, nominal_size),
-            outline => outline_ring_with_sources(outline, nominal_size),
+            outline => outline_ring_with_sources(outline, nominal_size, self.trims),
         }
     }
 }
@@ -649,7 +656,7 @@ impl PanelOutline {
     ) -> Result<(Contour, Vec<SegmentSource>), PanelContourError> {
         match self {
             Self::Contour { contour } => ring_segments(contour, nominal_size),
-            Self::Rect { .. } => outline_ring_with_sources(self, nominal_size),
+            Self::Rect { .. } => outline_ring_with_sources(self, nominal_size, PanelTrims::ZERO),
         }
     }
 }
@@ -664,14 +671,32 @@ impl PanelOutline {
 fn outline_ring_with_sources(
     outline: &PanelOutline,
     nominal_size: PanelNominalSize,
+    trims: PanelTrims,
 ) -> Result<(Contour, Vec<SegmentSource>), PanelContourError> {
     let corner_feature = |corner: VertexId| outline.corner_features().iter().copied().find(|f| f.corner() == corner);
     let edge_bow = |edge: EdgeId| outline.edge_bows().iter().copied().find(|bow| bow.edge() == edge);
     let length = nominal_size.length().millimetres_f64();
     let width = nominal_size.width().millimetres_f64();
-    let corners = [DVec2::new(0.0, 0.0), DVec2::new(length, 0.0), DVec2::new(length, width), DVec2::new(0.0, width)];
+    // The nominal rectangle is the panel's frame — its origin is the frame's base corner and a
+    // command that changes the board through its parameters never moves it (ADR 0240). The end trims
+    // are read here, so the material sits inside the frame at the ends the workshop cut in and runs
+    // outside it at the ends it let out: a negative trim is a lap.
+    let [bottom, right, top, left] =
+        [RectEdge::Bottom.id(), RectEdge::Right.id(), RectEdge::Top.id(), RectEdge::Left.id()]
+            .map(|edge| trims.get(edge).millimetres_f64());
+    let (low_x, high_x, low_y, high_y) = (left, length - right, bottom, width - top);
+    let clear_length = high_x - low_x;
+    let clear_width = high_y - low_y;
+    if !(clear_length.is_finite() && clear_length > 1.0e-6) {
+        return Err(PanelContourError::TrimLeavesNoEdge { edge: RectEdge::Bottom.id() });
+    }
+    if !(clear_width.is_finite() && clear_width > 1.0e-6) {
+        return Err(PanelContourError::TrimLeavesNoEdge { edge: RectEdge::Right.id() });
+    }
+    let corners =
+        [DVec2::new(low_x, low_y), DVec2::new(high_x, low_y), DVec2::new(high_x, high_y), DVec2::new(low_x, high_y)];
     let directions = [DVec2::X, DVec2::Y, DVec2::NEG_X, DVec2::NEG_Y];
-    let edge_lengths = [length, width, length, width];
+    let edge_lengths = [clear_length, clear_width, clear_length, clear_width];
 
     let mut segments = Vec::with_capacity(8);
     let mut sources = Vec::with_capacity(8);

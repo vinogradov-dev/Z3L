@@ -6,7 +6,7 @@
 use crate::contour::{MAX_SELF_INTERSECTION_PAIRS, SELF_INTERSECTION_TOLERANCE_MICROMETRES, SegBounds, segments_touch};
 use crate::panel::{core_violation_of, rects_overlap, validate_ring_banding};
 use crate::tree::{find_container_mut, find_panel_mut};
-use geom::{DVec3, Region};
+use geom::Region;
 
 use super::scan_tree;
 use crate::*;
@@ -39,63 +39,64 @@ impl Project {
         Ok(next_revision)
     }
 
-    /// Checks whether one end of a rectangle panel can move to `trim`.
+    /// Checks whether a panel can carry these end trims.
     ///
-    /// The number is the end's own, never a delta: the end moves by the difference between the number
-    /// and the one stored, so the panel must still be a board the document can hold afterwards (a
-    /// positive size, its machining inside the new core, its bevels still leaving material).
+    /// A trim cuts the material at the end it names or lets it out past the frame, and the frame —
+    /// the panel's nominal rectangle and its origin — never moves (ADR 0240). So the check is that
+    /// the board still resolves: the material has a positive size, the machining still lies inside
+    /// it, and the end bevels still leave material at the far face.
+    pub fn validate_panel_trims(&self, id: Id, trims: PanelTrims) -> Result<(), ProjectError> {
+        let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
+        if !trims.is_zero() && panel.is_contour() {
+            return Err(ProjectError::PanelTrimNeedsRectangle { id });
+        }
+        let mut candidate = panel.clone();
+        candidate.set_trims(trims);
+        candidate.nominal_contour()?;
+        let geometry = candidate.geometry_for(candidate.nominal_size(), candidate.last_known_thickness())?;
+        validate_panel_machining(&candidate, &geometry)?;
+        if candidate.bevel_violation(candidate.nominal_size(), &geometry)?.is_some() {
+            return Err(ProjectError::BevelRemovesBody { panel: id });
+        }
+        Ok(())
+    }
+
+    /// Checks whether one end of a rectangle panel can move to `trim`.
     pub fn validate_panel_trim(&self, id: Id, edge: EdgeId, trim: Length) -> Result<(), ProjectError> {
         let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
         if panel.is_contour() {
             return Err(ProjectError::PanelTrimNeedsRectangle { id });
         }
         let trims = panel.trims().with(edge, trim).map_err(|source| ProjectError::TrimRefused { panel: id, source })?;
-        let (nominal_size, _placement) = trimmed_frame(panel, trims)?;
-        let geometry = panel.geometry_for(nominal_size, panel.last_known_thickness())?;
-        validate_panel_machining(panel, &geometry)?;
-        if panel.bevel_violation(nominal_size, &geometry)?.is_some() {
-            return Err(ProjectError::BevelRemovesBody { panel: id });
-        }
-        Ok(())
+        self.validate_panel_trims(id, trims)
     }
 
-    /// Writes the end trims a plan measured, for a board whose ends already lie there.
+    /// Writes one end's trim, and bumps the revision once.
     ///
-    /// A fill measures the size, the placement and the trims together, so the part is born with a
-    /// record that describes it to the millimetre; this writes that record without moving an end, in
-    /// the same revision as the creation (ADR 0240). A person changing a number goes through
-    /// [`Project::set_panel_trim`], which moves the end the number names.
+    /// The number belongs to the end and never accumulates: a command stores the number it is given,
+    /// so the same number twice moves nothing and the first one puts the end back. The origin, the
+    /// nominal size and the placement are untouched — a command that changes the board through its
+    /// parameters never moves the frame — and the material is derived from the frame and the trims
+    /// whenever the panel is resolved (ADR 0240).
+    pub fn set_panel_trim(&mut self, id: Id, edge: EdgeId, trim: Length) -> Result<Revision, ProjectError> {
+        self.validate_panel_trim(id, edge, trim)?;
+        let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
+        let trims = panel.trims().with(edge, trim).map_err(|source| ProjectError::TrimRefused { panel: id, source })?;
+        self.set_panel_trims(id, trims)
+    }
+
+    /// Writes the end trims a plan measured, for a board whose frame already stands where it should.
+    ///
+    /// A fill measures the frame, the placement and the trims together, so the part is born with a
+    /// record that describes it; this writes that record in the same revision as the creation
+    /// (ADR 0240).
     pub fn set_panel_trims(&mut self, id: Id, trims: PanelTrims) -> Result<Revision, ProjectError> {
-        if self.panel(id).is_none() {
-            return Err(ProjectError::PanelNotFound { id });
-        }
+        self.validate_panel_trims(id, trims)?;
         let next_revision = self.next_revision()?;
         let Some((_depth, panel)) = find_panel_mut(&mut self.root, id, 1) else {
             return Err(ProjectError::PanelNotFound { id });
         };
         panel.set_trims(trims);
-        self.revision = next_revision;
-        Ok(next_revision)
-    }
-
-    /// Moves one end of a rectangle panel to the trim the workshop typed, and bumps the revision once.
-    ///
-    /// The end moves by the difference between the number asked and the number stored, so the same
-    /// number twice moves nothing and the first one puts the end back (ADR 0240). The opposite ends
-    /// keep their place: moving an end at the panel's own zero corner carries the panel's origin with
-    /// it, which is why the placement travels in the same revision as the size.
-    pub fn set_panel_trim(&mut self, id: Id, edge: EdgeId, trim: Length) -> Result<Revision, ProjectError> {
-        self.validate_panel_trim(id, edge, trim)?;
-        let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
-        let trims = panel.trims().with(edge, trim).map_err(|source| ProjectError::TrimRefused { panel: id, source })?;
-        let (nominal_size, placement) = trimmed_frame(panel, trims)?;
-        let next_revision = self.next_revision()?;
-        let Some((_depth, slot)) = find_panel_mut(&mut self.root, id, 1) else {
-            return Err(ProjectError::PanelNotFound { id });
-        };
-        slot.set_nominal_size(nominal_size);
-        slot.set_placement(placement);
-        slot.set_trims(trims);
         self.revision = next_revision;
         Ok(next_revision)
     }
@@ -830,46 +831,6 @@ impl Project {
     }
 }
 
-/// The size and placement a rectangle panel has when its ends carry `trims`.
-///
-/// The end moves by the difference between the trim and the one the panel stores, so a trim is a
-/// number per end and never an accumulated step. Edge 1 is the end at zero width, 2 the end at the
-/// full length, 3 the end at the full width and 4 the end at zero length (the card's own numbering):
-/// a positive trim cuts the end in, so the size shrinks by the difference, and an end at the panel's
-/// zero corner carries the origin with it while the opposite end stays where it is.
-fn trimmed_frame(panel: &Panel, trims: PanelTrims) -> Result<(PanelNominalSize, Placement), ProjectError> {
-    let size = panel.nominal_size();
-    let (length, width) = (size.length(), size.width());
-    let overflow = || {
-        ProjectError::PanelDimension(PanelDimensionError::TooLarge {
-            field: "size",
-            value: length,
-            max: Panel::MAX_LENGTH,
-        })
-    };
-    let move_left =
-        trims.get(RectEdge::Left.id()).checked_sub(panel.trims().get(RectEdge::Left.id())).ok_or_else(overflow)?;
-    let move_right =
-        trims.get(RectEdge::Right.id()).checked_sub(panel.trims().get(RectEdge::Right.id())).ok_or_else(overflow)?;
-    let move_bottom =
-        trims.get(RectEdge::Bottom.id()).checked_sub(panel.trims().get(RectEdge::Bottom.id())).ok_or_else(overflow)?;
-    let move_top =
-        trims.get(RectEdge::Top.id()).checked_sub(panel.trims().get(RectEdge::Top.id())).ok_or_else(overflow)?;
-    let shorten = |first: Length, second: Length| first.checked_add(second);
-    let length = shorten(move_left, move_right).and_then(|moved| length.checked_sub(moved)).ok_or_else(overflow)?;
-    let width = shorten(move_bottom, move_top).and_then(|moved| width.checked_sub(moved)).ok_or_else(overflow)?;
-    let nominal_size = PanelNominalSize::new(length, width)?;
-    let placement = panel.placement();
-    let local = DVec3::new(move_left.millimetres_f64(), move_bottom.millimetres_f64(), 0.0);
-    let placement = if local == DVec3::ZERO {
-        placement
-    } else {
-        Placement::new(placement.transform_point(local), placement.rotation())
-            .map_err(|_| ProjectError::PanelOutlineFrame { panel: panel.id() })?
-    };
-    Ok((nominal_size, placement))
-}
-
 /// Validates edge banding on a panel.
 pub(super) fn validate_panel_banding(panel: &Panel) -> Result<(), ProjectError> {
     let mut seen = HashSet::new();
@@ -1123,44 +1084,63 @@ mod tests {
     }
 
     #[test]
-    fn an_end_trim_moves_its_own_end_and_the_opposite_one_stays() {
+    fn an_end_trim_cuts_the_material_and_never_moves_the_frame() {
         // A trim is the workshop's «подрезка торца» (U124, ADR 0240): positive cuts the end in,
-        // negative lets the board out. The end at the panel's zero corner carries the origin with it,
-        // so the far end of the board never moves.
+        // negative lets the board out. The nominal rectangle is the panel's frame — the handle its
+        // position is controlled by — so a trim changes the material and leaves the origin, the
+        // nominal size and the placement exactly where they were.
         let mut project = sample_project();
         let root = project.root().id();
         let panel = project
             .add_panel(root, "Front", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
             .expect("a panel");
         let size = sample_nominal();
+        let placed = project.panel(panel).expect("the panel").placement();
 
-        // The right end (edge 2) is the far one: a 10 mm trim shortens the board and moves nothing.
-        project.set_panel_trim(panel, RectEdge::Right.id(), millimetres(10)).expect("the far end is trimmed");
-        let trimmed = project.panel(panel).expect("the panel").nominal_size();
-        assert_eq!(trimmed.length(), size.length().checked_sub(millimetres(10)).expect("a length"));
-        assert_eq!(trimmed.width(), size.width(), "the other pair is untouched");
-        assert_eq!(project.panel(panel).expect("the panel").placement().translation(), DVec3::ZERO);
-
-        // The left end (edge 4) is the near one: the board shrinks and its origin follows, so the
-        // right end stays exactly where it was.
-        project.set_panel_trim(panel, RectEdge::Left.id(), millimetres(10)).expect("the near end is trimmed");
-        let panel_now = project.panel(panel).expect("the panel");
-        assert_eq!(panel_now.nominal_size().length(), size.length().checked_sub(millimetres(20)).expect("a length"));
-        assert_eq!(panel_now.placement().translation(), DVec3::new(10.0, 0.0, 0.0), "the origin followed its corner");
-        assert_eq!(panel_now.trims().get(RectEdge::Left.id()), millimetres(10));
-
-        // A negative number is the lap: the board grows past its size on that end alone.
-        project.set_panel_trim(panel, RectEdge::Top.id(), millimetres(-14)).expect("the end is let out");
+        // The far end (edge 2) is cut in by 10 mm: the board shortens from that end alone.
+        project.set_panel_trim(panel, RectEdge::Right.id(), millimetres(10)).expect("the far end is cut in");
+        let trimmed = project.panel(panel).expect("the panel");
+        assert_eq!(trimmed.nominal_size(), size, "the nominal frame is where it was");
+        assert_eq!(trimmed.placement(), placed, "and so is the origin");
+        let geometry = trimmed.geometry_with_fallbacks().expect("the board resolves");
         assert_eq!(
-            project.panel(panel).expect("the panel").nominal_size().width(),
-            size.width().checked_add(millimetres(14)).expect("a width")
+            geometry.core_length(),
+            size.length().checked_sub(millimetres(10)).expect("a length"),
+            "the material is a trim shorter"
+        );
+        assert_eq!(geometry.core_width(), size.width(), "the other pair is untouched");
+        assert!(geometry.core_x().is_zero(), "the cut end is the far one, so the core still starts at the frame");
+
+        // The near end (edge 4) is cut in too: the frame stays and the material's start moves in.
+        project.set_panel_trim(panel, RectEdge::Left.id(), millimetres(10)).expect("the near end is cut in");
+        let trimmed = project.panel(panel).expect("the panel");
+        assert_eq!(trimmed.nominal_size(), size, "the frame is still the frame");
+        assert_eq!(trimmed.placement(), placed, "and the origin never moved");
+        let geometry = trimmed.geometry_with_fallbacks().expect("the board resolves");
+        assert_eq!(
+            geometry.core_length(),
+            size.length().checked_sub(millimetres(20)).expect("a length"),
+            "both cut ends shorten the board"
+        );
+        assert_eq!(geometry.core_x(), millimetres(10), "and the material starts a trim inside the frame");
+
+        // A negative number is the lap: the material runs past the frame on that end alone.
+        project.set_panel_trim(panel, RectEdge::Top.id(), millimetres(-14)).expect("the end is let out");
+        let trimmed = project.panel(panel).expect("the panel");
+        assert_eq!(trimmed.nominal_size(), size, "the frame did not change");
+        assert_eq!(trimmed.placement(), placed, "nor did the origin");
+        let geometry = trimmed.geometry_with_fallbacks().expect("the board resolves");
+        assert_eq!(
+            geometry.core_width(),
+            size.width().checked_add(millimetres(14)).expect("a width"),
+            "the material laps 14 mm past the frame"
         );
     }
 
     #[test]
     fn a_trim_does_not_accumulate_and_the_first_number_puts_the_end_back() {
         // The number belongs to the end: the same number twice moves nothing, and the number the end
-        // had puts it back exactly — the defect a delta-shaped field would have.
+        // had puts the material back exactly — the defect a delta-shaped field would have.
         let mut project = sample_project();
         let root = project.root().id();
         let panel = project
@@ -1168,15 +1148,18 @@ mod tests {
             .expect("a panel");
         let before = project.revision();
         project.set_panel_trim(panel, RectEdge::Bottom.id(), millimetres(-14)).expect("a lap");
-        let grown = project.panel(panel).expect("the panel").nominal_size();
+        let lapped = project.panel(panel).expect("the panel").geometry_with_fallbacks().expect("geometry").core_width();
         assert_eq!(project.revision(), before.checked_next().expect("revision"), "one revision");
         project.set_panel_trim(panel, RectEdge::Bottom.id(), millimetres(-14)).expect("the same number");
-        assert_eq!(project.panel(panel).expect("the panel").nominal_size(), grown, "the same number moves nothing");
+        let again = project.panel(panel).expect("the panel").geometry_with_fallbacks().expect("geometry").core_width();
+        assert_eq!(again, lapped, "the same number moves nothing");
         project.set_panel_trim(panel, RectEdge::Bottom.id(), Length::ZERO).expect("the end is put back");
         let back = project.panel(panel).expect("the panel");
-        assert_eq!(back.nominal_size(), sample_nominal(), "the end is where it was");
-        assert_eq!(back.placement().translation(), DVec3::ZERO, "and the origin too");
         assert!(back.trims().is_zero(), "no end carries a trim");
+        assert_eq!(back.nominal_size(), sample_nominal(), "the frame is the size it always was");
+        let geometry = back.geometry_with_fallbacks().expect("the board resolves");
+        assert_eq!(geometry.core_width(), sample_nominal().width(), "and so is the material");
+        assert!(geometry.core_y().is_zero(), "the material starts at the frame's corner again");
     }
 
     #[test]
@@ -1187,10 +1170,11 @@ mod tests {
             .add_panel(root, "Front", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
             .expect("a panel");
         let before = project.revision();
-        // A trim wider than the board asks for a negative size, which no panel holds.
+        // Two opposite ends that cut more than the board between them ask for a negative side.
         let refused = project.set_panel_trim(panel, RectEdge::Right.id(), millimetres(2_000));
         assert!(refused.is_err(), "a trim past the board is refused");
         assert_eq!(project.revision(), before, "a refusal moves no number");
+        assert!(project.panel(panel).expect("the panel").trims().is_zero(), "and writes no record");
 
         // A ring has no four nominal ends, so the number has nothing to name.
         let contour = Contour::from_polygon(

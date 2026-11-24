@@ -357,8 +357,10 @@ pub(crate) fn plan_at(
     let far_along = base_along + plan.placement.transform_vector(DVec3::Z)[axis] * gap;
     let (base_centre, far_centre) = (midpoint(&world), midpoint(&top));
     let faces = if base_along <= far_along { [base_centre, far_centre] } else { [far_centre, base_centre] };
-    let size_mm =
-        DVec3::new(plan.nominal_size.length().millimetres_f64(), plan.nominal_size.width().millimetres_f64(), gap);
+    // The callouts measure the board, not its frame: a front's material is what the eye sees and
+    // what the click cuts, and its frame is the opening the person controls the position by
+    // (ADR 0240). For an ordinary fill the two are the same polygon.
+    let size_mm = DVec3::new(reach(&world, axes[0]), reach(&world, axes[1]), gap);
     Ok(FillGhost {
         parent: plan.product,
         outline: plan.outline,
@@ -375,6 +377,15 @@ pub(crate) fn plan_at(
         faces,
         axes,
     })
+}
+
+/// How far a ring reaches along one direction, in millimetres.
+fn reach(points: &[DVec3], direction: DVec3) -> f64 {
+    let (low, high) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), point| {
+        let along = point.dot(direction);
+        (low.min(along), high.max(along))
+    });
+    if high.is_finite() && low.is_finite() { high - low } else { 0.0 }
 }
 
 /// The reason a void cannot be filled, in the words the model states for every caller.
@@ -565,7 +576,9 @@ mod tests {
             .expect("a wall fills the void");
         assert_eq!(ghost.nominal_size.length(), millimetres(720), "the niche height is the wall's length");
         assert_eq!(ghost.nominal_size.width(), millimetres(600), "and the niche width is its width");
-        assert_eq!(ghost.size_mm, DVec3::new(720.0, 600.0, 18.0));
+        // The callouts measure the board's own span, so they agree with the polygon to a rounding
+        // step and not to the bit.
+        assert!((ghost.size_mm - DVec3::new(720.0, 600.0, 18.0)).length() < 1e-6, "{:?}", ghost.size_mm);
         let near = |point: DVec3, wanted: DVec3| (point - wanted).length() < 1e-9;
         assert!(near(ghost.placement.translation(), DVec3::new(0.0, 280.0, 0.0)), "{:?}", ghost.placement);
         // Vertex 1 is the base corner: the panel's length runs up, its width across the front and its

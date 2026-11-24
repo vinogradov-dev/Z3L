@@ -1641,8 +1641,8 @@ messages! {
     CmdSetPanelTrim = ["Set an end trim", "Задать подрезку торца"],
     SectionEndTrims = ["End trims", "Подрезка торцов"],
     EndTrimHint = [
-        "A positive number cuts the end in, a negative one lets the board out past its size.",
-        "Положительное число подрезает торец, отрицательное выпускает доску за её размер."
+        "A positive number cuts the end in, a negative one lets the board out past the nominal rectangle.",
+        "Положительное число подрезает торец, отрицательное выпускает доску за номинальный габарит."
     ],
     FillMountInset = ["Inset", "Вкладная"],
     FillMountOverlay = ["Overlay", "Накладная"],

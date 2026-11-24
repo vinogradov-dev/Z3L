@@ -240,15 +240,23 @@ mod tests {
         let id =
             session.dispatch(FILL_ID, &json_params(&params)).expect("the front lands").created_id().expect("an id");
         let panel = session.project().panel(id).expect("a panel");
+        // The frame is the opening and the board is what the laps make of it (ADR 0240), so the
+        // position is controlled by the opening's corner and the material runs past it.
         assert_eq!(
             panel.nominal_size(),
-            PanelNominalSize::new(millimetres(748), millimetres(628)).expect("a size"),
-            "the opening plus a 14 mm lap at each end"
+            PanelNominalSize::new(millimetres(720), millimetres(600)).expect("a size"),
+            "the frame is the opening"
         );
         assert_eq!(panel.trims().as_array(), [millimetres(-14); 4], "each end carries its lap");
+        let geometry = session
+            .panel_geometry(id)
+            .or_else(|_| panel.geometry_with_fallbacks().map_err(|error| error.to_string()))
+            .expect("the front resolves");
+        assert_eq!(geometry.core_length(), millimetres(748), "the board is the opening plus a lap at each end");
+        assert_eq!(geometry.core_width(), millimetres(628), "and across too");
         // Its inner face is the plane the void opens onto, so the whole body stands in front of it.
         let placement = session.project().world_placement(id).expect("a placement");
-        let inner = placement.transform_point(geom::DVec3::new(374.0, 314.0, 18.0));
+        let inner = placement.transform_point(geom::DVec3::new(360.0, 300.0, 18.0));
         assert!(inner.y.abs() < 1.0e-9, "the inner face lies on the opening's plane: {inner:?}");
         // One part, one undo entry.
         session.undo().expect("one undo step");
@@ -392,8 +400,45 @@ mod tests {
         assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one revision");
         // The front still stands one thickness in front of the opening's plane.
         let placement = session.project().world_placement(id).expect("a placement");
-        let inner = placement.transform_point(geom::DVec3::new(374.0, 314.0, 18.0));
+        let inner = placement.transform_point(geom::DVec3::new(360.0, 300.0, 18.0));
         assert!(inner.y.abs() < 1.0e-6, "the inner face stays on the opening: {inner:?}");
+    }
+
+    #[test]
+    fn a_trimmed_board_inside_the_opening_stays_inside_it_when_the_build_changes() {
+        // Which board this is is read from where it stands, not from a form (ADR 0240): an inset
+        // board keeps its trims and its place through the other build, and only a front laid over
+        // the frame is planned again as the front it is.
+        let (mut session, product) = framed();
+        let mut params = request(product, ClassCode::BACK_PANEL, FillMode::Fit);
+        params.at = [318.0, 280.0, 378.0];
+        let id = session
+            .dispatch(FILL_ID, &json_params(&params))
+            .expect("the wall fills the void")
+            .created_id()
+            .expect("an id");
+        let trimmed = units::Length::from_millimetres(10).expect("a trim");
+        session
+            .dispatch(
+                crate::panel_cmds::TRIM_SET_ID,
+                &json_params(&crate::panel_cmds::PanelTrimSet {
+                    panel: id,
+                    edge: model::RectEdge::Right.id(),
+                    trim: trimmed,
+                }),
+            )
+            .expect("the end is cut in");
+        session
+            .dispatch(
+                crate::panel_cmds::BUILD_SET_ID,
+                &json_params(&PanelBuildSet { panel: id, mode: FillMode::Shape }),
+            )
+            .expect("the build changes");
+        let panel = session.project().panel(id).expect("the panel is still there");
+        let placed = panel.placement().translation();
+        assert!(placed.y > 0.0, "a board inside the opening is not laid over the frame: {placed:?}");
+        assert!(placed.y + 18.0 <= 560.0, "and its body still fits the void's depth: {placed:?}");
+        assert_eq!(panel.trims().get(model::RectEdge::Right.id()), trimmed, "and keeps the end it was trimmed at");
     }
 
     #[test]

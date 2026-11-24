@@ -3643,13 +3643,14 @@ fn framed_front_harness(name: &str) -> (Harness, model::Id, egui::Pos2, model::P
     let inside = geom::DVec3::new(width * 0.5, depth * 0.5, height * 0.5);
     let pointer = gizmo_math::screen_point(document.camera(), rect, inside).expect("the opening is on screen");
     assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
-    // The opening plus a fourteen millimetre lap on each of its four ends.
-    let front = model::PanelNominalSize::new(
-        units::Length::from_millimetres((height - 2.0 * board + 28.0) as i64).expect("a length"),
-        units::Length::from_millimetres((width - 2.0 * board + 28.0) as i64).expect("a width"),
+    // The frame is the opening itself; the fourteen millimetre laps are the material's, and the
+    // board that comes out is the opening plus a lap at each of its four ends (ADR 0240).
+    let opening = model::PanelNominalSize::new(
+        units::Length::from_millimetres((height - 2.0 * board) as i64).expect("a length"),
+        units::Length::from_millimetres((width - 2.0 * board) as i64).expect("a width"),
     )
-    .expect("a front size");
-    (harness, product, pointer, front)
+    .expect("an opening size");
+    (harness, product, pointer, opening)
 }
 
 #[test]
@@ -3672,15 +3673,17 @@ fn an_overlay_click_is_one_front_one_create_and_one_undo() {
     harness.hover(pointer);
     harness.press_at(pointer, egui::PointerButton::Primary);
     let planned = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the opening took a ghost");
-    assert_eq!(planned.nominal_size, front, "the ghost is the opening plus a lap at each end");
-    assert_eq!(planned.trims.as_array(), [testkit::millimetres(-14); 4], "and it carries the laps it took");
+    assert_eq!(planned.nominal_size, front, "the ghost's frame is the opening");
+    assert_eq!(planned.trims.as_array(), [testkit::millimetres(-14); 4], "and its board carries the laps it took");
+    assert!((planned.size_mm.x - 712.0).abs() < 1.0e-9, "the board is the opening plus a lap at each end");
+    assert!((planned.size_mm.y - 592.0).abs() < 1.0e-9, "and across too");
     harness.release_at(pointer, egui::PointerButton::Primary);
     harness.settle();
 
     let document = harness.app.tabs.active();
     let created = document.editor.selected_node().expect("the new part is selected");
     let panel = document.session.project().panel(created).expect("the click created a panel");
-    assert_eq!(panel.nominal_size(), planned.nominal_size, "the stored front is the ghost's");
+    assert_eq!(panel.nominal_size(), planned.nominal_size, "the stored frame is the ghost's");
     assert_eq!(panel.placement(), planned.placement, "and its placement");
     assert_eq!(panel.trims().as_array(), planned.trims.as_array(), "and the trims it was laid with");
     assert!(!panel.is_contour(), "a front is the rectangle the opening is");
