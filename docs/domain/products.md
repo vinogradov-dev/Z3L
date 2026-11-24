@@ -230,12 +230,12 @@ empty space.
   board's thickness, so a post stands against a splayed wall with the depth the slab really has (0106).
   The wall's creation asks nothing about overlay or inset: the mounting is a property of the part,
   edited after it exists (0200).
-- The part has **two builds**, chosen from the tool's own method list under a «Способ построения» /
-  “Build method” caption and remembered by the workspace. The cell keeps the post or shelf glyph while
-  a build is armed or pinned, so the list is a choice of build, not a choice of panel (0110):
-  - **Largest rectangle** is the default: the part is the largest rectangle, with its sides on the
-    panel's own axes, that lies inside the cut section. It always fits, and it always keeps the
-    standard rectangle panel — resize, card and nominal fields included.
+- The part has **two builds**, chosen on the tool card at the pointer while the fill is armed
+  (0119, 0239). One Panel cell serves every class, so the card names the class and the build instead
+  of the ribbon growing a cell per class:
+  - **Rectangle** is the default: the part is the largest rectangle, with its sides on the panel's own
+    axes, that lies inside the cut section. It always fits, and it always keeps the standard rectangle
+    panel — resize, card and nominal fields included.
   - **Niche shape** makes the part the section itself. Before the panel is chosen, the program asks
     whether a standard rectangle draws exactly that shape: the plain rectangle, a rectangle with
     corner chamfers (asymmetric ones included) or one with corner radii. The candidates are

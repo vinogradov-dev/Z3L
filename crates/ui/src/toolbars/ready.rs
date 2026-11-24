@@ -173,7 +173,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 FillMode::Shape => Message::FillMethodShape,
             };
             // The two methods of one cell would otherwise read the same, so a hint that can run
-            // names the tool and then the method: «Post: Largest rectangle».
+            // names the tool and then the method: «Post: Rectangle».
             let ready = Message::ToolMethodName.with(lang, [tool.label.text(lang), method.text(lang)]);
             let hint = if !has_panel_material {
                 Message::FillNeedsMaterial.text(lang)

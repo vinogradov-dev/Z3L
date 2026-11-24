@@ -766,7 +766,7 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 None => method.label.text(lang).to_owned(),
                 // A method that cannot run here says what is missing.
                 Some(ready) if !ready.enabled => ready.hint.clone(),
-                // A fill's own hint names the tool and then the method — «Post: Largest rectangle» —
+                // A fill's own hint names the tool and then the method — «Post: Rectangle» —
                 // because the two fills are two cells whose methods would otherwise read the same.
                 // A body cell's method says what it builds — «Box: draw its base on the work plane»
                 // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
@@ -1028,11 +1028,7 @@ mod tests {
             ),
             (
                 "furniture",
-                &[
-                    "Panel from contour: click the outline, then close the ring",
-                    "Panel: Largest rectangle",
-                    "Product frame",
-                ],
+                &["Panel from contour: click the outline, then close the ring", "Panel: Rectangle", "Product frame"],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
             (
@@ -2027,7 +2023,7 @@ mod tests {
             "an untouched card is a post fitted to the void"
         );
         assert!(
-            labels.iter().any(|label| label == "Panel: Largest rectangle"),
+            labels.iter().any(|label| label == "Panel: Rectangle"),
             "the hint names the cell and the build the card holds: {labels:?}"
         );
     }

@@ -796,7 +796,7 @@ mod tests {
             }
             output.drop_without_applying_deltas();
         }
-        for words in ["Post", "Shelf", "Wall", "Largest rectangle", "Niche shape"] {
+        for words in ["Post", "Shelf", "Wall", "Rectangle", "Niche shape"] {
             assert!(seen.iter().any(|text| text == words), "`{words}` is on the card: {seen:?}");
         }
         assert_eq!(pressed, Some(ToolPick { row: 1, option: 1 }), "a press on the second row's second option");

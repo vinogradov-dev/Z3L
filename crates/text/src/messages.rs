@@ -989,7 +989,7 @@ messages! {
     PanelContourOpen = ["A panel is cut from a closed outline", "Панель вырезается по замкнутому контуру"],
     PanelContourUnusable = ["This outline is not a usable panel shape", "Этот контур не годится для панели"],
     ToolMethodName = ["{}: {}", "{}: {}"],
-    FillMethodFit = ["Largest rectangle", "Наибольший прямоугольник"],
+    FillMethodFit = ["Rectangle", "Прямоугольник"],
     FillMethodShape = ["Niche shape", "По форме ниши"],
     PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
     PanelMethodRectangle = ["Rectangle", "Прямоугольник"],

@@ -19,12 +19,15 @@ read as a second panel.
 and the niche cell retire with the ids they pinned, and a workspace that pinned one of them loads as
 no pin.
 
-**What a panel becomes is chosen on the part.** One creation menu holds the three rows a maker
-decides: the class (post, shelf, wall, and later the overlay wall), the build (the largest fit or the
-niche's shape) and, from its own task, the count. Before the click the rows are the tool card's
-(ADR 0119), at the pointer; after the click the same rows are the node's context menu, through one
-command that rewrites the class and the build from the same void in one undo entry. A part born with
-no class carries the role its plane implies (ADR 0238).
+**What a panel becomes is chosen on the part.** One creation menu holds the rows a maker decides
+before the click: the class (post, shelf, wall, and later the overlay wall), the build (the rectangle
+or the niche's shape) and, from its own task, the count. The rows are the tool card's (ADR 0119), at
+the pointer. A part born with no class carries the role its plane implies (ADR 0238).
+
+**A created part keeps its role.** The class is chosen once, before the board exists, and no command
+writes it afterwards (the owner, 2026-11-24): the node's context menu offers the *build* alone, and
+that one command rewrites how the part reads the section, re-deriving its outline from the same void
+in one undo entry.
 
 **The empty space is an atom, not a cell.** `probe.void` keeps its key, its row in the atom table and
 the open product's own context menu; the fill plans from it (ADR 0118). A ribbon cell that only
@@ -37,8 +40,10 @@ reported a measurement gave the interface nothing a status bar does not already 
 - The `.shape` method rows retire with their ids: the build is the part's property, and the tool
   card carries it. `panel.fill` already takes the class and the mode as parameters, so the card feeds
   the command it always could.
-- The class stops being a one-way choice: the context menu's command is what finally lets a maker
-  correct a class after the click, which is the complaint the three cells were created to avoid.
+- The class is a creation choice in every sense: a maker who named the wrong one deletes the board
+  and draws it again, which is the cost the owner accepted when he ruled that a created part's role
+  cannot change. What a maker can still correct is the build, and that is the row the part's menu
+  carries.
 - The workspace's pinned method now means "fill the niche or draw the board" — the two ways a Panel
   cell can make one — instead of a build.
 
