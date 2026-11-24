@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U125 state=doing base=275e2be updated=2026-11-24
+STATE: milestone=M7 phase=T task=U126 state=idle base=610ab58 updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -54,8 +54,7 @@ it started from plus one (X128, ADR 0234).
 
 ## Next
 
-U125 spreads a row of boards from the first one evenly, and the count is what fits between it and
-the wall.
+U126 draws a panel by points in space: the first three fix its plane.
 
 ## Index
 

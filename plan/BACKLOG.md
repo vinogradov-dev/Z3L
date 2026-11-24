@@ -104,33 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
-  Why: The owner: with the cursor moving along the panel plane's normal in the positive
-   direction the number of panels grows and their spacing stays even, the count moving on a 1
-   mm quantum; typing the side distance to the neighbour fixes that distance and leaves the
-   remainder at the far end; the count is never more than the boards that fit without crossing,
-   whatever the niche allows. Nothing today makes more than one panel per click, and the niche
-   already answers the span the row needs.
-  Shape: One operation, designed before it is coded (design-operation). Intent: a maker fills a
-   section with N equal boards in one gesture. Input: the fill is armed, the evenly key chosen;
-   the first click creates the board under the pointer and holds it as the row's anchor, the
-   hand moving along the panel plane's normal then names the span, and every 1 mm of travel
-   re-plans the row, so the count steps on whole millimetres; a second click commits and Esc
-   drops the row. The plan is a pure query beside fill_plan (Project::fill_row): the count is
-   the last board whose near face does not cross its neighbour and whose far face is inside the
-   span, and the span is the niche's free length unless the hand names a shorter one. Feedback:
-   every board's ghost draws at once, the count and the two side distances live in one plate at
-   the hand (ADR 0119), and the status bar names the count. A typed side distance fixes the
-   gap, the row keeps its pitch from the anchor and the leftover span stays free at the far
-   end. Commit is one session batch (J4), so the whole row is one undo entry. Edge: no open
-   product, a span narrower than one board, a gap wider than the span, and a pinned gap that no
-   longer divides the niche all answer with the sentence that says which.
-  Done: A drag along the normal gives the same count as Project::fill_row answers and never
-   crosses the boards; a 1 mm move changes the count by at most one; a typed gap keeps the
-   pitch and leaves the remainder at the far end; the row commits as one undo entry and one
-   Escape restores the document; a cancelled row leaves no node and no revision; the ghost and
-   the created boards are the same outlines; cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs`
 - `[ ]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
   Why: The owner: a point tool that names points in space, the first three fixing the plane, as
    many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
@@ -409,6 +382,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
+  Why: The owner: with the cursor moving along the panel plane's normal in the positive
+   direction the number of panels grows and their spacing stays even, the count moving on a 1
+   mm quantum; typing the side distance to the neighbour fixes that distance and leaves the
+   remainder at the far end; the count is never more than the boards that fit without crossing,
+   whatever the niche allows. Nothing today makes more than one panel per click, and the niche
+   already answers the span the row needs.
+  Shape: One operation, designed before it is coded (design-operation). Intent: a maker fills a
+   section with N equal boards in one gesture. Input: the fill is armed, the evenly key chosen;
+   the first click creates the board under the pointer and holds it as the row's anchor, the
+   hand moving along the panel plane's normal then names the span, and every 1 mm of travel
+   re-plans the row, so the count steps on whole millimetres; a second click commits and Esc
+   drops the row. The plan is a pure query beside fill_plan (Project::fill_row): the count is
+   the last board whose near face does not cross its neighbour and whose far face is inside the
+   span, and the span is the niche's free length unless the hand names a shorter one. Feedback:
+   every board's ghost draws at once, the count and the two side distances live in one plate at
+   the hand (ADR 0119), and the status bar names the count. A typed side distance fixes the
+   gap, the row keeps its pitch from the anchor and the leftover span stays free at the far
+   end. Commit is one session batch (J4), so the whole row is one undo entry. Edge: no open
+   product, a span narrower than one board, a gap wider than the span, and a pinned gap that no
+   longer divides the niche all answer with the sentence that says which.
+  Done: A drag along the normal gives the same count as Project::fill_row answers and never
+   crosses the boards; a 1 mm move changes the count by at most one; a typed gap keeps the
+   pitch and leaves the remainder at the far end; the row commits as one undo entry and one
+   Escape restores the document; a cancelled row leaves no node and no revision; the ghost and
+   the created boards are the same outlines; cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs` — `610ab58`
 
 - `[x]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
   Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
