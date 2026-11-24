@@ -13,7 +13,7 @@ use crate::contour_edit::ContourTarget;
 use crate::contour_grips::ContourGrip;
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
-use crate::node_actions::NodeAction;
+use crate::node_actions::{FillPick, NodeAction};
 use crate::scene_tree::Pick;
 use crate::toolbars::{ToolAction, spec};
 use engine::{PanelCreate, PrimitiveKind, Session};
@@ -2150,6 +2150,27 @@ fn fill_session() -> (Session, Id) {
     editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
     let product = session.active_product().expect("the frame is open");
     (session, product)
+}
+
+#[test]
+fn the_overlay_key_belongs_to_the_wall_and_never_rides_on_a_shelf() {
+    // X135: the owner chose a wall, pressed «накладная», then chose a shelf — and the click refused,
+    // because the shelf carried a stance only a wall can take. The key is the wall's, so walking to
+    // another class drops it instead of carrying it.
+    let (session, _product) = fill_session();
+    let mut editor = Editor::new();
+    editor.arm_fill(&session, ClassCode::BACK_PANEL, FillMode::Fit, crate::Lang::En).expect("a wall fills a void");
+    editor.apply_fill_pick(&session, FillPick::Mount(true), crate::Lang::En).expect("the wall goes over the frame");
+    assert!(editor.panel_build().overlay, "a wall takes the overlay key");
+    // Choosing a shelf keeps the class it was asked for and drops the key.
+    editor
+        .apply_fill_pick(&session, FillPick::Class(ClassCode::HORIZONTAL_PANEL), crate::Lang::En)
+        .expect("a shelf fills a void");
+    assert_eq!(editor.panel_build().class, ClassCode::HORIZONTAL_PANEL, "the shelf is what the menu chose");
+    assert!(!editor.panel_build().overlay, "a shelf has no face over the frame, so the key goes");
+    // And any surface that sets the build goes through the same rule.
+    editor.set_panel_build(PanelBuild { class: ClassCode::VERTICAL_PANEL, overlay: true, ..PanelBuild::default() });
+    assert!(!editor.panel_build().overlay, "the key is dropped whichever surface set the build");
 }
 
 #[test]

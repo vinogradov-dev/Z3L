@@ -49,6 +49,17 @@ pub struct PanelBuild {
     pub spread: FillSpread,
 }
 
+impl PanelBuild {
+    /// Whether a class of this kind can be laid over the frame instead of inside the opening.
+    ///
+    /// Only the wall closes the piece from the front: a post stands and a shelf lies across the void,
+    /// so neither has a face the frame's opening belongs to (ADR 0240). The key is asked — and kept —
+    /// only where it means something, so choosing a shelf after a wall can never carry it along.
+    pub fn can_overlay(class: ClassCode) -> bool {
+        class.traits().and_then(|traits| traits.fill()) == Some(Fill::WidthAndHeight)
+    }
+}
+
 impl Default for PanelBuild {
     /// The build a fresh workspace starts on: a post that takes the largest rectangle, which is the
     /// first row of the card and what the retired Post cell ran.
@@ -116,7 +127,9 @@ impl Editor {
     /// The build is view state: it survives a document edit, it is not written to the scene file and
     /// it never reaches the undo stack. Walking away from it is what the arm's own cancel is.
     pub fn set_panel_build(&mut self, build: PanelBuild) {
-        self.panel_build = build;
+        // The mounting is the wall's key and no other class has one: a build that walks from a wall to
+        // a shelf or a post drops it instead of carrying a stance the class cannot take (X135).
+        self.panel_build = PanelBuild { overlay: build.overlay && PanelBuild::can_overlay(build.class), ..build };
     }
 
     /// Arms the empty-space tool with `class` and `mode`, or refuses with the sentence that says why.

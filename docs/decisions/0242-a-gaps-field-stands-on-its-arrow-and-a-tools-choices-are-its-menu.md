@@ -60,17 +60,23 @@ operation's context menu.**
   splits the void in two — and only past it does the count move, one board at a time, until the far
   wall gives every board that fits (the owner, 2026-11-24, correcting the first law, which grew from
   the first pixel and so could never be left at one). A maker judges the row by what the window
-  shows, so a narrow void in a far corner asks for the same travel as a wide one nearby, and a count
-  in force needs a whole step of travel before it moves, so a twitch of the mouse changes nothing.
+  shows, so a narrow void in a far corner asks for the same travel as a wide one nearby. The count
+  follows the travel behind a curve rather than a straight line — the first boards take a real stretch
+  of travel and only the last stretch to the wall races — and it moves only once the hand has gone six
+  points since the last change, so a twitch of the mouse changes nothing and the feel is the same in a
+  shallow niche and a deep one (the owner, 2026-11-24, «чувствительность поменьше»).
 - **A row's distances are whole millimetres and it keeps one pitch.** A maker reads a dimension, not
   a fraction: the near air, the gaps between the boards and the far air are whole millimetres, and
   the boards stand one pitch apart or it is not a row. The leftover of the division therefore falls
   in the last space nothing pins — the far air, unless a field pinned it, and then the near air. A row
   with both ends pinned gives the count way when the boards no longer fit between them.
-- **The pitch is a reading.** The distance between two neighbours is drawn as a thin run in the quiet
-  ink with its number on it, coaxially with the two airs, and owns no field: it is what the count and
-  the two airs add up to. The two airs are the numbers a maker types; the row's ends are two
+- **The pitch is a reading.** The distance between the two neighbours nearest the hand is drawn as a
+  thin run in the quiet ink with its number beside it, coaxially with the two airs, and owns no field:
+  it is what the count and the two airs add up to. The two airs are the numbers a maker types; the row's ends are two
   independent numbers of one gesture, so pinning one never kills the other.
+- **The mounting is the wall's key.** Only the wall closes the piece from the front, so «накладная»
+  is asked — and kept — for the wall alone: choosing a post or a shelf after a wall drops the key
+  instead of carrying a stance the class cannot take (the owner, 2026-11-24, after the click refused).
 - **A zero gives a field back.** A count typed `0` returns the number to the hand, and the same rule
   already releases a pinned gap face (ADR 0092, ADR 0126): a zero in any of these fields means *let
   the pointer decide*, never *set it to zero*.

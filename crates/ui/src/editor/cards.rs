@@ -250,7 +250,12 @@ impl Editor {
     /// The build is the editor's, so the choice survives the gesture; the class and the mode are
     /// what the arm was made of, so either of them re-arms, and a mounting or a spread is only a new
     /// value for the next click (U123, U125, ADR 0240).
-    fn apply_fill_pick(&mut self, session: &Session, pick: FillPick, lang: crate::Lang) -> Result<(), String> {
+    pub(super) fn apply_fill_pick(
+        &mut self,
+        session: &Session,
+        pick: FillPick,
+        lang: crate::Lang,
+    ) -> Result<(), String> {
         let build = self.panel_build();
         let chosen = match pick {
             FillPick::Class(class) => PanelBuild { class, ..build },

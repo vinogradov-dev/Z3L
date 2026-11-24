@@ -455,7 +455,7 @@ fn fill_entries(build: PanelBuild) -> Vec<Entry> {
     });
     // A board laid over the frame is a frontal board: a shelf or a post stands across the void, so
     // the mounting is asked only where the answer means something (ADR 0240).
-    if build.class.traits().and_then(|traits| traits.fill()) == Some(model::Fill::WidthAndHeight) {
+    if PanelBuild::can_overlay(build.class) {
         for (overlay, label) in [(false, Message::FillMountInset), (true, Message::FillMountOverlay)] {
             entries.push(Entry {
                 id: None,

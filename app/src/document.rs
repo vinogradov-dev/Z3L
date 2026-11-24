@@ -155,6 +155,10 @@ const COUNT_PLATE_OFFSET: egui::Vec2 = egui::vec2(22.0, 26.0);
 /// nothing here can be typed (X135).
 const PITCH_LINE_WIDTH: f32 = 1.5;
 
+/// How far the pitch's number stands off its run, in points: enough that the count plate beside the
+/// hand never covers it.
+const PITCH_LABEL_OFFSET: f32 = 14.0;
+
 /// How far a dimension recedes while the pointer is elsewhere: one tone of the same ink, never a
 /// second colour (N26).
 const GAP_DIM: f32 = 0.8;
@@ -2013,7 +2017,10 @@ impl Document {
     /// The lap is the scene's and not the workshop's (ADR 0240): a reopened piece builds the front it
     /// was built with, and a new one starts on this build's default until the standards file lands.
     fn fill_mount(&self) -> model::FillMount {
-        if self.editor.panel_build().overlay {
+        // The mounting belongs to the wall: a shelf or a post is asked for inside the opening whatever
+        // key the build carries, so a stance the class cannot take never reaches the model (X135).
+        let build = self.editor.panel_build();
+        if build.overlay && ui::PanelBuild::can_overlay(build.class) {
             model::FillMount::Overlay { laps: [self.settings.overlay_lap; 4] }
         } else {
             model::FillMount::Inset
@@ -2250,14 +2257,23 @@ impl Document {
         let Some(row) = self.fill_gizmo.row() else {
             return;
         };
-        let (anchor, previous) = (row.anchor.clone(), row.auto);
+        let (anchor, previous, previous_pull) = (row.anchor.clone(), row.auto, row.auto_pull);
         let low_wall = anchor.niche.local_min[axis];
         let high_wall = anchor.niche.local_max()[axis];
         // The hand names the count: from the middle of the void towards its wall, in the void's own
         // screen extent, one board at the middle and every board that fits at the wall. A count a
         // field holds wins over the hand, and a zero gives the hand back (U128).
         let most = ((high_wall - low_wall) / anchor.size_mm.z).floor().clamp(1.0, engine::MAX_FILL_ROW as f64) as usize;
-        let auto = fill_gizmo::hand_count(self.row_pull(&anchor, axis, axis_world, rect, pointer), most, previous);
+        let (pull, reach) = self.row_pull(&anchor, axis, axis_world, rect, pointer);
+        // The count moves only once the hand has travelled a real distance since the last change, and
+        // the two ends are always honoured: a twitch changes nothing, the near half is one board and
+        // the far wall is every board that fits (X135).
+        let settled =
+            !(0.0..1.0).contains(&pull) || (pull - previous_pull).abs() * reach >= fill_gizmo::ROW_SETTLE_POINTS;
+        let auto = if settled { fill_gizmo::hand_count(pull, most) } else { previous };
+        if settled {
+            self.fill_gizmo.settle_auto(auto, pull);
+        }
         // The plates' own numbers: the near face a typed field pinned, the far distance it fixed and
         // the count the third plate holds.
         let (pinned_start, pinned_gap) =
@@ -2307,26 +2323,55 @@ impl Document {
                 None => return,
             },
         };
-        // The pitch of the row: from one board's far face to the next one's near face, coaxially
-        // with the two airs the maker can type. Nothing owns it — it is what the count and the two
-        // airs add up to — so it reads as a thin quiet run rather than a third field (X135).
+        // The pitch of the row: the distance between the two neighbours the hand is nearest to,
+        // read where the maker is looking rather than at the far end of the row. Nothing owns it — it
+        // is what the count and the two airs add up to — so it draws as a thin quiet run with its
+        // number, coaxially with the two airs the maker can type (X135).
         self.pitch_dimension = None;
         if let Ok(plan) = &plan
             && plan.count > 1
             && plan.gap >= 0.5
-            && let (Some(first_far), Some(second_near)) =
-                (anchor.high_face(), anchor.low_face().map(|face| face + direction * plan.pitch))
-            && let (Some(from), Some(to)) = (
-                gizmo_math::screen_point(self.scene.camera, rect, first_far),
-                gizmo_math::screen_point(self.scene.camera, rect, second_near),
+            && let Some(first_low) = anchor.low_face()
+            && let (Some(low_screen), Some(high_screen)) = (
+                gizmo_math::screen_point(
+                    self.scene.camera,
+                    rect,
+                    first_low + axis_world * (low_wall - anchor.free_low),
+                ),
+                gizmo_math::screen_point(
+                    self.scene.camera,
+                    rect,
+                    first_low + axis_world * (high_wall - anchor.free_low),
+                ),
             )
         {
-            // Whole millimetres through `units`, and the number alone: the scene carries no unit,
-            // the inspector writes it out beside the same value.
-            let pitch =
-                Length::from_millimetres(plan.gap.round() as i64).map(|length| length.to_string()).unwrap_or_default();
-            let pitch = pitch.strip_suffix(" mm").unwrap_or(&pitch).to_owned();
-            self.pitch_dimension = Some((from, to, pitch));
+            // Where the hand stands along the void, as a share of the run the walls make on screen.
+            let span = high_screen - low_screen;
+            let length = span.length_sq();
+            let hand = if length > f32::EPSILON {
+                f64::from(((pointer - low_screen).dot(span) / length).clamp(0.0, 1.0))
+            } else {
+                0.5
+            };
+            let at = low_wall + hand * (high_wall - low_wall);
+            // The gap nearest the hand: the first board's far face is one board on from its near one.
+            let nearest = ((at - plan.start - anchor.size_mm.z - plan.gap * 0.5) / plan.pitch)
+                .round()
+                .clamp(0.0, (plan.count - 2) as f64);
+            let from = first_low + axis_world * (nearest * plan.pitch + anchor.size_mm.z);
+            let to = first_low + axis_world * ((nearest + 1.0) * plan.pitch);
+            if let (Some(from), Some(to)) = (
+                gizmo_math::screen_point(self.scene.camera, rect, from),
+                gizmo_math::screen_point(self.scene.camera, rect, to),
+            ) {
+                // Whole millimetres through `units`, and the number alone: the scene carries no unit,
+                // the inspector writes it out beside the same value.
+                let pitch = Length::from_millimetres(plan.gap.round() as i64)
+                    .map(|length| length.to_string())
+                    .unwrap_or_default();
+                let pitch = pitch.strip_suffix(" mm").unwrap_or(&pitch).to_owned();
+                self.pitch_dimension = Some((from, to, pitch));
+            }
         }
         let placements = self.gap_fields(rect, Some(pointer), axis_world, [low_wall, high_wall], faces);
         let outcome = self.distance_fields.show_in_scene(ui, &mut distances, &placements, rect, opacity);
@@ -2378,6 +2423,8 @@ impl Document {
     /// space, and a count that only moves once the hand has travelled past it. The measure is the
     /// picture's, not the model's, so a narrow void in a far corner asks for the same travel as a
     /// wide one nearby (U128, X135).
+    /// The answer is the pull and the screen length it is measured in, so the caller can ask for a
+    /// real distance of travel between two counts (X135).
     fn row_pull(
         &self,
         anchor: &FillGhost,
@@ -2385,9 +2432,9 @@ impl Document {
         axis_world: geom::DVec3,
         rect: egui::Rect,
         pointer: egui::Pos2,
-    ) -> f64 {
+    ) -> (f64, f64) {
         let Some(face) = anchor.low_face() else {
-            return 0.0;
+            return (0.0, f64::INFINITY);
         };
         let scalar = anchor.free_low;
         let low_wall = anchor.niche.local_min[axis];
@@ -2399,16 +2446,16 @@ impl Document {
             gizmo_math::screen_point(self.scene.camera, rect, face + axis_world * (pull_start - scalar)),
             gizmo_math::screen_point(self.scene.camera, rect, face + axis_world * (high_wall - scalar)),
         ) else {
-            return 0.0;
+            return (0.0, f64::INFINITY);
         };
         let run = high - first;
         let extent = run.length();
         if extent <= f32::EPSILON {
-            return 0.0;
+            return (0.0, f64::INFINITY);
         }
         let along = run / extent;
         let travel = (pointer.to_vec2() - first.to_vec2()).dot(along);
-        f64::from((travel / extent).clamp(0.0, 1.0))
+        (f64::from((travel / extent).clamp(0.0, 1.0)), f64::from(extent))
     }
 
     /// The world direction a fill's row grows along: the part's own thickness axis.
@@ -4628,7 +4675,12 @@ impl Document {
                 let across = egui::vec2(-across.y, across.x) * GAP_TICK_HALF * 0.7;
                 painter.line_segment([end - across, end + across], egui::Stroke::new(PITCH_LINE_WIDTH, quiet));
             }
-            crate::fill_gizmo::label(ui, &painter, egui::pos2((from.x + to.x) * 0.5, (from.y + to.y) * 0.5), text);
+            // The number stands off the run, to the side the hand is not on: the count plate rides at
+            // the pointer's lower right, so a pitch label on the left or above never covers it.
+            let along = (*to - *from).normalized();
+            let across = if along.x.abs() >= along.y.abs() { egui::vec2(0.0, -1.0) } else { egui::vec2(-1.0, 0.0) };
+            let middle = egui::pos2((from.x + to.x) * 0.5, (from.y + to.y) * 0.5);
+            crate::fill_gizmo::label(ui, &painter, middle + across * PITCH_LABEL_OFFSET, text);
         }
     }
 

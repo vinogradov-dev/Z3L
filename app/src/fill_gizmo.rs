@@ -155,9 +155,27 @@ pub(crate) struct RowState {
     pub(crate) plan: Result<FillRowPlan, FillRowRefusal>,
     /// The count a field typed, while the field holds one; `None` lets the hand name it.
     pub(crate) count: Option<usize>,
-    /// The count the hand named last, ratcheted so a twitch of the mouse moves nothing.
+    /// The count the hand named last, and the pull it named it at.
+    ///
+    /// The pull is kept so the next change needs a real distance of travel and not a twitch of the
+    /// mouse: the count moves only once the hand has gone `ROW_SETTLE_POINTS` further (X135).
     pub(crate) auto: usize,
+    pub(crate) auto_pull: f64,
 }
+
+/// How the count follows the hand's travel: `1.0` is a straight line, above it the small counts take
+/// a larger share of the travel and the last stretch to the wall races.
+///
+/// The number is the one knob of the row's feel: a maker who finds the small counts still too twitchy
+/// raises it, and one who wants an even climb lowers it towards `1.0` (X135).
+const ROW_CURVE: f64 = 1.6;
+
+/// How far the hand must travel, in screen points, before the count moves again.
+///
+/// The band is a distance and not a number of boards, so it feels the same in a shallow niche and a
+/// deep one, at any zoom: the count moves only when the hand has gone this far since the last change,
+/// and a twitch of the mouse leaves the row alone (the owner, 2026-11-24, «чувствительность поменьше»).
+pub(crate) const ROW_SETTLE_POINTS: f64 = 6.0;
 
 /// The count a hand asks for: `pull` is how far it travelled past the first board towards the far
 /// wall, as a share of the space it has left — `0` wherever the hand still stands in the near half
@@ -170,22 +188,23 @@ pub(crate) struct RowState {
 /// time, and a count in force needs a whole step of travel before it moves, so a twitch of the mouse
 /// leaves the row alone. The two ends are always honoured: the near half is one board, the far wall
 /// is the most.
-pub(crate) fn hand_count(pull: f64, most: usize, last: usize) -> usize {
+pub(crate) fn hand_count(pull: f64, most: usize) -> usize {
     let most = most.max(1);
     if most == 1 || !pull.is_finite() {
         return most;
     }
-    let raw = 1.0 + pull.clamp(0.0, 1.0) * (most - 1) as f64;
+    // The count follows the hand behind a curve, not in a straight line: the first boards need a
+    // real stretch of travel, so a maker can leave three or five and aim at them, and the count only
+    // races near the far wall, where the wall itself stops it (the owner, 2026-11-24, after the
+    // straight line proved too twitchy for the small numbers).
+    let raw = 1.0 + pull.clamp(0.0, 1.0).powf(ROW_CURVE) * (most - 1) as f64;
     if raw <= 1.0 {
         return 1;
     }
     if raw >= most as f64 {
         return most;
     }
-    let last = last.clamp(1, most) as f64;
-    // A whole step of dead band around the count in force: a hand that moved less than one board's
-    // share of the void keeps the row it had.
-    if (raw - last).abs() < 1.0 { last as usize } else { raw.round().clamp(1.0, most as f64) as usize }
+    raw.round().clamp(1.0, most as f64) as usize
 }
 
 /// The empty-space tool's live state: the ghost, or the reason there is none.
@@ -219,6 +238,14 @@ impl FillGizmo {
         self.row.as_ref().map_or(1, |row| row.auto)
     }
 
+    /// Records the count the hand now names and the pull it names it at.
+    pub(crate) fn settle_auto(&mut self, auto: usize, pull: f64) {
+        if let Some(row) = self.row.as_mut() {
+            row.auto = auto.max(1);
+            row.auto_pull = pull;
+        }
+    }
+
     /// Keeps the row on the board the pointer measured, spread along `direction`.
     ///
     /// The row needs no click of its own (the owner, 2026-11-24): while «Равномерно» is on, the
@@ -238,7 +265,8 @@ impl FillGizmo {
             FillRowAsk { start: None, count: count.unwrap_or(auto), gap: None },
         );
         let changed = self.row.as_ref().is_none_or(|row| row.plan != plan || row.anchor != anchor);
-        self.row = Some(RowState { anchor, direction, plan, count, auto });
+        let auto_pull = self.row.as_ref().map_or(0.0, |row| row.auto_pull);
+        self.row = Some(RowState { anchor, direction, plan, count, auto, auto_pull });
         // The row is spread before any number is typed: the same air at the ends and between.
         self.plan_row(axis, None, None, count, auto) || changed
     }
@@ -721,19 +749,25 @@ mod tests {
     fn the_hand_names_the_count_past_the_first_board() {
         // U128, X135: the near half of the void is calm and the row opens at one board that splits
         // it, then the count grows with the hand until the far wall, where every board that fits is
-        // in the row. A whole step of dead band keeps a twitch of the mouse from moving anything.
-        assert_eq!(hand_count(-1.0, 40, 1), 1, "behind the first board nothing grows");
-        assert_eq!(hand_count(0.0, 40, 1), 1, "the first board is one board, however big the void");
-        assert_eq!(hand_count(1.0, 40, 1), 40, "the far wall is every board that fits");
-        assert_eq!(hand_count(2.0, 40, 1), 40, "a hand past the wall is still the wall");
-        assert_eq!(hand_count(0.5, 3, 1), 2, "halfway with three boards is two");
-        // A step is one board's share of the void: a move shorter than that changes nothing.
-        let step = 1.0 / 39.0;
-        let steady = hand_count(0.5, 40, 20);
-        assert_eq!(hand_count(0.5 + step * 0.4, 40, steady), steady, "a twitch inside the step moves nothing");
-        assert_eq!(hand_count(0.5 - step * 0.4, 40, steady), steady, "and neither does one below it");
-        assert_ne!(hand_count(0.5 + step * 1.2, 40, steady), steady, "a whole step does");
-        assert_eq!(hand_count(0.5, 1, 1), 1, "a void that holds one board asks for one");
+        // in the row.
+        assert_eq!(hand_count(-1.0, 40), 1, "behind the first board nothing grows");
+        assert_eq!(hand_count(0.0, 40), 1, "the first board is one board, however big the void");
+        assert_eq!(hand_count(1.0, 40), 40, "the far wall is every board that fits");
+        assert_eq!(hand_count(2.0, 40), 40, "a hand past the wall is still the wall");
+        assert_eq!(hand_count(0.5, 3), 2, "halfway with three boards is two");
+        assert_eq!(hand_count(0.5, 1), 1, "a void that holds one board asks for one");
+        // The curve keeps the small counts apart: half the travel is nowhere near half the boards,
+        // which is what makes three or five boards easy to leave in place.
+        let half = hand_count(0.5, 40);
+        assert!(half > 8 && half < 20, "half the travel names a handful of boards, not half of forty: {half}");
+        // And it only ever climbs.
+        let mut previous = 1;
+        for step in 0..=100 {
+            let count = hand_count(f64::from(step) / 100.0, 40);
+            assert!(count >= previous, "the count never shrinks as the hand pulls: {previous} then {count}");
+            assert!(count <= previous + 2, "and it climbs a board at a time: {previous} then {count}");
+            previous = count;
+        }
     }
 
     #[test]
