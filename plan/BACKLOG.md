@@ -104,39 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
-  Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
-   that board laid over the frame — placed from the niche's start point by one thickness, its
-   sizes grown by a lap all round, one lap default out of the project's settings (the factory's
-   numbers, 14 mm usually). N28 answered the earlier question the other way — the tool creates
-   the plain frontal fill and the mounting is a property edited later — and the owner has now
-   made the mounting a creation key, so the board needs a placement rule and a lap, neither of
-   which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
-   position, and the outline is the section itself.
-  Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
-   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
-   answer: all four), clips the grown section by whatever stands proud of the face so the lap
-   runs over the frame's edge and never over a part that is in the way, places the board one
-   thickness off the niche's start point along the normal so it covers the frame's face instead
-   of filling the opening, and stores the four laps on the panel so the card can edit them. The
-   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
-   edge rather than being buried in it, and a begun board whose section the clip empties is
-   refused with a sentence. The lap default is a project value, not a workspace one: the
-   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
-   numbers, whose home is O2's standards file, and until that file lands the build falls back
-   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
-   test that names the plane it places on, because the owner's rule — start minus the thickness
-   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
-   row and one lap field per edge; the ADR says the lap is document data and the default is the
-   project's.
-  Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
-   inner face lies on the niche's start plane and whose body stands proud of the frame's face;
-   a part standing in front of that face clips the lap to the part's own edge and the board is
-   never buried in it; one click is one panel.create and one undo entry; the four laps are
-   stored on the part and the card edits them; a project file without the setting answers 14 mm
-   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
-   green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
   Why: The owner: with the cursor moving along the panel plane's normal in the positive
    direction the number of panels grows and their spacing stays even, the count moving on a 1
@@ -442,6 +409,40 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
+  Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
+   that board laid over the frame — placed from the niche's start point by one thickness, its
+   sizes grown by a lap all round, one lap default out of the project's settings (the factory's
+   numbers, 14 mm usually). N28 answered the earlier question the other way — the tool creates
+   the plain frontal fill and the mounting is a property edited later — and the owner has now
+   made the mounting a creation key, so the board needs a placement rule and a lap, neither of
+   which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
+   position, and the outline is the section itself.
+  Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
+   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
+   answer: all four), clips the grown section by whatever stands proud of the face so the lap
+   runs over the frame's edge and never over a part that is in the way, places the board one
+   thickness off the niche's start point along the normal so it covers the frame's face instead
+   of filling the opening, and stores the four laps on the panel so the card can edit them. The
+   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
+   edge rather than being buried in it, and a begun board whose section the clip empties is
+   refused with a sentence. The lap default is a project value, not a workspace one: the
+   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
+   numbers, whose home is O2's standards file, and until that file lands the build falls back
+   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
+   test that names the plane it places on, because the owner's rule — start minus the thickness
+   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
+   row and one lap field per edge; the ADR says the lap is document data and the default is the
+   project's.
+  Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
+   inner face lies on the niche's start plane and whose body stands proud of the frame's face;
+   a part standing in front of that face clips the lap to the part's own edge and the board is
+   never buried in it; one click is one panel.create and one undo entry; the four laps are
+   stored on the part and the card edits them; a project file without the setting answers 14 mm
+   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
+   green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs` — `caae4c6`
 
 - `[x]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
   Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
