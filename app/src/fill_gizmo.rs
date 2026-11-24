@@ -139,15 +139,15 @@ pub(crate) struct FillAsk {
     pub(crate) free: Option<f64>,
 }
 
-/// The row an evenly fill lays, from the anchor the first click made to the second click.
+/// The row an evenly fill would lay: the board the pointer measured, repeated.
 ///
-/// The anchor is the board the click named, frozen where it stood: every board of the row repeats
-/// its outline, size and placement, one pitch further along the free axis (U125). The row itself is
-/// a model answer re-derived per frame from the hand's span and the numbers the plate holds, so a
-/// still hand re-plans nothing and the ghost is never a second measurement.
+/// The anchor is the board the pointer named: every board of the row repeats its outline, size and
+/// placement, one pitch further along the free axis (U125, U128). The row itself is a model answer
+/// re-derived per frame from the numbers the plates hold, so a still hand re-plans nothing and the
+/// ghost is never a second measurement.
 #[derive(Clone, Debug)]
 pub(crate) struct RowState {
-    /// The board the first click anchored.
+    /// The board the pointer measured, which the row repeats.
     pub(crate) anchor: FillGhost,
     /// The direction the row repeats along, in world millimetres, a unit vector.
     pub(crate) direction: DVec3,
@@ -155,6 +155,33 @@ pub(crate) struct RowState {
     pub(crate) plan: Result<FillRowPlan, FillRowRefusal>,
     /// The count a field typed, while the field holds one; `None` lets the hand name it.
     pub(crate) count: Option<usize>,
+    /// The count the hand named last, ratcheted so a twitch of the mouse moves nothing.
+    pub(crate) auto: usize,
+}
+
+/// The count a hand asks for: `ratio` is how far it travelled from the middle of the void towards
+/// the wall, in the void's own extent — `0` at the middle, `1` at the wall.
+///
+/// One board at the middle of the void and every board that fits at its wall (the owner,
+/// 2026-11-24). A count in force needs the hand to cross a whole step before it moves, so a twitch
+/// of the mouse leaves the row alone; the ends themselves are always honoured, so the middle is
+/// always one board and the wall is always the most.
+pub(crate) fn hand_count(ratio: f64, most: usize, last: usize) -> usize {
+    let most = most.max(1);
+    if most == 1 || !ratio.is_finite() {
+        return most;
+    }
+    let raw = 1.0 + ratio.clamp(0.0, 1.0) * (most - 1) as f64;
+    if raw <= 1.0 {
+        return 1;
+    }
+    if raw >= most as f64 {
+        return most;
+    }
+    let last = last.clamp(1, most) as f64;
+    // A whole step of dead band around the count in force: a hand that moved less than one board's
+    // share of the void keeps the row it had.
+    if (raw - last).abs() < 1.0 { last as usize } else { raw.round().clamp(1.0, most as f64) as usize }
 }
 
 /// The empty-space tool's live state: the ghost, or the reason there is none.
@@ -183,6 +210,11 @@ impl FillGizmo {
         self.row.as_ref()
     }
 
+    /// The count the hand named last, for a surface that re-plans the row without measuring a hand.
+    pub(crate) fn auto(&self) -> usize {
+        self.row.as_ref().map_or(1, |row| row.auto)
+    }
+
     /// Keeps the row on the board the pointer measured, spread along `direction`.
     ///
     /// The row needs no click of its own (the owner, 2026-11-24): while «Равномерно» is on, the
@@ -194,16 +226,17 @@ impl FillGizmo {
             return self.row.take().is_some();
         };
         let count = self.row.as_ref().and_then(|row| row.count);
+        let auto = self.row.as_ref().map_or(1, |row| row.auto);
         let plan = model::fill_row(
             &anchor.niche,
             anchor.size_mm.z,
             axis,
-            FillRowAsk { start: anchor.free_low, span: None, count, gap: None },
+            FillRowAsk { start: anchor.free_low, span: None, count: count.or(Some(auto)), gap: None },
         );
         let changed = self.row.as_ref().is_none_or(|row| row.plan != plan || row.anchor != anchor);
-        self.row = Some(RowState { anchor, direction, plan, count });
+        self.row = Some(RowState { anchor, direction, plan, count, auto });
         // The row is spread before any number is typed: the same air at the ends and between.
-        self.plan_row(axis, None, None, count) || changed
+        self.plan_row(axis, None, None, count, auto) || changed
     }
 
     /// Re-plans the row from the numbers a plate holds.
@@ -213,11 +246,22 @@ impl FillGizmo {
     /// whole void — the same air at the near wall, between the boards and the far wall — which is
     /// what a maker reading the gesture expects to see. A number the model cannot honour leaves the
     /// row's refusal on the state, which the plates show; nothing is written.
-    pub(crate) fn plan_row(&mut self, axis: usize, start: Option<f64>, gap: Option<f64>, count: Option<usize>) -> bool {
+    pub(crate) fn plan_row(
+        &mut self,
+        axis: usize,
+        start: Option<f64>,
+        gap: Option<f64>,
+        count: Option<usize>,
+        auto: usize,
+    ) -> bool {
         let Some(row) = self.row.as_mut() else {
             return false;
         };
         row.count = count;
+        row.auto = auto.max(1);
+        // The count in force: what a field typed, or what the hand named.
+        let boards = count.unwrap_or(row.auto).max(1);
+        let count = Some(boards);
         let niche = &row.anchor.niche;
         let thickness = row.anchor.size_mm.z;
         let wall_low = niche.local_min[axis];
@@ -230,7 +274,7 @@ impl FillGizmo {
             // the two ends alike, so the air at the near wall is the air between the boards.
             (None, None) => {
                 let fits = if room < thickness { 1 } else { (room / thickness).floor().max(1.0) as usize };
-                let boards = count.unwrap_or(fits).clamp(1, fits);
+                let boards = boards.min(fits);
                 let air = ((room - boards as f64 * thickness) / (boards as f64 + 1.0)).max(0.0);
                 FillRowAsk { start: wall_low + air, span: None, count: Some(boards), gap: Some(air) }
             }
@@ -626,8 +670,8 @@ mod tests {
     #[test]
     fn the_evenly_fill_spreads_its_boards_through_the_void_without_a_click() {
         // U128: the row is live. As soon as the pointer names a void the boards are spread from the
-        // near wall to the far one with the same air at both ends, a typed count claims the void, and
-        // a typed far gap keeps its own distance while the neighbours share the rest.
+        // near wall to the far one with the same air at both ends; the hand names how many, a typed
+        // count claims the void, and a typed far gap keeps its own distance.
         let (project, product) = piece();
         let point = DVec3::new(300.0, 280.0, 200.0);
         let niche = niche_at(&project, point);
@@ -644,22 +688,29 @@ mod tests {
         let room = 720.0_f64;
         let thickness = 17.0_f64;
         let fits = (room / thickness) as usize;
+        assert_eq!(
+            gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count),
+            Some(1),
+            "the row opens on one board: the hand is at the middle of the void"
+        );
+
+        // A hand at the wall asks for every board that fits, with the same air at both ends.
+        gizmo.plan_row(2, None, None, None, fits);
         let plan = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
-        assert_eq!(plan.count, fits, "the row takes every board that fits");
+        assert_eq!(plan.count, fits);
         let air = (room - fits as f64 * thickness) / (fits as f64 + 1.0);
-        assert!(air > 0.0);
         assert!((plan.low - air).abs() < 1.0e-6, "the near air is a share: {} against {air}", plan.low);
         assert!((plan.high - air).abs() < 1.0e-6, "the far air is the same share: {} against {air}", plan.high);
         assert!((plan.gap - air).abs() < 1.0e-6, "and the boards stand as far apart as the ends are");
 
         // A typed count claims the void, clamped to what fits without crossing.
-        gizmo.plan_row(2, None, None, Some(10_000));
+        gizmo.plan_row(2, None, None, Some(10_000), 1);
         let typed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
         assert_eq!(typed.count, fits);
         assert_eq!(gizmo.row().and_then(|row| row.count), Some(10_000), "the field keeps what was typed");
 
         // A typed far gap is honoured, and the neighbours divide what is left.
-        gizmo.plan_row(2, None, Some(40.0), Some(4));
+        gizmo.plan_row(2, None, Some(40.0), Some(4), 1);
         let fixed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
         assert_eq!(fixed.count, 4);
         assert!((fixed.high - 40.0).abs() < 1.0e-6, "the typed gap is the distance the row leaves: {}", fixed.high);
@@ -669,6 +720,24 @@ mod tests {
         // A pointer that names no void drops the row and leaves the tool armed.
         gizmo.refuse(None);
         assert!(gizmo.row().is_none(), "no void, no row");
+    }
+
+    #[test]
+    fn the_hand_names_the_count_from_the_middle_of_the_void_to_its_wall() {
+        // U128: one board at the middle and every board that fits at the wall, with a whole step of
+        // dead band so a twitch of the mouse leaves the row alone.
+        assert_eq!(hand_count(0.0, 40, 1), 1, "the middle of the void is one board");
+        assert_eq!(hand_count(1.0, 40, 1), 40, "the wall is every board that fits");
+        assert_eq!(hand_count(-0.5, 40, 7), 1, "a hand past the middle is still the middle");
+        assert_eq!(hand_count(2.0, 40, 1), 40, "a hand past the wall is still the wall");
+        assert_eq!(hand_count(0.5, 3, 1), 2, "halfway with three boards is two");
+        // A step is one board's share of the void: a move shorter than that changes nothing.
+        let step = 1.0 / 39.0;
+        let steady = hand_count(0.5, 40, 20);
+        assert_eq!(hand_count(0.5 + step * 0.4, 40, steady), steady, "a twitch inside the step moves nothing");
+        assert_eq!(hand_count(0.5 - step * 0.4, 40, steady), steady, "and neither does one below it");
+        assert_ne!(hand_count(0.5 + step * 1.2, 40, steady), steady, "a whole step does");
+        assert_eq!(hand_count(0.5, 1, 1), 1, "a void that holds one board asks for one");
     }
 
     #[test]

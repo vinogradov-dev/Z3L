@@ -52,8 +52,18 @@ operation's context menu.**
 - **The row is live.** «Равномерно» needs no anchoring click (the owner, 2026-11-24): as soon as the
   pointer names a void the boards are already spread through it — the free length is shared between
   the boards and the two ends alike, so the air at the near wall is the air between the boards — and
-  one click writes them as one batch. The count plate says how many that is and takes a typed number;
-  a typed far gap keeps its own distance and the neighbours share the rest.
+  one click writes them as one batch. A typed far gap keeps its own distance and the neighbours
+  share the rest.
+- **The hand names the count.** The number of boards is not a maximum and not a constant: it is how
+  far the hand travelled from the middle of the void towards its wall, measured in the void's own
+  **screen** extent — one board at the middle, every board that fits at the wall (the owner,
+  2026-11-24). A maker judges the row by what the window shows, so a narrow void in a far corner
+  asks for the same travel as a wide one nearby. A count in force needs the hand to cross a whole
+  step of its own share of the void before it moves, so a twitch of the mouse leaves the row alone,
+  and the two ends are always honoured: the middle is one board and the wall is the most.
+- **A zero gives a field back.** A count typed `0` returns the number to the hand, and the same rule
+  already releases a pinned gap face (ADR 0092, ADR 0126): a zero in any of these fields means *let
+  the pointer decide*, never *set it to zero*.
 - **The operation's menu.** A right press while the fill is armed opens the popup with the fill's own
   rows and no row of the node: the three classes (the tool's words — post, shelf, wall — not the class
   registry's), the two builds, the «Равномерно» switch and, for a wall alone, the mounting. The tree's

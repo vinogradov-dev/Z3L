@@ -3854,6 +3854,64 @@ fn a_typed_count_spreads_the_live_row() {
 }
 
 #[test]
+fn the_hand_names_the_count_and_a_zero_gives_it_back() {
+    // U128: the count follows the hand — one board at the middle of the void and every board that
+    // fits at its wall — and a twitch of the mouse moves nothing. A typed number wins, and a typed
+    // zero hands the count back to the hand, the rule every field of this editor keeps.
+    let (mut harness, middle, _higher) = evenly_harness("frame-fill-row-hand");
+    let (product, near_wall, mid) = {
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        let product = document.session.active_product().expect("the frame is open");
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let rect = document.scene_rect().expect("the scene has a rectangle");
+        let camera = document.camera();
+        let mid = placement.transform_point(geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.5));
+        let wall = placement.transform_point(geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.95));
+        let at = |point| gizmo_math::screen_point(camera, rect, point).expect("the void is on screen");
+        (product, at(wall), at(mid))
+    };
+    let _ = (product, middle);
+    let count_at = |harness: &mut Harness, at: egui::Pos2| {
+        harness.hover(at);
+        harness.settle();
+        harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count)
+    };
+    let at_middle = count_at(&mut harness, mid).expect("the middle of the void spreads a row");
+    let at_wall = count_at(&mut harness, near_wall).expect("the wall spreads a row");
+    assert!(at_wall > at_middle, "the hand asks for more towards the wall: {at_middle} then {at_wall}");
+
+    // A move of a few points moves nothing: the count in force stays until the hand crosses a step.
+    let steady = harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|p| p.count);
+    let nudge = count_at(&mut harness, near_wall + egui::vec2(0.0, 2.0));
+    assert_eq!(nudge, steady, "a twitch of the mouse leaves the count alone");
+
+    // A typed number wins, and a zero gives the hand back.
+    let ctx = harness.context();
+    let type_count = |harness: &mut Harness, value: f64| {
+        harness.app.tabs.active_mut().apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome {
+                edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value }],
+                ..ui::ToolOutcome::default()
+            },
+        );
+        harness.settle();
+        harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.count)
+    };
+    assert_eq!(type_count(&mut harness, 4.0), Some(4), "a typed count is the row's number");
+    assert_eq!(type_count(&mut harness, 0.0), None, "a zero gives the count back to the hand");
+    let back = harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|p| p.count);
+    assert_eq!(back, steady, "and the row is the hand's number again");
+}
+
+#[test]
 fn an_escape_leaves_the_live_row_and_writes_nothing() {
     // U128: a row that was never clicked into being has no draft to drop. Escape leaves the tool, and
     // the ghosts it drew wrote nothing — no node, no revision, no undo entry.

@@ -49,7 +49,7 @@ use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawInput, DrawModifiers};
 use crate::extrude_gizmo::{ExtrudeEvent, ExtrudeGizmo};
 use crate::file_menu::{FileAction, FileMenu, PreservedSections};
-use crate::fill_gizmo::{FillAsk, FillGizmo};
+use crate::fill_gizmo::{self, FillAsk, FillGhost, FillGizmo};
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
@@ -2225,20 +2225,29 @@ impl Document {
         };
         let unit = axis_unit(axis);
         let axis_world = parent_world.transform_vector(unit);
+        let Some(row) = self.fill_gizmo.row() else {
+            return;
+        };
+        let (anchor, previous) = (row.anchor.clone(), row.auto);
+        let low_wall = anchor.niche.local_min[axis];
+        let high_wall = anchor.niche.local_max()[axis];
+        // The hand names the count: from the middle of the void towards its wall, in the void's own
+        // screen extent, one board at the middle and every board that fits at the wall. A count a
+        // field holds wins over the hand, and a zero gives the hand back (U128).
+        let most = ((high_wall - low_wall) / anchor.size_mm.z).floor().clamp(1.0, engine::MAX_FILL_ROW as f64) as usize;
+        let auto = fill_gizmo::hand_count(self.row_ratio(&anchor, axis, axis_world, rect, pointer), most, previous);
         // The plates' own numbers: the near face a typed field pinned, the far distance it fixed and
         // the count the third plate holds.
         let (pinned_start, pinned_gap) =
             self.distances.as_ref().map_or((None, None), |measured| (measured.pinned_start(), measured.pinned_gap()));
         let count = self.fill_gizmo.row().and_then(|row| row.count);
-        if self.fill_gizmo.plan_row(axis, pinned_start, pinned_gap, count) {
+        if self.fill_gizmo.plan_row(axis, pinned_start, pinned_gap, count, auto) {
             ui.ctx().request_repaint();
         }
         let Some(row) = self.fill_gizmo.row() else {
             return;
         };
         let (anchor, direction, plan) = (row.anchor.clone(), row.direction, row.plan.clone());
-        let low_wall = anchor.niche.local_min[axis];
-        let high_wall = anchor.niche.local_max()[axis];
         let (low_face, high_face, faces) = match &plan {
             Ok(plan) => {
                 // The row's high end is the last board's far face: the anchor's far face one pitch
@@ -2297,7 +2306,7 @@ impl Document {
             let typed = edit.value.round().clamp(0.0, 9_999.0) as usize;
             let count = (typed > 0).then_some(typed);
             let (start, gap) = (distances.pinned_start(), distances.pinned_gap());
-            self.fill_gizmo.plan_row(axis, start, gap, count);
+            self.fill_gizmo.plan_row(axis, start, gap, count, self.fill_gizmo.auto());
             ui.ctx().request_repaint();
         }
         if outcome.changed {
@@ -2309,10 +2318,47 @@ impl Document {
                 None => count,
             };
             let (start, gap) = (distances.pinned_start(), distances.pinned_gap());
-            self.fill_gizmo.plan_row(axis, start, gap, count);
+            self.fill_gizmo.plan_row(axis, start, gap, count, self.fill_gizmo.auto());
             ui.ctx().request_repaint();
         }
         self.distances = Some(distances);
+    }
+
+    /// How far the hand travelled from the middle of the void towards its wall, as a share of the
+    /// void's own screen extent: `0` at the middle and `1` at either wall.
+    ///
+    /// The measure is the picture's, not the model's — a maker judges the row by what the window
+    /// shows, so a narrow void in a far corner asks for the same travel as a wide one nearby (U128).
+    fn row_ratio(
+        &self,
+        anchor: &FillGhost,
+        axis: usize,
+        axis_world: geom::DVec3,
+        rect: egui::Rect,
+        pointer: egui::Pos2,
+    ) -> f64 {
+        let (Some(face), Some(scalar)) = (anchor.low_face(), anchor.low_face().map(|_| anchor.free_low)) else {
+            return 0.0;
+        };
+        let low_wall = anchor.niche.local_min[axis];
+        let high_wall = anchor.niche.local_max()[axis];
+        let low = face + axis_world * (low_wall - scalar);
+        let high = face + axis_world * (high_wall - scalar);
+        let (Some(low), Some(high)) = (
+            gizmo_math::screen_point(self.scene.camera, rect, low),
+            gizmo_math::screen_point(self.scene.camera, rect, high),
+        ) else {
+            return 0.0;
+        };
+        let run = high - low;
+        let extent = run.length();
+        if extent <= f32::EPSILON {
+            return 0.0;
+        }
+        let along = run / extent;
+        let middle = (low.to_vec2() + high.to_vec2()) * 0.5;
+        let offset = (pointer.to_vec2() - middle).dot(along);
+        f64::from((offset.abs() / (extent * 0.5)).clamp(0.0, 1.0))
     }
 
     /// The world direction a fill's row grows along: the part's own thickness axis.
@@ -3005,7 +3051,7 @@ impl Document {
                     .distances
                     .as_ref()
                     .map_or((None, None), |measured| (measured.pinned_start(), measured.pinned_gap()));
-                self.fill_gizmo.plan_row(model::free_axis(arm.fill), start, gap, count);
+                self.fill_gizmo.plan_row(model::free_axis(arm.fill), start, gap, count, self.fill_gizmo.auto());
                 ctx.request_repaint();
                 continue;
             }
