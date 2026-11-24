@@ -343,6 +343,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X136** the row was too twitchy, its pitch stood at the far end, and the overlay key leaked to a shelf
+  Why: The row of «Равномерно» was too sensitive to place a small count, its pitch run stood at
+   the far end of the row instead of where the maker looks, and choosing a wall with
+   «накладная» and then a shelf or a post carried the mounting into a class with no face over
+   the frame, so the click refused.
+  Shape: hand_count follows a curve and settles on six points of screen travel between changes,
+   so the small counts are easy to leave and the feel is the same at any zoom or niche size;
+   the pitch run is drawn between the two neighbours nearest the hand with its number standing
+   off the run; PanelBuild::can_overlay keeps «накладная» for the wall alone and drops it when
+   the class changes.
+  Done: Tests: the count climbs a board at a time and half the travel names a handful, a twitch
+   moves nothing, the pitch run reads the gap nearest the hand, and a wall's overlay key is
+   dropped when a shelf or a post is chosen. cargo xtask ci is green.
+  `files: app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/editor/fill.rs,crates/ui/src/editor/cards.rs,crates/ui/src/editor/tests.rs,crates/ui/src/node_actions.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `9106caf`
+
 - `[x]` **X135** the row's count is calm in the near half, whole millimetres and a drawn pitch
   Why: The live row of U128 still cannot hold one board in the middle of a void: the count grew
    from the first pixel, and the owner's gesture (K3) keeps the whole near half calm and grows
