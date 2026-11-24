@@ -3414,8 +3414,7 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
                 product,
                 "Post".to_owned(),
                 nominal,
-                None,
-                Vec::new(),
+                ui::PanelShape::default(),
                 placement,
                 None,
             )
@@ -3472,8 +3471,7 @@ fn leaned_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
             product,
             "Wall".to_owned(),
             nominal,
-            None,
-            Vec::new(),
+            ui::PanelShape::default(),
             placement,
             None,
         )
@@ -3593,6 +3591,111 @@ fn the_fit_mode_keeps_a_standard_panel_in_a_splayed_niche() {
     let document = harness.app.tabs.active_mut();
     document.session.undo().expect("one undo step");
     assert!(document.session.project().panel(created).is_none(), "one undo removes the fitted part");
+}
+
+/// A case whose four members leave an opening, and the pointer on that opening.
+///
+/// Each member stands flush with the front plane and runs back through the case, so a front laid
+/// over the frame has a part behind every one of its ends to lap over (U124, ADR 0240).
+fn framed_front_harness(name: &str) -> (Harness, model::Id, egui::Pos2, model::PanelNominalSize) {
+    let mut harness = Harness::with_session(name, crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active_mut();
+    let product = document.session.active_product().expect("the card opens the frame");
+    let envelope =
+        document.session.project().container(product).and_then(|product| product.envelope()).expect("an envelope");
+    let (width, depth, height) =
+        (envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
+    let board = 18.0;
+    // A side member's thickness is across the case, a rail's is up it: one rotation stands a board
+    // on its edge, the other lays it flat.
+    let upright = geom::DQuat::from_rotation_axes(geom::DVec3::Y, geom::DVec3::Z, geom::DVec3::X);
+    let flat = geom::DQuat::IDENTITY;
+    for (translation, rotation, length, panel_width) in [
+        (geom::DVec3::ZERO, upright, depth, height),
+        (geom::DVec3::new(width - board, 0.0, 0.0), upright, depth, height),
+        (geom::DVec3::new(board, 0.0, 0.0), flat, width - 2.0 * board, depth),
+        (geom::DVec3::new(board, 0.0, height - board), flat, width - 2.0 * board, depth),
+    ] {
+        let placement = model::Placement::new(translation, rotation).expect("a member placement");
+        let nominal = model::PanelNominalSize::new(
+            units::Length::from_millimetres(length as i64).expect("a length"),
+            units::Length::from_millimetres(panel_width as i64).expect("a width"),
+        )
+        .expect("a member size");
+        document
+            .editor
+            .create_panel_sized(
+                &mut document.session,
+                product,
+                "Member".to_owned(),
+                nominal,
+                ui::PanelShape::default(),
+                placement,
+                None,
+            )
+            .expect("the member lands in the open frame");
+    }
+    let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+    let inside = geom::DVec3::new(width * 0.5, depth * 0.5, height * 0.5);
+    let pointer = gizmo_math::screen_point(document.camera(), rect, inside).expect("the opening is on screen");
+    assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+    // The opening plus a fourteen millimetre lap on each of its four ends.
+    let front = model::PanelNominalSize::new(
+        units::Length::from_millimetres((height - 2.0 * board + 28.0) as i64).expect("a length"),
+        units::Length::from_millimetres((width - 2.0 * board + 28.0) as i64).expect("a width"),
+    )
+    .expect("a front size");
+    (harness, product, pointer, front)
+}
+
+#[test]
+fn an_overlay_click_is_one_front_one_create_and_one_undo() {
+    // U124, ADR 0240: with the mounting key on, the click lays the front over the frame's face —
+    // the opening plus the laps the members allow — and the whole of it is one `panel.create` and
+    // one undo entry.
+    let (mut harness, product, pointer, front) = framed_front_harness("frame-fill-overlay");
+    let document = harness.app.tabs.active_mut();
+    document.editor.set_panel_build(ui::PanelBuild {
+        class: ClassCode::BACK_PANEL,
+        mode: model::FillMode::Fit,
+        overlay: true,
+    });
+    document
+        .editor
+        .arm_fill(&document.session, ClassCode::BACK_PANEL, model::FillMode::Fit, Lang::En)
+        .expect("the front fill arms inside the open frame");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    let planned = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the opening took a ghost");
+    assert_eq!(planned.nominal_size, front, "the ghost is the opening plus a lap at each end");
+    assert_eq!(planned.trims.as_array(), [testkit::millimetres(-14); 4], "and it carries the laps it took");
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    let created = document.editor.selected_node().expect("the new part is selected");
+    let panel = document.session.project().panel(created).expect("the click created a panel");
+    assert_eq!(panel.nominal_size(), planned.nominal_size, "the stored front is the ghost's");
+    assert_eq!(panel.placement(), planned.placement, "and its placement");
+    assert_eq!(panel.trims().as_array(), planned.trims.as_array(), "and the trims it was laid with");
+    assert!(!panel.is_contour(), "a front is the rectangle the opening is");
+    assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+    assert!(harness.revision() > before, "the click writes the document once");
+
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the whole front");
+    // The frame is where it was: the click wrote one entry and not one per trims, size or place.
+    assert_eq!(
+        document.session.project().query(&model::NodeQuery::any()).len(),
+        1 + 4,
+        "the four members and the product are still there"
+    );
 }
 
 #[test]
@@ -6042,8 +6145,7 @@ fn the_fill_ghost_passes_the_board_it_meets_and_holds_at_the_frame_envelope() {
                 product,
                 "Shelf".to_owned(),
                 nominal,
-                None,
-                Vec::new(),
+                ui::PanelShape::default(),
                 placement,
                 Some(ClassCode::HORIZONTAL_PANEL),
             )

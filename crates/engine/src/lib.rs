@@ -69,7 +69,9 @@ pub use panel_cmds::{
     PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelFill,
     PanelMachiningAdd, PanelMachiningMove, PanelMachiningRemove, PanelMachiningUpdate, PanelMaterialSet,
     PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear, PanelRingBandingSet,
+    PanelTrimSet,
 };
+pub use panel_cmds::{TRIM_SET_ID, TRIM_SET_LABEL};
 pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};
 pub use read::{Query, QueryError};

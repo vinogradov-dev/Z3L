@@ -31,7 +31,8 @@
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
 use model::{
-    EdgeBevel, Fill, FillMode, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, Placement, Project, Sight,
+    EdgeBevel, Fill, FillMode, FillMount, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, PanelTrims,
+    Placement, Project, Sight,
 };
 use scene::Camera;
 use ui::theme;
@@ -65,6 +66,11 @@ pub(crate) struct FillGhost {
     pub(crate) free_high: f64,
     /// The end bevels the shaped fill measured, one per beveled outline edge.
     pub(crate) bevels: Vec<EdgeBevel>,
+    /// The end trims the front is laid with, one per nominal edge (ADR 0240).
+    ///
+    /// A board that fills the opening carries none; a front laid over the frame carries the lap each
+    /// end took, so the part the click writes is the front the eye measured.
+    pub(crate) trims: PanelTrims,
     /// The outline's corners on the panel's base face, in world millimetres.
     world: Vec<DVec3>,
     /// The far face's corners: the base rim with every beveled edge set back, in the world.
@@ -110,8 +116,27 @@ struct PlanKey {
     point: DVec3,
     fill: Fill,
     mode: FillMode,
+    mount: FillMount,
     thickness: Length,
     free: Option<f64>,
+}
+
+/// What the fill gesture asks its plan with: the class's pair, the build, the mounting and the board.
+///
+/// The four travel together because they are one arm's whole vocabulary (AGENTS §1.5): the axis pair
+/// the class names, the build the cell ran, the mounting the card holds and the material's thickness.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FillAsk {
+    /// The pair of the niche's sides the part takes.
+    pub(crate) fill: Fill,
+    /// How the part reads the section the walls leave.
+    pub(crate) mode: FillMode,
+    /// How the board sits against the frame: inside the opening, or laid over its face.
+    pub(crate) mount: FillMount,
+    /// The material's thickness, which is the part's third side.
+    pub(crate) thickness: Length,
+    /// The free-axis place a field pinned, or `None` while the pointer carries it.
+    pub(crate) free: Option<f64>,
 }
 
 /// The empty-space tool's live state: the ghost, or the reason there is none.
@@ -149,24 +174,23 @@ impl FillGizmo {
         product: Id,
         point: DVec3,
         niche: &Niche,
-        fill: Fill,
-        mode: FillMode,
-        thickness: Length,
-        free: Option<f64>,
+        ask: FillAsk,
         sight: Sight<'_>,
     ) -> bool {
+        let FillAsk { fill, mode, mount, thickness, free } = ask;
         if self.measured.as_ref().is_some_and(|key| {
             key.niche == *niche
                 && key.point == point
                 && key.fill == fill
                 && key.mode == mode
+                && key.mount == mount
                 && key.thickness == thickness
                 && key.free == free
         }) {
             return false;
         }
-        self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, thickness, free });
-        match plan_at(project, product, point, niche, fill, mode, thickness, free, sight) {
+        self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, mount, thickness, free });
+        match plan_at(project, product, point, niche, ask, sight) {
             Ok(ghost) => {
                 self.ghost = Some(ghost);
                 self.refusal = None;
@@ -283,7 +307,8 @@ pub(crate) fn plan(
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
         model::NicheRefusal::Footprint => refusal_sentence(FillRefusal::Footprint),
     })?;
-    plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None, sight)
+    let ask = FillAsk { fill, mode: FillMode::Fit, mount: FillMount::Inset, thickness, free: None };
+    plan_at(project, product, point, &niche, ask, sight)
 }
 
 /// Plans the part a click would create in `niche` and answers the wireframe the maker sees.
@@ -292,19 +317,16 @@ pub(crate) fn plan(
 /// the plan's base polygon on both faces, in the world, and the two faces the distance fields
 /// measure. `free` pins the free-axis position — a typed distance fixes it, the pointer drives it
 /// otherwise (ADR 0103).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_at(
     project: &Project,
     product: Id,
     point: DVec3,
     niche: &Niche,
-    fill: Fill,
-    mode: FillMode,
-    thickness: Length,
-    free: Option<f64>,
+    ask: FillAsk,
     sight: Sight<'_>,
 ) -> Result<FillGhost, String> {
-    let request = model::FillRequest::new(point, fill, mode, thickness, free);
+    let FillAsk { fill, mode, mount, thickness, free } = ask;
+    let request = model::FillRequest::new(point, fill, mode, thickness, free).with_mount(mount);
     // The plan stops the part at a hidden body's faces, so the ghost is the part the click creates.
     let plan = project.fill_plan_in(niche, product, request, sight).map_err(refusal_sentence)?;
     let parent_world = project.world_placement(product).ok_or_else(|| "The open product has no frame.".to_owned())?;
@@ -344,6 +366,7 @@ pub(crate) fn plan_at(
         placement: plan.placement,
         niche: plan.niche,
         bevels: plan.bevels,
+        trims: plan.trims,
         size_mm,
         free_low: plan.free_low,
         free_high: plan.free_high,
@@ -590,6 +613,11 @@ mod tests {
         }
     }
 
+    /// The ask the tests plan with: one pair, one build, the sample board, no pinned place.
+    fn ask(fill: Fill, mode: FillMode) -> FillAsk {
+        FillAsk { fill, mode, mount: FillMount::Inset, thickness: millimetres(18), free: None }
+    }
+
     #[test]
     fn a_shelf_in_a_splayed_void_takes_the_trapezoid_outline() {
         let (project, product) = splayed_piece();
@@ -599,10 +627,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none(),
         )
         .expect("a shelf fills the splayed void");
@@ -747,10 +772,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Fit,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Fit),
             Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);
@@ -771,10 +793,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none()
         ));
         let ghost = gizmo.ghost().expect("the leaned void takes a ghost");
@@ -807,10 +826,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);

@@ -29,13 +29,19 @@ pub struct PanelBuild {
     pub class: ClassCode,
     /// How the part reads the section the walls leave.
     pub mode: FillMode,
+    /// Whether the first click lays the part over the frame's face instead of inside the opening.
+    ///
+    /// The mounting is a creation key and not a stored form (ADR 0240): the click that follows is a
+    /// board one thickness in front of the void, its ends running past the opening by the lap the
+    /// frame allows. Switching a finished front the other way is an operation, not this bit.
+    pub overlay: bool,
 }
 
 impl Default for PanelBuild {
     /// The build a fresh workspace starts on: a post that takes the largest rectangle, which is the
     /// first row of the card and what the retired Post cell ran.
     fn default() -> Self {
-        Self { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }
+        Self { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit, overlay: false }
     }
 }
 

@@ -496,7 +496,6 @@ impl DistanceFields {
     /// card is the same [`crate::tool_card`] surface a box or a pull draws, so the two share one
     /// layout, one commit path and one edit scope (ADR 0092, ADR 0119).
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -516,6 +515,27 @@ impl DistanceFields {
         let mut outcome = self.end(ui, state, reported, escape, enter);
         outcome.rect = Some(rect);
         outcome
+    }
+
+    /// Draws the card's choices alone, for a gesture whose numbers the document already decides.
+    ///
+    /// An overlay front's depth is its mounting's and not the hand's (ADR 0240), so the card asks
+    /// only which class, build and mounting the next click makes. Nothing is measured and no number
+    /// is typed; a press on the card is chrome exactly as it is on the two-gap card.
+    pub fn show_choices(
+        &mut self,
+        ui: &mut Ui,
+        viewport: Rect,
+        anchor: Pos2,
+        title: Option<Message>,
+        choices: Vec<ToolChoice>,
+        opacity: u32,
+    ) -> DistanceOutcome {
+        self.error = None;
+        let mut view =
+            ToolView { title, choices, rows: Vec::new(), toggle: None, commit: ToolCommit::Gesture, note: None };
+        let (reported, rect) = crate::tool_card::show(ui, viewport, anchor, &mut view, None, opacity);
+        DistanceOutcome { rect: Some(rect), pick: reported.pick, ..DistanceOutcome::default() }
     }
 
     /// Draws one gap's field where the gap is, and reads the keyboard for the active one.

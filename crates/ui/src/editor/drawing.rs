@@ -346,8 +346,7 @@ impl Editor {
             parent,
             Message::ToolPanel.text(lang).to_owned(),
             nominal_size,
-            Some(PanelOutline::Contour { contour }),
-            Vec::new(),
+            crate::editor::PanelShape { outline: Some(PanelOutline::Contour { contour }), ..Default::default() },
             placement,
             class,
         )

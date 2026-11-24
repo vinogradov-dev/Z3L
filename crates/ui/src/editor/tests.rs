@@ -87,8 +87,7 @@ fn plain_panel(editor: &mut Editor, session: &mut Session, parent: Id) -> Result
         parent,
         "Panel".to_owned(),
         PanelCreate::default_nominal_size().map_err(|error| error.to_string())?,
-        None,
-        Vec::new(),
+        PanelShape::default(),
         Placement::IDENTITY,
         None,
     )
@@ -2404,8 +2403,7 @@ fn a_fill_creates_a_classed_panel_of_exactly_the_ghost_size() {
             product,
             "Shelf".to_owned(),
             size,
-            None,
-            Vec::new(),
+            PanelShape::default(),
             placement,
             Some(ClassCode::HORIZONTAL_PANEL),
         )

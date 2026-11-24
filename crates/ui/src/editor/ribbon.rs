@@ -165,7 +165,7 @@ impl Editor {
                     // one-shot, because a maker places several posts in one piece. Pressing the cell
                     // with another class or build chosen on the card arms that one instead of
                     // dropping the tool, and the card's choice is remembered for the next click.
-                    self.set_panel_build(crate::editor::PanelBuild { class, mode });
+                    self.set_panel_build(crate::editor::PanelBuild { class, mode, ..self.panel_build() });
                     if self.fill_arm().is_some_and(|arm| arm.class == class && arm.mode == mode) {
                         self.cancel_fill();
                     } else {

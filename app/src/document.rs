@@ -49,7 +49,7 @@ use crate::contour_gizmo::ContourGizmo;
 use crate::draw_gizmo::{DrawAction, DrawGizmo, DrawInput, DrawModifiers};
 use crate::extrude_gizmo::{ExtrudeEvent, ExtrudeGizmo};
 use crate::file_menu::{FileAction, FileMenu, PreservedSections};
-use crate::fill_gizmo::FillGizmo;
+use crate::fill_gizmo::{FillAsk, FillGizmo};
 use crate::gizmo;
 use crate::gizmo_math;
 use crate::gizmo_math::{MoveKind, PlacementCommit, Preview, PreviewKey, RotateKind, WorkPlane};
@@ -431,6 +431,9 @@ pub(crate) struct Document {
     /// Top-level sections of the loaded file that this build does not understand; written back on
     /// save so an older build never silently destroys a newer build's data.
     extra: PreservedSections,
+    /// The factory's numbers the scene was built with: the lap a front takes past the opening, and
+    /// later the rest of the workshop's defaults (ADR 0240).
+    settings: project::SceneSettings,
     translate_gizmo: TranslateGizmo,
     /// Whether the window is currently hiding the pointer for the carry (ADR 0156).
     cursor_hidden: bool,
@@ -596,6 +599,7 @@ impl Document {
             target,
             file: FileMenu::new(),
             extra,
+            settings: project::SceneSettings::default(),
             translate_gizmo: TranslateGizmo::default(),
             cursor_hidden: false,
             rotate_gizmo: RotateGizmo::default(),
@@ -646,16 +650,18 @@ impl Document {
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
+        let scene_settings = scene.settings();
         let project = scene.into_document();
         let session = Session::with_directory(project, directory).with_contact(crate::scene_build::contact_engine());
         let mut document = Self::new(render_state, settings, shell, session, extra)?;
+        document.settings = scene_settings;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
     }
 
     /// Writes the scene and marks the document as saved.
     pub(crate) fn save(&mut self, path: &Path) -> Result<(), String> {
-        SceneWriter::new(path, self.extra.clone()).write(self.session.project())?;
+        SceneWriter::new(path, self.extra.clone()).with_settings(self.settings).write(self.session.project())?;
         self.session.mark_saved();
         self.file.set_path(Some(path.to_owned()));
         Ok(())
@@ -669,7 +675,7 @@ impl Document {
     /// saved has no file to write, and the caller is told that instead of being given one.
     pub(crate) fn save_sink(&self) -> Option<SceneWriter> {
         let path = self.file.path()?;
-        Some(SceneWriter::new(path, self.extra.clone()))
+        Some(SceneWriter::new(path, self.extra.clone()).with_settings(self.settings))
     }
 
     /// Marks the document as saved, which is what a file that holds it means.
@@ -1909,39 +1915,81 @@ impl Document {
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
     /// product it points at. A pointer that leaves the scene drops the ghost, and a still pointer
     /// re-measures nothing.
-    /// The rows a fill's card offers before the gaps: the class of part and the way it is built.
+    /// The rows a fill's card offers before the gaps: the class of part, the build and the mounting.
     ///
-    /// Two rows, each in its own order, so a pick is a pair of indexes and nothing else is stored
-    /// (U123, ADR 0239). The words are messages, translated by the card like every other row's.
-    fn fill_choices(arm: ui::FillArm) -> Vec<ui::ToolChoice> {
-        vec![
-            ui::ToolChoice {
-                options: vec![Message::ToolPost, Message::ToolShelf, Message::ToolWall],
-                chosen: FILL_CLASSES.iter().position(|class| *class == arm.class).unwrap_or(0),
-            },
-            ui::ToolChoice {
-                options: vec![Message::FillMethodFit, Message::FillMethodShape],
-                chosen: usize::from(arm.mode == model::FillMode::Shape),
-            },
-        ]
+    /// Each row travels with what it means, so a pick is read back through the list that drew it and
+    /// a row a class does not offer — the mounting belongs to a front alone — can never be picked
+    /// (U123, ADR 0239, ADR 0240). The words are messages, translated by the card like every other
+    /// row's.
+    fn fill_rows(arm: ui::FillArm, build: ui::PanelBuild) -> Vec<(FillRow, ui::ToolChoice)> {
+        let mut rows = vec![
+            (
+                FillRow::Class,
+                ui::ToolChoice {
+                    options: vec![Message::ToolPost, Message::ToolShelf, Message::ToolWall],
+                    chosen: FILL_CLASSES.iter().position(|class| *class == arm.class).unwrap_or(0),
+                },
+            ),
+            (
+                FillRow::Build,
+                ui::ToolChoice {
+                    options: vec![Message::FillMethodFit, Message::FillMethodShape],
+                    chosen: usize::from(arm.mode == model::FillMode::Shape),
+                },
+            ),
+        ];
+        // A board laid over the frame is a frontal board: a shelf or a post stands across the void,
+        // so the mounting is asked only where the answer means something (ADR 0240).
+        if arm.fill == model::Fill::WidthAndHeight {
+            rows.push((
+                FillRow::Mount,
+                ui::ToolChoice {
+                    options: vec![Message::FillMountInset, Message::FillMountOverlay],
+                    chosen: usize::from(build.overlay),
+                },
+            ));
+        }
+        rows
     }
 
-    /// The class and the build a pick on the fill's card names.
+    /// The build a pick on the fill's card names.
     ///
-    /// A row or an option the card does not draw answers the arm's own value, so a pick can never
-    /// move the tool to a class nobody offered.
-    fn fill_choice(pick: ui::ToolPick, arm: ui::FillArm) -> (ClassCode, model::FillMode) {
-        match pick.row {
-            0 => (FILL_CLASSES.get(pick.option).copied().unwrap_or(arm.class), arm.mode),
-            1 => {
-                let mode = match pick.option {
+    /// The pick is read through the rows the card drew, so an option or a row nobody offered answers
+    /// the build the tool already holds.
+    fn fill_choice(
+        pick: ui::ToolPick,
+        arm: ui::FillArm,
+        build: ui::PanelBuild,
+        rows: &[(FillRow, ui::ToolChoice)],
+    ) -> ui::PanelBuild {
+        let Some((row, _)) = rows.get(pick.row) else {
+            return build;
+        };
+        match row {
+            FillRow::Class => {
+                ui::PanelBuild { class: FILL_CLASSES.get(pick.option).copied().unwrap_or(arm.class), ..build }
+            }
+            FillRow::Build => ui::PanelBuild {
+                mode: match pick.option {
                     0 => model::FillMode::Fit,
                     1 => model::FillMode::Shape,
                     _ => arm.mode,
-                };
-                (arm.class, mode)
-            }
-            _ => (arm.class, arm.mode),
+                },
+                ..build
+            },
+            FillRow::Mount => ui::PanelBuild { overlay: pick.option == 1, ..build },
+        }
+    }
+
+    /// How the fill's next click sits against the frame, with the lap the scene's numbers ask for.
+    ///
+    /// The lap is the scene's and not the workshop's (ADR 0240): a reopened piece builds the front it
+    /// was built with, and a new one starts on this build's default until the standards file lands.
+    fn fill_mount(&self) -> model::FillMount {
+        if self.editor.panel_build().overlay {
+            model::FillMount::Overlay { laps: [self.settings.overlay_lap; 4] }
+        } else {
+            model::FillMount::Inset
         }
     }
 
@@ -2015,17 +2063,8 @@ impl Document {
                     // The pointer names no cell, so the ghost holds the place the tool already has.
                     None => self.fill_carriage.map(|carried| carried.place),
                 };
-                self.fill_gizmo.hover(
-                    self.session.project(),
-                    product,
-                    point,
-                    niche,
-                    arm.fill,
-                    arm.mode,
-                    thickness,
-                    free,
-                    self.editor.flags().sight(),
-                )
+                let ask = FillAsk { fill: arm.fill, mode: arm.mode, mount: self.fill_mount(), thickness, free };
+                self.fill_gizmo.hover(self.session.project(), product, point, niche, ask, self.editor.flags().sight())
             }
             None => {
                 let reason =
@@ -2087,32 +2126,48 @@ impl Document {
             placements.push(FieldPlacement { side, position: middle_screen });
         }
         // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
-        let choices = Self::fill_choices(arm);
-        let outcome = self.distance_fields.show(
-            ui,
-            &mut distances,
-            &placements,
-            rect,
-            card_anchor,
-            Some(Message::ToolPanel),
-            choices,
-            opacity,
-        );
+        // A front laid over the frame has no number to type — its depth is the mounting's — so its
+        // card is the choices alone (ADR 0240).
+        let build = self.editor.panel_build();
+        let rows = Self::fill_rows(arm, build);
+        let choices = rows.iter().map(|(_, choice)| choice.clone()).collect::<Vec<_>>();
+        let mut overlay = self.fill_mount().is_overlay();
+        let outcome = if overlay {
+            self.distances = None;
+            self.distance_fields.show_choices(ui, rect, card_anchor, Some(Message::ToolPanel), choices, opacity)
+        } else {
+            self.distance_fields.show(
+                ui,
+                &mut distances,
+                &placements,
+                rect,
+                card_anchor,
+                Some(Message::ToolPanel),
+                choices,
+                opacity,
+            )
+        };
         self.tool_card_rect = outcome.rect;
-        // A class or a build pressed on the card re-arms the tool with that choice: the ghost, the
-        // niche's pair and the part the click makes all follow one value (U123, ADR 0239).
+        // A class, a build or a mounting pressed on the card re-arms the tool with that choice: the
+        // ghost, the niche's pair and the part the click makes all follow one value (U123, ADR 0239).
         if let Some(pick) = outcome.pick {
-            let (class, mode) = Self::fill_choice(pick, arm);
-            if (class, mode) != (arm.class, arm.mode) {
-                self.editor.set_panel_build(ui::PanelBuild { class, mode });
+            let chosen = Self::fill_choice(pick, arm, build, &rows);
+            if chosen != build {
+                self.editor.set_panel_build(chosen);
                 let lang = ui::language(ui.ctx());
-                match self.editor.arm_fill(&self.session, class, mode, lang) {
+                let rearm = chosen.class != arm.class || chosen.mode != arm.mode;
+                let armed =
+                    if rearm { self.editor.arm_fill(&self.session, chosen.class, chosen.mode, lang) } else { Ok(()) };
+                match armed {
                     Ok(()) => ui.ctx().request_repaint(),
                     // A class the registry does not register carries no pair to fill, and the arm
                     // refuses with the sentence that says so; the card keeps the choice it had.
                     Err(refusal) => self.last_error = Some(refusal),
                 }
-                return;
+                overlay = self.fill_mount().is_overlay();
+                if rearm || overlay {
+                    return;
+                }
             }
         }
         if let Some(message) = self.distance_fields.error() {
@@ -2124,17 +2179,8 @@ impl Document {
             // coordinate before the frame paints, so the picture and the field agree. The cell is the
             // one the atom holds, so the typed number moves the part and not the space.
             if let Some(niche) = self.editor.void().niche().cloned() {
-                self.fill_gizmo.hover(
-                    self.session.project(),
-                    product,
-                    point,
-                    &niche,
-                    arm.fill,
-                    arm.mode,
-                    thickness,
-                    pinned,
-                    self.editor.flags().sight(),
-                );
+                let ask = FillAsk { fill: arm.fill, mode: arm.mode, mount: self.fill_mount(), thickness, free: pinned };
+                self.fill_gizmo.hover(self.session.project(), product, point, &niche, ask, self.editor.flags().sight());
             }
             ui.ctx().request_repaint();
         }
@@ -2509,8 +2555,11 @@ impl Document {
                 ghost.parent,
                 name,
                 ghost.nominal_size,
-                Some(ghost.outline.clone()),
-                ghost.bevels.clone(),
+                ui::PanelShape {
+                    outline: Some(ghost.outline.clone()),
+                    bevels: ghost.bevels.clone(),
+                    trims: ghost.trims,
+                },
                 ghost.placement,
                 Some(arm.class),
             )
@@ -2652,11 +2701,15 @@ impl Document {
             return Some(height);
         }
         if let Some(arm) = self.editor.fill_arm() {
-            let distances = self.distances.as_ref()?;
+            // A front laid over the frame decides its own depth, so the card and the inspector both
+            // draw the choices and no numbers (ADR 0240).
+            let rows = if self.fill_mount().is_overlay() { Vec::new() } else { self.distances.as_ref()?.rows() };
+            let choices =
+                Self::fill_rows(arm, self.editor.panel_build()).into_iter().map(|(_, choice)| choice).collect();
             return Some(ToolView {
                 title: Some(Message::ToolPanel),
-                choices: Self::fill_choices(arm),
-                rows: distances.rows(),
+                choices,
+                rows,
                 toggle: None,
                 commit: ui::ToolCommit::Gesture,
                 note: None,
@@ -4562,6 +4615,20 @@ impl Document {
     }
 }
 
+/// What one row of a fill's card asks: the class of part, its build or its mounting.
+///
+/// The row is named beside the choices it draws, so a pick is read back through the list that drew
+/// it instead of by a hard-coded index (U123, ADR 0240).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FillRow {
+    /// Which class the next click makes, and with it which pair of the void's sides it takes.
+    Class,
+    /// How the part reads the section the walls leave.
+    Build,
+    /// Whether the board fills the opening or lies over the frame's face.
+    Mount,
+}
+
 /// What the Delete key asks of the window.
 ///
 /// One node goes at once, because undo covers it and a one-row removal is what the person just
@@ -5032,6 +5099,36 @@ mod tests {
     use super::*;
     use crate::icons;
     use crate::view_cluster::projection_button;
+
+    #[test]
+    fn the_fill_card_asks_for_a_mounting_only_on_a_front_and_a_pick_reads_back() {
+        // Three rows for a front — class, build, mounting — and two for a shelf: a board laid over
+        // the frame is a frontal board (ADR 0240). A pick is read through the rows the card drew, so
+        // the mounting row can never be mistaken for a build.
+        let wall =
+            ui::FillArm { class: ClassCode::BACK_PANEL, fill: model::Fill::WidthAndHeight, mode: model::FillMode::Fit };
+        let build = ui::PanelBuild { class: wall.class, mode: wall.mode, overlay: false };
+        let rows = Document::fill_rows(wall, build);
+        assert_eq!(rows.len(), 3, "a front asks its mounting");
+        assert_eq!(
+            rows.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
+            [FillRow::Class, FillRow::Build, FillRow::Mount]
+        );
+
+        let shelf = ui::FillArm {
+            class: ClassCode::HORIZONTAL_PANEL,
+            fill: model::Fill::WidthAndDepth,
+            mode: model::FillMode::Fit,
+        };
+        let shelf_build = ui::PanelBuild { class: shelf.class, mode: shelf.mode, overlay: false };
+        assert_eq!(Document::fill_rows(shelf, shelf_build).len(), 2, "a shelf has nothing to lie over");
+
+        // A pick on the mounting turns the next click over and leaves the class and the build alone.
+        let picked = Document::fill_choice(ui::ToolPick { row: 2, option: 1 }, wall, build, &rows);
+        assert_eq!(picked, ui::PanelBuild { overlay: true, ..build }, "the mounting is the row that moved");
+        // An option nobody offered answers the build the tool holds.
+        assert_eq!(Document::fill_choice(ui::ToolPick { row: 0, option: 9 }, wall, build, &rows), build);
+    }
 
     #[test]
     fn a_typed_move_distance_pins_the_gap_to_the_next_surface() {

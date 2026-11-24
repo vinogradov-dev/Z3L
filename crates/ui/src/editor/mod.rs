@@ -34,6 +34,7 @@ use crate::toolbars;
 use crate::view_flags::ViewFlags;
 
 pub use self::boolean::{BooleanArm, BooleanOperand};
+pub use self::creation::PanelShape;
 pub use self::fill::{FillArm, PanelBuild};
 pub use self::selection::{BandRule, BandView, SelectionBand};
 

@@ -166,7 +166,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             // A niche belongs to the open product (ADR 0098) and a part needs a material to take its
             // thickness from; the class must actually carry the `fill` trait, so a card that chose a
             // class without one disables the cell instead of arming a tool with no axis pair.
-            let crate::editor::PanelBuild { class, mode } = context.build;
+            let crate::editor::PanelBuild { class, mode, .. } = context.build;
             let fills = class.traits().and_then(|traits| traits.fill()).is_some();
             let method = match mode {
                 FillMode::Fit => Message::FillMethodFit,
