@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=f70556f updated=2026-11-24
+STATE: milestone=M7 phase=T task=U123 state=idle base=25801c2 updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -56,7 +56,7 @@ started from plus one (X128, ADR 0234).
 
 ## Next
 
-Nothing is scheduled: 20 open tasks wait in `## Next`.
+U123 is next: the Panels group is three cells, and what a panel becomes is chosen on the part
 
 ## Index
 

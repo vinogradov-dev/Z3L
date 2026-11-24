@@ -45,36 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
-  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
-   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
-   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
-   degrees against the frontal position is a wall. Today a class is a creation parameter and
-   nothing derives one: panel.create takes a class, no command writes it after the click, so a
-   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
-   ring has no role to carry and a maker would have to type one.
-  Shape: One function in model beside classify_outline — the role a plane implies: take the
-   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
-   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
-   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
-   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
-   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
-   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
-   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
-   derived class into panel.create; the niche fill keeps naming its class, because the class is
-   what picks the section pair (ADR 0099); the card shows the role the part carries and the
-   class picker overrides it through node.property.set, which already owns the reserved class
-   key. One record carries the rule, the frame it is measured in and the two ties, because the
-   tie-breaks are a decision and not a rounding.
-  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
-   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
-   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
-   the frontal answers wall; a board drawn by three points on a leaned face is born with the
-   class its plane implies and the card shows it; an explicit class passed to panel.create
-   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
-   green.
-  `files: crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/editor/drawing.rs,docs/decisions/README.md`
-
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -511,6 +481,36 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
+  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
+   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
+   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
+   degrees against the frontal position is a wall. Today a class is a creation parameter and
+   nothing derives one: panel.create takes a class, no command writes it after the click, so a
+   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
+   ring has no role to carry and a maker would have to type one.
+  Shape: One function in model beside classify_outline — the role a plane implies: take the
+   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
+   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
+   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
+   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
+   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
+   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
+   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
+   derived class into panel.create; the niche fill keeps naming its class, because the class is
+   what picks the section pair (ADR 0099); the card shows the role the part carries and the
+   class picker overrides it through node.property.set, which already owns the reserved class
+   key. One record carries the rule, the frame it is measured in and the two ties, because the
+   tie-breaks are a decision and not a rounding.
+  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
+   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
+   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
+   the frontal answers wall; a board drawn by three points on a leaned face is born with the
+   class its plane implies and the card shows it; an explicit class passed to panel.create
+   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
+   green.
+  `files: crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/editor/drawing.rs,docs/decisions/README.md` — `25801c2`
 
 - `[x]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
   Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every
