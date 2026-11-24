@@ -487,6 +487,10 @@ checkout — which is how a plan line and a source file were lost once.
   (`assets/README.md` holds the file format, `assets/icons/AUDIT.md` the measured state of the set).
 - `docs/philosophy.md` — what the program believes: the thesis, the three laws (`Local`, `Literal`, `Lasting`) and the readings of the name. Read before a decision the rules do not cover.
 - `docs/decisions/` — architecture decision records: one short file per decision, with the reason and the consequences.
+- `docs/performance.md` — what a frame, an edit, a click and a megabyte cost: the probes and their
+  numbers, the measured memory layout (why the tree carries no `#[repr(align)]` and pads only at the
+  GPU boundary), and the ordered list of what to speed up next. Read it before optimising anything,
+  and put a new number in it (and in `plan/debt.md` `[perf]`) when one lands.
 - `docs/domain/classes.md` — the semantic class registry: encoding, traits and lifecycle; `docs/domain/products.md` — the product, its authored envelope and the workspace rules; `docs/domain/order-export.md` — the published order-package contract other programs read.
 - `plan/STATUS.md` — the `STATE` line, where the project stands and what comes next; rewritten at the end of every task, never appended to.
 - `plan/BACKLOG.md` — one entry per task with a stable id, its order, its labelled fields and a `files:` hint; the single list of what is done, in progress and next.
