@@ -82,6 +82,44 @@ impl Project {
         Ok(next_revision)
     }
 
+    /// Replaces a panel's shape — outline, nominal size and end bevels — in one revision.
+    ///
+    /// The candidate is validated the way a creation validates one (`add_panel_with_outline`): its
+    /// outline draws a nominal contour, every bevel names an edge of that outline, no bevel eats the
+    /// body, and the machining the panel already carries still lies inside the new core. The outline
+    /// is stored in the panel's own frame, so a caller anchors a ring and states the size its bounds
+    /// measure; the nominal size is the one the caller measured.
+    ///
+    /// The placement is not this method's: a caller that also moves the part writes it in the same
+    /// command and settles the revision, so one operation is one number (ADR 0234).
+    pub fn set_panel_shape(
+        &mut self,
+        id: Id,
+        nominal_size: PanelNominalSize,
+        outline: PanelOutline,
+        bevels: &[EdgeBevel],
+    ) -> Result<Revision, ProjectError> {
+        let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
+        let mut candidate = panel.clone();
+        candidate.set_nominal_size(nominal_size);
+        candidate.set_outline(outline);
+        candidate.nominal_contour()?;
+        candidate.set_bevels(bevels.to_vec());
+        candidate.validate_bevels()?;
+        let geometry = candidate.geometry_for(nominal_size, candidate.last_known_thickness())?;
+        validate_panel_machining(&candidate, &geometry)?;
+        if !bevels.is_empty() && candidate.bevel_violation(nominal_size, &geometry)?.is_some() {
+            return Err(ProjectError::BevelRemovesBody { panel: id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some((_depth, slot)) = find_panel_mut(&mut self.root, id, 1) else {
+            return Err(ProjectError::PanelNotFound { id });
+        };
+        *slot = candidate;
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Checks whether a rectangle panel's outline can bake into a contour ring.
     ///
     /// The conversion is one-way: the corner features and bows become curve segments, every edge
@@ -938,6 +976,39 @@ mod tests {
     use crate::*;
 
     use geom::{DQuat, DVec3};
+
+    #[test]
+    fn a_panel_takes_a_new_shape_in_one_revision() {
+        // The one write a build change needs (U123): outline, nominal size and bevels in a single
+        // number, validated the way a creation validates a candidate.
+        let mut project = sample_project();
+        let root = project.root().id();
+        let panel = project
+            .add_panel(root, "Shelf", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
+            .expect("a panel");
+        let before = project.revision();
+        let length = Length::from_millimetres(600).expect("a length");
+        let width = Length::from_millimetres(300).expect("a width");
+        let narrow = PanelNominalSize::new(length, width).expect("a size");
+
+        let revision =
+            project.set_panel_shape(panel, narrow, PanelOutline::default(), &[]).expect("the shape is written");
+        assert_eq!(revision, before.checked_next().expect("revision"), "one revision");
+        assert_eq!(project.panel(panel).expect("panel").nominal_size(), narrow);
+
+        // A bevel naming a ring segment the outline does not have is refused, and the panel keeps
+        // its shape.
+        let wide = PanelNominalSize::new(length, sample_nominal().width()).expect("a size");
+        let bevel = EdgeBevel::new(
+            EdgeRef::Ring { segment: ContourSegmentId::new(7).expect("a segment id") },
+            units::Degrees::from_millidegrees(45_000),
+        )
+        .expect("a 45 degree bevel");
+        let refusal = project.set_panel_shape(panel, wide, PanelOutline::default(), std::slice::from_ref(&bevel));
+        assert!(refusal.is_err(), "a rectangle panel has no ring segment 7");
+        assert_eq!(project.panel(panel).expect("panel").nominal_size(), narrow, "a refusal changes nothing");
+        assert_eq!(project.revision(), before.checked_next().expect("revision"), "and moves no number");
+    }
 
     #[test]
     fn a_new_panel_is_anchored_at_its_base_corner_in_a_nested_turned_parent() {
