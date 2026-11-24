@@ -340,6 +340,61 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    package's price rows, and the prompt no longer says the hardware is drawn simply (one
    scenario test over the recipe).
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
+- `[ ]` **Y9** a varnished board shows a dielectric sheen over its decal instead of a flat matte
+  Why: `final::bsdf::probabilities` gives `diffuse = 1 - metallic` and `specular = metal * (1 -
+   multiple)`, so at `metallic = 0` an opaque surface has no specular lobe at all. The three
+   lobes of Y1 and Y2 cover a diffuse board, a metal handle and a pane; the fourth surface a
+   furniture catalogue sells — a lacquer, a melamine face, a gloss acrylic front, which is a
+   dielectric specular layer over a decal — reads as matte clay, and no denoiser (Y4) turns
+   that into the picture the owner points at. The number is already in the frame:
+   `Surface::ior` travels to the tracer and is read for an opaque surface nowhere.
+  Shape: A dielectric reflection lobe on an opaque surface: Fresnel-Schlick with F0 from the
+   `ior` the material already carries, the GGX visible-normal sampling and the masking the
+   conductor uses (so a roughness of 0.05 does not turn into fireflies), drawn with the
+   probability the conductor's share leaves unused and weighted by the complement of the
+   diffuse share, so a board that is already right gains a sheen and no energy. A test measures
+   the lobe's directional albedo against the Fresnel integral it must equal, at grazing angles
+   and at roughness 0.05/0.3/0.8. One thing is decided first and recorded as an ADR, because it
+   decides what the catalogue record (Y7, Y8) must carry and what the WGSL reads: one `coat` on
+   `Surface` and `Face.finish` (weight, roughness and its own ior) against a second material
+   layer. The recommendation is the single `coat` field — a varnish over a veneer is one
+   surface a workshop names and one number a record can hold — and the question is filed in
+   `plan/questions.md` rather than answered here. A pane keeps the `is_pane` path untouched,
+   and the viewport keeps its own shading: this entry changes the frame's value and the tracer,
+   not `render`.
+  Done: `final` tests: the dielectric lobe's albedo by sampling equals the Fresnel-weighted
+   specular integral by quadrature within tolerance at cos 0.1/0.5/1.0 and roughness
+   0.05/0.3/0.8; the summed opaque model answers at most its albedo and at least 0.9 of it at
+   roughness 0.8; the conductor and `is_pane` tests are unchanged; a device test renders a
+   matte and a varnished sphere side by side and asserts the varnished one is brighter in a
+   grazing band while the two agree on axis; the coat ADR is recorded; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/soup.rs,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
+- `[ ]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
+  Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
+   — so every pane is clear float glass. A sandblasted or etched front is a standard furniture
+   door and is not a different colour but a different surface: the transmitted light is
+   scattered by the roughness the reflection lobe already has. Today the only way to draw one
+   is a heavier Beer-Lambert tint, which darkens the pane instead of softening what stands
+   behind it, and the tint is a property of the glass and not of its finish.
+  Shape: Take the transmitted beam about the same microfacet normal the reflection lobe draws
+   (Walter et al. 2007, §4), weighted by the GGX distribution the roughness names, with the
+   refraction direction computed from that normal and the weight corrected by the Jacobian of
+   the refraction — the η² and the cosine ratio the smooth path already carries as `ratio²` —
+   and the exit interface sampled again. A roughness of zero stays exactly today's `refract`,
+   so a clear pane is not changed by this entry. Total internal reflection and the Fresnel
+   split stay where they are. Caustics through a rough pane are found by chance and not
+   sampled: the noise the entry adds is written into `plan/notes/`, and the transmitted
+   radiance is checked against an analytic single-scattering estimate instead of a converged
+   reference. Where the roughness lives — the pane's own `roughness`, or the coat field Y9
+   decides — is settled by Y9's record, so one surface is described once.
+  Done: `final` tests: a rough pane's transmitted directions lie inside the lobe its roughness
+   names, and a zero roughness reproduces the smooth refraction of today; a pane's total
+   transmittance — reflected plus transmitted — stays within tolerance at roughness
+   0.1/0.5/1.0; a device test renders the same bar behind a pane at roughness 0 and 0.6 and
+   asserts the transmitted radiance spreads (its variance across the image rises) while the
+   clear pane is unchanged; the added variance and the sample count it needs are written into
+   `plan/notes/`; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
 
 ## Done
 
