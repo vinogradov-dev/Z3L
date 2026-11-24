@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=4a30e8c updated=2026-11-24
+STATE: milestone=M7 phase=T task=- state=idle base=37e5b8d updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -54,8 +54,7 @@ it started from plus one (X128, ADR 0234).
 
 ## Next
 
-Nothing is scheduled: the application stream's work order is empty, so the next entry is taken from
-the backlog with cargo xtask task take, and J12, Q2 and O2 wait in their own streams.
+Nothing is scheduled: 15 open tasks wait in `## Next`.
 
 ## Index
 

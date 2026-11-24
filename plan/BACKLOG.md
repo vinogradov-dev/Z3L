@@ -343,6 +343,32 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **U128** the fill's choices are the operation's context menu and a measured gap is a field on its arrow
+  Why: The fill's four choices and its two gap fields ride in a card anchored at the pointer:
+   the anchor is taken on the gesture's first frame and cleared the moment the card vanishes,
+   so a maker chasing it loses both the field and the choice, and the two gaps — distances to
+   the walls that stop the board — are drawn as a 1 pt grey run with no heads while the same
+   measurement on a carried piece is an amber dimension. The owner asked (2026-11-24): the
+   choices belong to the operation's own context menu, the numbers belong on the arrows, and
+   that arrow grammar serves every distance field in the program.
+  Shape: node_actions::Entry gains checked: Option<bool> and show draws the tick left of the
+   label, in one column, with a right gutter so a long word never reads as cropped; while the
+   fill is armed the viewport popup is the operation's menu alone — class, build, the
+   «Равномерно» toggle and the mounting that only a wall offers — 150 pt wide, and the node's
+   rows stay in the tree. DistanceFields::show_in_scene draws the fill's two gaps as plates in
+   the middle of their runs, and one painter (Document::paint_dimension) replaces gap_fields'
+   hairline and paint_gap_arrow's double head: amber helper ink, 3 pt, one head on the
+   obstacle, a tick on the part's own face, dimmed while the hand is elsewhere. A row's pitch
+   is a thin coaxial run read aloud and never typed, and the count is a plate with a × beside
+   the hand. The tool card keeps sizes alone. ADR 0242 supersedes the card part of ADR 0119 for
+   these two cases and extends ADR 0161 to the fill.
+  Done: Tests: the popup draws the tick left of the label and only the operation's rows while
+   the fill is armed; one painter serves the fill and the carry at one ink and width; a typed
+   gap pins its face and the plate moves with the run; the count plate follows the hand; Enter,
+   Tab and Escape keep their meanings; the inspector still mirrors the gaps; cargo xtask ci is
+   green.
+  `files: app/src/document.rs,app/src/fill_gizmo.rs,crates/ui/src/distance.rs,crates/ui/src/node_actions.rs,crates/ui/src/tool_card.rs,crates/ui/src/inventory.rs,crates/ui/src/editor/fill.rs,crates/text/src/messages.rs,app/tests/scenarios.rs,docs/decisions` — `37e5b8d`
+
 - `[x]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
   Why: The owner: a point tool that names points in space, the first three fixing the plane, as
    many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
