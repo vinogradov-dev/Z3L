@@ -348,26 +348,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    dielectric specular layer over a decal — reads as matte clay, and no denoiser (Y4) turns
    that into the picture the owner points at. The number is already in the frame:
    `Surface::ior` travels to the tracer and is read for an opaque surface nowhere.
-  Shape: A dielectric reflection lobe on an opaque surface: Fresnel-Schlick with F0 from the
-   `ior` the material already carries, the GGX visible-normal sampling and the masking the
-   conductor uses (so a roughness of 0.05 does not turn into fireflies), drawn with the
-   probability the conductor's share leaves unused and weighted by the complement of the
-   diffuse share, so a board that is already right gains a sheen and no energy. A test measures
-   the lobe's directional albedo against the Fresnel integral it must equal, at grazing angles
-   and at roughness 0.05/0.3/0.8. One thing is decided first and recorded as an ADR, because it
-   decides what the catalogue record (Y7, Y8) must carry and what the WGSL reads: one `coat` on
-   `Surface` and `Face.finish` (weight, roughness and its own ior) against a second material
-   layer. The recommendation is the single `coat` field — a varnish over a veneer is one
-   surface a workshop names and one number a record can hold — and the question is filed in
-   `plan/questions.md` rather than answered here. A pane keeps the `is_pane` path untouched,
-   and the viewport keeps its own shading: this entry changes the frame's value and the tracer,
-   not `render`.
-  Done: `final` tests: the dielectric lobe's albedo by sampling equals the Fresnel-weighted
-   specular integral by quadrature within tolerance at cos 0.1/0.5/1.0 and roughness
-   0.05/0.3/0.8; the summed opaque model answers at most its albedo and at least 0.9 of it at
-   roughness 0.8; the conductor and `is_pane` tests are unchanged; a device test renders a
-   matte and a varnished sphere side by side and asserts the varnished one is brighter in a
-   grazing band while the two agree on axis; the coat ADR is recorded; cargo xtask ci is green.
+  Shape: A coat on `scene::Surface` and on the tracer's `Face.finish`, exactly as ADR 0243
+   decides: a weight in 0..=1, a gloss in percent and its own ior. The lobe is GGX with the
+   visible-normal sampling and the masking the conductor already uses, at the alpha the gloss
+   maps to — `alpha = (1 - gloss / 100)²`, computed once where the record becomes a frame, so a
+   gloss of 99 % does not turn into fireflies — drawn by the discrete pick the other lobes
+   share, weighted `weight · F_coat · f · cos / pdf`, while the base's radiance is multiplied
+   by the coat's transmittance `1 - weight · F_coat`. The four probabilities (diffuse,
+   conductor, coat, transmitted) sum to one; a weight of zero draws nothing and is exactly
+   today's picture; the three spare channels of `GpuFace` carry the coat, so a face keeps its
+   144 bytes (`docs/performance.md` §2). A pane keeps the `is_pane` path untouched, and the
+   viewport keeps its own shading: this entry changes the frame's value and the tracer, not
+   `render`.
+  Done: `final` tests: the coat's albedo by sampling equals the Fresnel-weighted specular
+   integral by quadrature within tolerance at cos 0.1/0.5/1.0 and gloss 99/70/20; the four
+   probabilities sum to one under every weight and every view angle; the summed opaque model
+   answers at most its albedo and at least 0.9 of it at a 50 % gloss; a weight of zero is
+   bit-identical to the picture without the entry; the conductor and `is_pane` tests are
+   unchanged; a device test renders a matte and a 90 % lacquered sphere side by side and
+   asserts the lacquered one is brighter in a grazing band while the two agree on axis; ADR
+   0243 is cited by the code; cargo xtask ci is green.
   `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/soup.rs,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
 - `[ ]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
   Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
@@ -382,11 +382,12 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the refraction — the η² and the cosine ratio the smooth path already carries as `ratio²` —
    and the exit interface sampled again. A roughness of zero stays exactly today's `refract`,
    so a clear pane is not changed by this entry. Total internal reflection and the Fresnel
-   split stay where they are. Caustics through a rough pane are found by chance and not
+   split stay where they are. A pane keeps its own `roughness` and is never a coat (ADR 0243):
+   it scatters what it transmits, where a coat reflects, so the two are different lobes and
+   neither stands in for the other. Caustics through a rough pane are found by chance and not
    sampled: the noise the entry adds is written into `plan/notes/`, and the transmitted
    radiance is checked against an analytic single-scattering estimate instead of a converged
-   reference. Where the roughness lives — the pane's own `roughness`, or the coat field Y9
-   decides — is settled by Y9's record, so one surface is described once.
+   reference.
   Done: `final` tests: a rough pane's transmitted directions lie inside the lobe its roughness
    names, and a zero roughness reproduces the smooth refraction of today; a pane's total
    transmittance — reflected plus transmitted — stays within tolerance at roughness
@@ -395,6 +396,37 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    clear pane is unchanged; the added variance and the sample count it needs are written into
    `plan/notes/`; cargo xtask ci is green.
   `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
+- `[ ]` **O18** a facade is assembled from a base material and a finish, so a veneer and a lacquer are two records and not a matrix of combinations
+  Why: The owner's requirement, 2026-11-25: the materials a workshop names — a veneer, a
+   lacquer, a patina — are each a material in its own right, and a facade is assembled from
+   them rather than from a record per combination, so that 30 veneers and 5 lacquers do not
+   become 150 records. ADR 0243 settles the renderer's side: a surface is a base plus one coat,
+   and the coat costs no extra lobe per drawable because the frame merges the two into one
+   `Surface`. What is still undecided is how the catalogue says it, and today nothing composes:
+   `docs/domain/nomenclature.md` gives a record an appearance and a finish, Y8 builds the
+   library that holds the channels, O16 makes a record refer to a library material, and a part
+   still names one material that must already be the finished surface. It waits on Y8 and O16.
+  Shape: A part names a **base** material — a library record: a veneer, a paint, a metal, a
+   patina — and optionally a **finish** — a library record whose coat group is the lacquer,
+   with a weight and a gloss percent (ADR 0243). The frame merges the two into one `Surface`
+   before the tracer sees it: the coat is a field of the frame's surface, never a second
+   drawable, so a composition costs no extra lobe and no extra record. A finish named without a
+   base, a base that is itself a finish, and a finish whose record has no coat are readable
+   refusals naming the record. The directory's appearance row references the two ids and stores
+   no colour of its own (O16), the session resolves them like any other record, and a missing
+   material stays a diagnostic rather than a substitution (ADR 0148). The rejected alternative
+   is written down in the entry: one record per finished surface, with the veneer and the
+   lacquer chosen together, which multiplies the library by the finish list and makes a new
+   lacquer edit every veneer record.
+  Done: Tests in `catalog`, `engine` and `app`: a part naming a base and a finish reaches the
+   frame as one `Surface` with a coat, and a part naming a base alone reaches it with no coat;
+   30 bases and 5 finishes resolve 150 combinations out of 35 records, asserted over the
+   directory rather than described; a finish whose base is missing, a part naming a finish as
+   its base, and a finish with no coat are refusals that name the record; the scene file stores
+   the two ids and never the resolved numbers, so a library edit reaches every part that names
+   it; the inspector's material diagnostics still read the resolved surface; cargo xtask ci is
+   green.
+  `files: crates/catalog/src,docs/domain/nomenclature.md,app/src/scene_build.rs,crates/scene/src/lib.rs,plan/notes`
 
 ## Done
 

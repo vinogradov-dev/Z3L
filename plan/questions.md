@@ -71,13 +71,3 @@ this file only when a task touches the question.
   carries it and the door does not, so the inspector cannot tell a flush overlay door from an inset
   one and `door_gap` reads every front as an overlay. Confirm whether the mounting form belongs on
   the door (a reserved property or a class variant) before the rule stops guessing (J9).
-
-- A glossy dielectric — a lacquer, a melamine face, a gloss acrylic front — has no specular lobe in
-  the tracer today: `final::bsdf` puts every opaque surface on one axis, `diffuse = 1 - metallic` and
-  `specular = metal * …`, so a board is matte and `Surface::ior` is read for nothing (Y9). The sheen
-  itself is not the question; how the document and the catalogue say it is: one `coat` on `Surface`
-  and `Face.finish` — a weight, a roughness and its own ior — which is one number a workshop names for
-  a varnish over a veneer, against a second material layer, which is truer to a two-layer finish and
-  costs a second set in every catalogue record, every command parameter and the WGSL. The
-  recommendation is the single field. It decides what Y7 and Y8 must carry, so it is asked before
-  either is taken.

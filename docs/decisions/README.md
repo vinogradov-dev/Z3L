@@ -266,3 +266,4 @@ What it buys, what it costs, and the condition under which it should be revisite
 ```
 
 The code and `AGENTS.md` stay the authority for rules; a record keeps the reason.
+| [0243](0243-a-surface-is-a-base-and-one-coat.md) | A surface is a base and one coat, and a finish is a number in percent | Accepted; extends 0213's `Surface`, and the record Y8 builds carries it |
