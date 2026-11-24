@@ -461,6 +461,17 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Node),
         icon: None,
     },
+    // A part's own build is rewritten by one command, and no surface draws it yet: the row a board's
+    // menu will carry is named after the build it makes, and a table row carries one fixed label, so
+    // the words are settled before the place is (U123, ADR 0239). Until then the API and the assistant
+    // reach it.
+    Row {
+        id: "panel.build.set",
+        label: Message::CmdSetPanelBuild,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Panel),
+        icon: None,
+    },
     Row {
         id: "panel.resize",
         label: Message::CmdResizePanel,

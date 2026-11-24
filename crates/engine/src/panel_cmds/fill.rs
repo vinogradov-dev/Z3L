@@ -29,6 +29,8 @@ use serde_json::Value;
 use text::{Lang, Message};
 
 use super::PanelCreate;
+#[cfg(test)]
+use super::panel::PanelBuildSet;
 use super::panel::create_panel;
 use crate::class_rules::allow_creation;
 use crate::commands::{CommandError, CommandOutcome, CommandSpec, Creation};
@@ -176,6 +178,49 @@ mod tests {
 
     fn json_params<T: serde::Serialize>(value: &T) -> Value {
         serde_json::to_value(value).expect("the parameters serialize")
+    }
+
+    #[test]
+    fn a_part_rewrites_its_build_in_the_void_it_fills() {
+        // The one row a board's own menu carries (U123): a shelf fitted as the largest rectangle is
+        // re-cut as the niche's shape in the same void, one undo entry, and its class never moves.
+        let (mut session, product) = session();
+        let id = session
+            .dispatch(FILL_ID, &json_params(&request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit)))
+            .expect("the shelf fills the void")
+            .created_id()
+            .expect("a panel id");
+        let fitted = session.project().panel(id).expect("a panel").nominal_size();
+        let revision = session.project().revision();
+
+        session
+            .dispatch(
+                crate::panel_cmds::BUILD_SET_ID,
+                &json_params(&PanelBuildSet { panel: id, mode: FillMode::Shape }),
+            )
+            .expect("the build changes");
+        let shaped = session.project().panel(id).expect("the panel is still there");
+        assert_eq!(session.project().class(id), Some(ClassCode::HORIZONTAL_PANEL), "the role stays");
+        assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one revision");
+        assert_eq!(shaped.nominal_size(), fitted, "a straight void answers the same rectangle either way");
+
+        session.undo().expect("one undo step");
+        assert_eq!(
+            session.project().panel(id).expect("the panel came back").nominal_size(),
+            fitted,
+            "one entry takes the whole change back"
+        );
+        // The fill itself is the entry behind it: two undos take the whole story back, so the build
+        // change was exactly one entry.
+        session.undo().expect("the fill");
+        assert!(session.project().panel(id).is_none(), "one more undo takes the part");
+
+        // A node that is not a panel is refused, and nothing moves.
+        let refusal = session.dispatch(
+            crate::panel_cmds::BUILD_SET_ID,
+            &json_params(&PanelBuildSet { panel: product, mode: FillMode::Shape }),
+        );
+        assert!(refusal.is_err(), "a product has no build to rewrite");
     }
 
     #[test]

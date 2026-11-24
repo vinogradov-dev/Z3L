@@ -993,6 +993,7 @@ messages! {
     FillMethodShape = ["Niche shape", "По форме ниши"],
     PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
     PanelMethodRectangle = ["Rectangle", "Прямоугольник"],
+    CmdSetPanelBuild = ["Build the part another way", "Собрать деталь иначе"],
     GroupObjects = ["Objects", "Объекты"],
     GroupViews = ["Views", "Виды"],
     GroupMaterials = ["Materials", "Материалы"],

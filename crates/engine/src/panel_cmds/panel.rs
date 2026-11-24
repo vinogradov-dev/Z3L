@@ -18,8 +18,8 @@ use catalog::Directory;
 use geom::Contact;
 use geom::DVec3;
 use model::{
-    ClassCode, Contour, EdgeBevel, EdgeRef, Id, ItemId, Level, Operation, Panel, PanelNominalSize, PanelOutline,
-    PanelType, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS,
+    ClassCode, Contour, EdgeBevel, EdgeRef, FillMode, FillRequest, Id, ItemId, Level, Operation, Panel,
+    PanelNominalSize, PanelOutline, PanelType, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS, Sight,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -642,6 +642,102 @@ pub(super) fn create_panel(
         project.settle_revision(before);
     }
     Ok(id)
+}
+
+/// Stable id of the build-change command.
+pub const BUILD_SET_ID: &str = "panel.build.set";
+
+/// User-facing label of the build-change command.
+///
+/// The row a board's own menu carries is named after the build it makes, not after the act, so the
+/// label names the two builds rather than a verb: «По форме ниши» / «Прямоугольник» (U123).
+pub const BUILD_SET_LABEL: Message = Message::CmdSetPanelBuild;
+
+/// Parameters for `panel.build.set`.
+///
+/// A class is not among them: a created part keeps the role it was born with (the owner, 2026-11-24),
+/// so the build is the only thing a part's own menu rewrites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelBuildSet {
+    /// Id of the panel whose build changes.
+    pub panel: Id,
+    /// How the part reads the section the walls leave; the largest rectangle when absent.
+    #[serde(default)]
+    pub mode: FillMode,
+}
+
+impl PanelBuildSet {
+    fn parse(params: &Value) -> Result<Self, CommandError> {
+        serde_json::from_value(params.clone())
+            .map_err(|error| CommandError::InvalidParams { command: BUILD_SET_ID, message: error.to_string() })
+    }
+}
+
+/// The `panel.build.set` command.
+pub(crate) const BUILD_SET: CommandSpec =
+    CommandSpec::new::<PanelBuildSet>(BUILD_SET_ID, BUILD_SET_LABEL, build_set_enabled, build_set_run);
+
+fn build_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = PanelBuildSet::parse(params) else {
+        return false;
+    };
+    build_plan(session.project(), params, session.contact()).is_ok()
+}
+
+fn build_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = PanelBuildSet::parse(params)?;
+    let before = project.revision();
+    let (placement, nominal_size, outline, bevels) = build_plan(project, params, contact)?;
+    // The part keeps its id, its name, its material and its class: the plan moves it into the section
+    // it fills and cuts it the way the other build reads that section (U123).
+    project.set_node_placement(params.panel, placement)?;
+    project.set_panel_shape(params.panel, nominal_size, outline, &bevels)?;
+    project.settle_revision(before);
+    Ok(CommandOutcome::changed())
+}
+
+/// The shape a part takes when it reads its void the other way.
+///
+/// The void is measured on a copy of the document with the part taken out of it: a board fills the
+/// space it stands in, so measuring through it would stop at the board itself. The copy is thrown
+/// away — a command runs on the document the caller owns, and this one reads before it writes.
+fn build_plan(
+    project: &Project,
+    params: PanelBuildSet,
+    contact: &dyn Contact,
+) -> Result<(Placement, PanelNominalSize, PanelOutline, Vec<EdgeBevel>), CommandError> {
+    let refused = |message: &str| CommandError::InvalidParams { command: BUILD_SET_ID, message: message.to_owned() };
+    let panel = project.panel(params.panel).ok_or_else(|| refused("the node is not a panel"))?;
+    let class = project
+        .class(params.panel)
+        .ok_or_else(|| refused("the part carries no class, so no pair of the void's sides names its section"))?;
+    let fill =
+        class.traits().and_then(|traits| traits.fill()).ok_or_else(|| refused("this class does not fill a void"))?;
+    let parent = project.parent_of(params.panel).ok_or_else(|| refused("the part has no parent"))?;
+    let size = panel.nominal_size();
+    let thickness = panel.last_known_thickness();
+    let frame = project.world_placement(params.panel).ok_or_else(|| refused("the part has no frame"))?;
+    let centre = frame.transform_point(DVec3::new(
+        size.length().millimetres_f64() * 0.5,
+        size.width().millimetres_f64() * 0.5,
+        thickness.millimetres_f64() * 0.5,
+    ));
+    let mut probe = project.clone();
+    probe.remove_node(params.panel)?;
+    let niche = probe.niche(centre, Sight::none(), Some(contact)).map_err(|refusal| CommandError::NoNiche {
+        message: crate::read::no_niche_sentence(centre.to_array(), refusal),
+    })?;
+    let request = FillRequest::new(centre, fill, params.mode, thickness, None);
+    let plan = probe
+        .fill_plan_in(&niche, parent, request, Sight::none())
+        .map_err(|refusal| CommandError::FillRefused { command: BUILD_SET_ID, refusal })?;
+    Ok((plan.placement, plan.nominal_size, plan.outline, plan.bevels))
 }
 
 /// Stable id of the panel rename command.
