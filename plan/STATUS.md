@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U126 state=doing base=610ab58 updated=2026-11-24
+STATE: milestone=M7 phase=T task=- state=idle base=4a30e8c updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -54,7 +54,8 @@ it started from plus one (X128, ADR 0234).
 
 ## Next
 
-U126 draws a panel by points in space: the first three fix its plane.
+Nothing is scheduled: the application stream's work order is empty, so the next entry is taken from
+the backlog with cargo xtask task take, and J12, Q2 and O2 wait in their own streams.
 
 ## Index
 

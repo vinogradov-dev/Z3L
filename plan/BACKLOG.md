@@ -104,46 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
-  Why: The owner: a point tool that names points in space, the first three fixing the plane, as
-   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
-   rather than one — a board by three points, which builds the standard four-corner panel, and
-   a board by n points, which is finished by the checkbox, so a count above four only ever
-   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
-   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
-   different faces, cannot be drawn at all: the work plane is chosen before the first point,
-   which is the wrong order for this tool. The class the board takes is the role its plane
-   implies, because there is no niche here to name it.
-  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
-   asked for. Three points: the first two are one edge and the third fixes the width, its
-   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
-   as a ghost from the third click and the board commits on the third click — a true rectangle,
-   which classify_outline calls a standard panel, and the only way the program makes a standard
-   board out of a plane it was given. N points: the first point starts the ring, the second
-   gives the direction, the third fixes the plane, every later point is projected onto it, and
-   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
-   triangular contour panel and n points an n-gon; more than four points only ever commit
-   through it, which is the owner's simplification. The points come from the snap resolver, not
-   from a work plane, so the first click may stand on a face, an edge or a corner, and the
-   plane is the one the first three points span — collinear points are refused with the
-   sentence the card shows, never a plane guessed from the first two. The class a created board
-   carries is the role its plane implies, from the rule of its own task, and a menu key
-   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
-   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
-   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
-   mean two things and hides one meaning behind a key; one tool with an optional finish on the
-   third point asks the maker to guess which commit they are in; a method row says it out loud
-   and the cell's pinned method remembers it (U74).
-  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
-   resolver, the plane fixing on the third point; the three-point method turns three clicks
-   into a rectangle whose fourth corner is the ghost and whose classification is a standard
-   panel; the n-point method closes three points into a triangular contour panel and n points
-   into an n-gon, and a fifth point never commits without Finish; the created board carries the
-   role its plane implies and a menu key overrides it; collinear points are refused with a
-   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
-   node and no revision; cargo xtask ci is green.
-  `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs`
-
 ## Bugs
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
@@ -382,6 +342,46 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
+  Why: The owner: a point tool that names points in space, the first three fixing the plane, as
+   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
+   rather than one — a board by three points, which builds the standard four-corner panel, and
+   a board by n points, which is finished by the checkbox, so a count above four only ever
+   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
+   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
+   different faces, cannot be drawn at all: the work plane is chosen before the first point,
+   which is the wrong order for this tool. The class the board takes is the role its plane
+   implies, because there is no niche here to name it.
+  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
+   asked for. Three points: the first two are one edge and the third fixes the width, its
+   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
+   as a ghost from the third click and the board commits on the third click — a true rectangle,
+   which classify_outline calls a standard panel, and the only way the program makes a standard
+   board out of a plane it was given. N points: the first point starts the ring, the second
+   gives the direction, the third fixes the plane, every later point is projected onto it, and
+   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
+   triangular contour panel and n points an n-gon; more than four points only ever commit
+   through it, which is the owner's simplification. The points come from the snap resolver, not
+   from a work plane, so the first click may stand on a face, an edge or a corner, and the
+   plane is the one the first three points span — collinear points are refused with the
+   sentence the card shows, never a plane guessed from the first two. The class a created board
+   carries is the role its plane implies, from the rule of its own task, and a menu key
+   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
+   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
+   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
+   mean two things and hides one meaning behind a key; one tool with an optional finish on the
+   third point asks the maker to guess which commit they are in; a method row says it out loud
+   and the cell's pinned method remembers it (U74).
+  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
+   resolver, the plane fixing on the third point; the three-point method turns three clicks
+   into a rectangle whose fourth corner is the ghost and whose classification is a standard
+   panel; the n-point method closes three points into a triangular contour panel and n points
+   into an n-gon, and a fifth point never commits without Finish; the created board carries the
+   role its plane implies and a menu key overrides it; collinear points are refused with a
+   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
+   node and no revision; cargo xtask ci is green.
+  `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs` — `4a30e8c`
 
 - `[x]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
   Why: The owner: with the cursor moving along the panel plane's normal in the positive
