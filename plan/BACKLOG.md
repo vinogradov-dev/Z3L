@@ -45,25 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **X135** the row's count is calm in the near half, whole millimetres and a drawn pitch
-  Why: The live row of U128 still cannot hold one board in the middle of a void: the count grew
-   from the first pixel, and the owner's gesture (K3) keeps the whole near half calm and grows
-   the number only past the count-1 board. Its numbers are fractional where a maker reads whole
-   millimetres, the pitch between two boards is not drawn at all, and pinning one end of the
-   row makes the other field dead.
-  Shape: hand_count: the calm zone is the near half plus half a board (the count-1 board
-   centred in the void), and the count grows from the count-1 board's far face to the far wall,
-   normalised by that screen extent so the gesture is the same in a big void and a small one.
-   fill_row: every space whole millimetres with a constant pitch, the leftover of the division
-   in the last space that is not pinned; FillRowAsk loses the hand's span and takes start:
-   Option<f64> and count: usize. The row draws the pitch between two neighbours as a thin grey
-   dimension. The two end fields of a row keep working whichever was typed last.
-  Done: Tests: the middle of the void is one board, the near half changes nothing and the far
-   half grows the count to what fits; a row's spaces are whole millimetres with the leftover at
-   the free end; pinning the far gap then typing the near one moves the row; the pitch run is
-   on the plates. cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,app/src/fill_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/ui/src/distance.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md`
-
 - `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
    a shop has no place where a material is edited once and referenced by its boards. A format a
@@ -361,6 +342,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X135** the row's count is calm in the near half, whole millimetres and a drawn pitch
+  Why: The live row of U128 still cannot hold one board in the middle of a void: the count grew
+   from the first pixel, and the owner's gesture (K3) keeps the whole near half calm and grows
+   the number only past the count-1 board. Its numbers are fractional where a maker reads whole
+   millimetres, the pitch between two boards is not drawn at all, and pinning one end of the
+   row makes the other field dead.
+  Shape: hand_count: the calm zone is the near half plus half a board (the count-1 board
+   centred in the void), and the count grows from the count-1 board's far face to the far wall,
+   normalised by that screen extent so the gesture is the same in a big void and a small one.
+   fill_row: every space whole millimetres with a constant pitch, the leftover of the division
+   in the last space that is not pinned; FillRowAsk loses the hand's span and takes start:
+   Option<f64> and count: usize. The row draws the pitch between two neighbours as a thin grey
+   dimension. The two end fields of a row keep working whichever was typed last.
+  Done: Tests: the middle of the void is one board, the near half changes nothing and the far
+   half grows the count to what fits; a row's spaces are whole millimetres with the leftover at
+   the free end; pinning the far gap then typing the near one moves the row; the pitch run is
+   on the plates. cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,app/src/fill_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/ui/src/distance.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `a810da5`
 
 - `[x]` **X134** the row filled the whole void at once and the hand must name its count
   Why: The live row of U128 filled the whole void as soon as «Равномерно» was ticked, which is
