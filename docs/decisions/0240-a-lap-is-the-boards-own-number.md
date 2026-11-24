@@ -26,11 +26,17 @@ width, 4 at zero length). A positive number cuts that end in, a negative one let
 ordinary board carries none — the field is skipped in the file whenever all four are zero, so a scene
 that never had a front in it is written exactly as before.
 
-**A number belongs to the end and never accumulates.** `panel.trim.set` moves the side by the
-difference between the number asked and the number stored, so typing the same number twice moves
-nothing and typing the first one back puts the end where it was. An end at the panel's own zero
-corner carries the origin with it, which is why the placement travels in the same revision as the
-size.
+**The frame is the nominal rectangle, and the material is derived from it.** A panel's origin is the
+base corner of its nominal rectangle, and that is the handle its position is controlled by: a command
+that changes a panel's geometry **through its parameters** — an end trim, a corner feature, a bow —
+never moves that origin (the owner, 2026-11-24). So the trims are read where the outline is
+generated: the material sits inside the frame at the ends trimmed in and runs outside it at the ends
+let out, and a board with no trims is the frame to the micrometre. A resize or a move still goes
+through the placement; a parameter does not.
+
+**A number belongs to the end and never accumulates.** `panel.trim.set` stores the number it is
+given, so typing the same number twice moves nothing and typing the first one back puts the end where
+it was; nothing is ever added to what is stored.
 
 **There is no mounting form to store.** The mounting is an operation and not a field: a front is
 recognised by its placement and its trims, and turning one into the other is a later operation that
@@ -39,7 +45,8 @@ records is what the board is: `panel.create` writes the trims the plan measured,
 and the same undo entry as the outline, so one click stays one `panel.create`.
 
 **The frame decides the lap, inside the workshop's cap.** An overlay board is the opening's rectangle
-laid one thickness in front of the void's start plane — its inner face *is* that plane. Each end runs
+— the frame, whose corner is where the part is placed — laid one thickness in front of the void's
+start plane, with the material running a lap past it: its inner face *is* that plane. Each end runs
 outward only where a body reaches the opening's plane from behind: the lap is that body's face
 measured from the opening's edge, capped by the workshop's number, and the nearest such face wins. A
 body standing proud of the plane stops the end at its near face, which trims the board back inside
@@ -57,16 +64,19 @@ so the framing version does not move for it.
 
 - The four numbers are the same data a door-gap or a hinge rule needs to tell a flush front from an
   inset one; the trims answer it for a front that laps, and a zero-trim front is a front that does not.
-- A person corrects a lap on the part, in millimetres, and reads the size move with it. The cost is
-  that a hand resize of the same side leaves the number where it was: the trim records how far the
-  end was moved from where the tool left it, not a distance from an opening the panel does not store.
+- A person corrects a lap on the part, in millimetres, and reads the board change with it: the size
+  fields keep saying what the frame says — for a front, the opening — and the resolved rows report the
+  material the trims make of it. The two numbers cannot drift, because the material is derived.
+- The panel's frame is the opening for a front, so a maker positions a door by the opening's corner
+  and never by a lap, which is the whole reason the origin is the parameter's to leave alone.
 - The overlay board is always a rectangle — a facade covers the opening, so its section is the
   opening's box and the two builds give the same board. The card hides the build row for it.
-- Re-planning a front (`panel.build.set`) measures its cell from its own inner face stepped one
-  micrometre into the opening, and asks for the ends it already has: a frame that loses a neighbour
-  does not silently widen a front the person sized.
+- Re-planning a part (`panel.build.set`) reads which board it is from where it stands: a part inside
+  the void is measured at its own centre and keeps the ends it was trimmed with, and a front is
+  measured from its inner face stepped one micrometre into the opening, asking for the ends it
+  already has — so a frame that loses a neighbour does not silently widen a front the person sized.
 - The two caps are the document's: an end trim of up to a metre, a lap computed from the parts' faces,
-  and a board that would take the whole opening is refused rather than inverted.
+  and two opposite ends that cut more than the board between them are refused rather than inverted.
 
 ## Related
 

@@ -18,12 +18,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   lap from there, an existing file keeps the number it carries, and this constant becomes only the
   reader's last resort (U124, ADR 0240).
 
-- `[panel]` A trim records where the tool left the end, not a distance from an opening: the number
-  moves the side by the difference between it and the stored one, and the panel stores no base size.
-  A hand resize of the same side therefore leaves the number where it was, and a front whose
-  opening is later widened reads as lapping further than it does. An absolute trim needs the base
-  the opening gives, which the document does not keep (U124, ADR 0240).
-
 - `[engine]` A front laid over the frame cannot be turned into one inside the opening yet. The two
   are told apart by the placement along the depth and by the trims, so the operation the owner
   described — "поменять на вкладной" — would move the board one thickness in, rewrite its four ends
