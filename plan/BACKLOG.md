@@ -343,6 +343,20 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X134** the row filled the whole void at once and the hand must name its count
+  Why: The live row of U128 filled the whole void as soon as «Равномерно» was ticked, which is
+   not the gesture the owner described: the pointer is meant to name how many boards the row
+   holds, nearer the middle fewer and nearer the wall more, and a twitch of the mouse must move
+   nothing.
+  Shape: hand_count(ratio, most, last): one board at the middle of the void and every board
+   that fits at its wall, ratio read from the hand's travel in the void's own screen extent
+   (Document::row_ratio), with a whole step of dead band around the count in force. A typed
+   count wins and a typed zero gives the number back to the hand.
+  Done: Tests: the middle asks for one board, the wall for the most, a twitch inside a step
+   moves nothing and a whole step does; a frame test hovers two places and reads two counts; a
+   typed count wins and a zero returns the hand's number. cargo xtask ci is green.
+  `files: app/src/fill_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `f7a048e`
+
 - `[x]` **X133** the gap runs were painted under the model and the row needed a click
   Why: U128 shipped and the owner opened it in the window: the gap arrows were invisible, and
    «Равномерно» did nothing until he clicked, after which a stack of boards lay on top of each
