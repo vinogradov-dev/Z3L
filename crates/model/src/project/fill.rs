@@ -109,30 +109,40 @@ impl FillRequest {
 /// opening. Making a finished front the other way is a later operation that moves it in depth and
 /// rewrites its end trims — the plan does not store which of the two a part is, its trims and its
 /// placement say it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FillMount {
     /// The board fills the opening: its inner face is the void's own start plane. Today's fill.
     #[default]
     Inset,
     /// The board lies over the frame's face, running past the opening where the frame allows it.
     Overlay {
-        /// The lap the workshop's numbers ask for, before the frame says what it may take.
-        lap: Length,
+        /// The lap each end asks for, in outline-edge order, before the frame says what it may take.
+        ///
+        /// A creation asks every end for the workshop's number; a part re-planned from the void asks
+        /// for the ends it already has, so a frame that lost a neighbour does not silently widen a
+        /// front the person sized.
+        laps: [Length; 4],
     },
 }
 
 impl FillMount {
-    /// The lap this mounting asks for: zero for a board inside the opening.
-    pub const fn lap(self) -> Length {
+    /// The lap each end asks for, in outline-edge order: zeros for a board inside the opening.
+    pub const fn laps(self) -> [Length; 4] {
         match self {
-            Self::Inset => Length::ZERO,
-            Self::Overlay { lap } => lap,
+            Self::Inset => [Length::ZERO; 4],
+            Self::Overlay { laps } => laps,
         }
     }
 
     /// Whether the board lies over the frame's face rather than filling the opening.
     pub const fn is_overlay(self) -> bool {
         matches!(self, Self::Overlay { .. })
+    }
+
+    /// Whether the board fills the opening, which is the ordinary fill an absent parameter means.
+    pub const fn is_inset(&self) -> bool {
+        matches!(self, Self::Inset)
     }
 }
 
@@ -506,7 +516,7 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
             niche,
             stance,
             gap,
-            asked: mount.lap().millimetres_f64(),
+            asked: mount.laps().map(Length::millimetres_f64),
             thickness,
             bodies,
         });
@@ -584,8 +594,8 @@ struct OverlayInput<'a> {
     stance: Stance,
     /// One material thickness.
     gap: f64,
-    /// The lap the workshop's numbers ask for, millimetres.
-    asked: f64,
+    /// The lap each end asks for, millimetres, in outline-edge order.
+    asked: [f64; 4],
     /// The material's thickness, which is the part's third side.
     thickness: Length,
     /// Every body's box in the product frame.
@@ -596,8 +606,8 @@ struct OverlayInput<'a> {
 struct OverlayFrame<'a> {
     /// The plane the board's inner face lies on, along the thickness axis.
     start: f64,
-    /// The lap the workshop asks for, millimetres.
-    asked: f64,
+    /// The lap each end asks for, millimetres, in outline-edge order.
+    asked: [f64; 4],
     /// The frontal stance the board lies in.
     stance: Stance,
     /// Every body's box in the product frame.
@@ -615,7 +625,7 @@ struct OverlayFrame<'a> {
 /// maker reads as "it does not ride onto the neighbour".
 fn overlay_board(input: OverlayInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     let OverlayInput { niche, stance, gap, asked, thickness, bodies } = input;
-    if !(gap.is_finite() && gap > 0.0 && asked.is_finite() && asked >= 0.0) {
+    if !(gap.is_finite() && gap > 0.0 && asked.iter().all(|lap| lap.is_finite() && *lap >= 0.0)) {
         return Err(FillRefusal::TooSmall);
     }
     let start = niche.local_min[stance.t];
@@ -707,7 +717,8 @@ fn overlay_rect(frame: &OverlayFrame<'_>, low: DVec2, high: DVec2) -> Result<(DV
                 reach = Some(reach.map_or(extent, |near: f64| near.min(extent)));
             }
         }
-        places[index] = edge_at + outward * reach.map_or(0.0, |reach| frame.asked.min(reach));
+        let asked = *frame.asked.get(index).unwrap_or(&0.0);
+        places[index] = edge_at + outward * reach.map_or(0.0, |reach| asked.min(reach));
     }
     // A part standing proud of the plane is what an end stops at, and one end's neighbour is read
     // against the other end as it stands after the last pass, so the two settle instead of arguing.
@@ -1810,7 +1821,7 @@ mod tests {
         project.fill_plan(
             product,
             FillRequest::new(opening(project, product), Fill::WidthAndHeight, FillMode::Fit, millimetres(18), None)
-                .with_mount(FillMount::Overlay { lap }),
+                .with_mount(FillMount::Overlay { laps: [lap; 4] }),
             Sight::none(),
             None,
         )
@@ -1882,7 +1893,7 @@ mod tests {
         let refused = project.fill_plan(
             product,
             FillRequest::new(centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None)
-                .with_mount(FillMount::Overlay { lap: millimetres(14) }),
+                .with_mount(FillMount::Overlay { laps: [millimetres(14); 4] }),
             Sight::none(),
             None,
         );

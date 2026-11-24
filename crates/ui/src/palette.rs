@@ -483,6 +483,7 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
                 class: None,
                 outline: None,
                 bevels: Vec::new(),
+                trims: model::PanelTrims::ZERO,
             })
         }
         engine::node_cmds::ASSEMBLY_CREATE_ID => json(&AssemblyCreate {

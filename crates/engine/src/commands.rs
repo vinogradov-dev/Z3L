@@ -258,6 +258,7 @@ static COMMANDS: &[CommandSpec] = &[
     panel_cmds::RENAME,
     node_cmds::NODE_RENAME,
     panel_cmds::RESIZE,
+    panel_cmds::TRIM_SET,
     panel_cmds::MATERIAL_SET,
     panel_cmds::EDGE_BANDING_SET,
     panel_cmds::EDGE_BANDING_CLEAR,
@@ -670,7 +671,10 @@ mod tests {
         // A part's build is rewritten by one command, and no class travels with it (U123).
         let build = registry.get("panel.build.set").expect("panel.build.set is registered");
         assert_eq!(build.label().text(Lang::En), "Build the part another way");
-        assert_eq!(registry.specs().len(), 68);
+        // An end trim is its own command: the number belongs to the end, not to a delta (U124).
+        let trim = registry.get("panel.trim.set").expect("panel.trim.set is registered");
+        assert_eq!(trim.label().text(Lang::En), "Set an end trim");
+        assert_eq!(registry.specs().len(), 69);
     }
 
     #[test]

@@ -745,7 +745,13 @@ mod tests {
         )
         .expect("a closed rectangle");
         project
-            .set_panel_shape(id(2), nominal, model::PanelOutline::Contour { contour: ring }, &[])
+            .set_panel_shape(
+                id(2),
+                nominal,
+                model::PanelOutline::Contour { contour: ring },
+                &[],
+                model::PanelTrims::ZERO,
+            )
             .expect("the board takes a shaped outline");
         assert_eq!(
             build(&project),

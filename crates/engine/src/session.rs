@@ -745,6 +745,7 @@ mod tests {
             class: None,
             outline: None,
             bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
         }
     }
 
@@ -972,6 +973,7 @@ mod tests {
             class: Some(fill),
             outline: Some(PanelOutline::Contour { contour: ring.clone() }),
             bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
         };
         let params = json_params(&request);
         let before = session.project().revision();
@@ -1025,6 +1027,7 @@ mod tests {
             class: None,
             outline: Some(PanelOutline::Contour { contour: ring }),
             bevels: vec![bevel],
+            trims: model::PanelTrims::ZERO,
         };
         let before = session.project().revision();
 
@@ -1064,6 +1067,7 @@ mod tests {
             class: None,
             outline: Some(PanelOutline::Rect { corner_features: vec![feature], edge_bows: Vec::new() }),
             bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
         };
         let before = session.project().revision();
         let id = session
@@ -1109,6 +1113,7 @@ mod tests {
             class: None,
             outline: Some(PanelOutline::Rect { corner_features: features, edge_bows: Vec::new() }),
             bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
         };
         let before = session.project().revision();
         assert!(session.dispatch("panel.create", &json_params(&request)).is_err(), "the cut leaves no edge");
@@ -2336,6 +2341,7 @@ mod tests {
             class: None,
             outline: Some(PanelOutline::Contour { contour: ring }),
             bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
         };
         let panel_id = session
             .dispatch("panel.create", &json_params(&create))

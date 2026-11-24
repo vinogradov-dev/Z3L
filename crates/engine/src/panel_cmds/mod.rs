@@ -40,7 +40,7 @@ pub use machining::{PanelMachiningAdd, PanelMachiningMove, PanelMachiningRemove,
 
 pub(crate) use panel::{
     BEVEL_CLEAR, BEVEL_SET, BUILD_SET, CONTOUR_CREATE, CREATE, CREATE_STANDARD, MATERIAL_SET, OUTLINE_CONTOUR,
-    OUTLINE_SET, RENAME, RESIZE,
+    OUTLINE_SET, RENAME, RESIZE, TRIM_SET,
 };
 pub use panel::{
     BEVEL_CLEAR_ID, BEVEL_CLEAR_LABEL, BEVEL_SET_ID, BEVEL_SET_LABEL, BUILD_SET_ID, BUILD_SET_LABEL, CONTOUR_CREATE_ID,
@@ -50,5 +50,5 @@ pub use panel::{
 };
 pub use panel::{
     PanelBevelClear, PanelBevelSet, PanelBuildSet, PanelContourCreate, PanelCreate, PanelCreateStandard,
-    PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize,
+    PanelMaterialSet, PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelTrimSet,
 };

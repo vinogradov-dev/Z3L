@@ -59,6 +59,25 @@ impl Project {
         Ok(())
     }
 
+    /// Writes the end trims a plan measured, for a board whose ends already lie there.
+    ///
+    /// A fill measures the size, the placement and the trims together, so the part is born with a
+    /// record that describes it to the millimetre; this writes that record without moving an end, in
+    /// the same revision as the creation (ADR 0240). A person changing a number goes through
+    /// [`Project::set_panel_trim`], which moves the end the number names.
+    pub fn set_panel_trims(&mut self, id: Id, trims: PanelTrims) -> Result<Revision, ProjectError> {
+        if self.panel(id).is_none() {
+            return Err(ProjectError::PanelNotFound { id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some((_depth, panel)) = find_panel_mut(&mut self.root, id, 1) else {
+            return Err(ProjectError::PanelNotFound { id });
+        };
+        panel.set_trims(trims);
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Moves one end of a rectangle panel to the trim the workshop typed, and bumps the revision once.
     ///
     /// The end moves by the difference between the number asked and the number stored, so the same
@@ -140,6 +159,7 @@ impl Project {
         nominal_size: PanelNominalSize,
         outline: PanelOutline,
         bevels: &[EdgeBevel],
+        trims: PanelTrims,
     ) -> Result<Revision, ProjectError> {
         let panel = self.panel(id).ok_or(ProjectError::PanelNotFound { id })?;
         let mut candidate = panel.clone();
@@ -147,6 +167,9 @@ impl Project {
         candidate.set_outline(outline);
         candidate.nominal_contour()?;
         candidate.set_bevels(bevels.to_vec());
+        // The trims are the plan's own answer, not a second move of the ends: the size above already
+        // holds the board they describe.
+        candidate.set_trims(trims);
         candidate.validate_bevels()?;
         let geometry = candidate.geometry_for(nominal_size, candidate.last_known_thickness())?;
         validate_panel_machining(&candidate, &geometry)?;
@@ -1073,8 +1096,9 @@ mod tests {
         let width = Length::from_millimetres(300).expect("a width");
         let narrow = PanelNominalSize::new(length, width).expect("a size");
 
-        let revision =
-            project.set_panel_shape(panel, narrow, PanelOutline::default(), &[]).expect("the shape is written");
+        let revision = project
+            .set_panel_shape(panel, narrow, PanelOutline::default(), &[], PanelTrims::ZERO)
+            .expect("the shape is written");
         assert_eq!(revision, before.checked_next().expect("revision"), "one revision");
         assert_eq!(project.panel(panel).expect("panel").nominal_size(), narrow);
 
@@ -1086,7 +1110,13 @@ mod tests {
             units::Degrees::from_millidegrees(45_000),
         )
         .expect("a 45 degree bevel");
-        let refusal = project.set_panel_shape(panel, wide, PanelOutline::default(), std::slice::from_ref(&bevel));
+        let refusal = project.set_panel_shape(
+            panel,
+            wide,
+            PanelOutline::default(),
+            std::slice::from_ref(&bevel),
+            PanelTrims::ZERO,
+        );
         assert!(refusal.is_err(), "a rectangle panel has no ring segment 7");
         assert_eq!(project.panel(panel).expect("panel").nominal_size(), narrow, "a refusal changes nothing");
         assert_eq!(project.revision(), before.checked_next().expect("revision"), "and moves no number");

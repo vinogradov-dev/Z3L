@@ -137,7 +137,17 @@ impl Editor {
             .map_err(|refusal| refusal.to_string())?;
         let material = Self::panel_material(session)?;
         let name = Self::free_name(session, parent, &name);
-        let params = json(&PanelCreate { parent, name, nominal_size, material, placement, class, outline, bevels })?;
+        let params = json(&PanelCreate {
+            parent,
+            name,
+            nominal_size,
+            material,
+            placement,
+            class,
+            outline,
+            bevels,
+            trims: model::PanelTrims::ZERO,
+        })?;
         let outcome = dispatch(session, PANEL_CREATE_ID, &params)?;
         let created = outcome.created_id();
         self.select_created(created);

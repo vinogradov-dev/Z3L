@@ -132,6 +132,10 @@ pub struct Panel {
     band_order: Vec<SegmentSource>,
     bevels: Vec<EdgeBevel>,
     /// The end trims, one signed number per nominal edge (ADR 0240).
+    ///
+    /// An ordinary board keeps the field out of the file: a scene that never had a front in it is
+    /// written exactly as it was before the trims existed.
+    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
     trims: PanelTrims,
     properties: Properties,
 }

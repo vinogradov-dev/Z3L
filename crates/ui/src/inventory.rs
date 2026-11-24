@@ -585,6 +585,13 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "panel.trim.set",
+        label: Message::CmdSetPanelTrim,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Panel),
+        icon: None,
+    },
+    Row {
         id: "panel.machining.add",
         label: Message::CmdAddMachining,
         places: &[Place::Card],

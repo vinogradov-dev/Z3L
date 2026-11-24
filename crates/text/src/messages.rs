@@ -1638,6 +1638,18 @@ messages! {
     CmdRenamePanel = ["Rename panel", "Переименовать панель"],
     CmdResizePanel = ["Resize panel", "Изменить размер панели"],
     CmdSetPanelMaterial = ["Set panel material", "Задать материал панели"],
+    CmdSetPanelTrim = ["Set an end trim", "Задать подрезку торца"],
+    SectionEndTrims = ["End trims", "Подрезка торцов"],
+    EndTrimHint = [
+        "A positive number cuts the end in, a negative one lets the board out past its size.",
+        "Положительное число подрезает торец, отрицательное выпускает доску за её размер."
+    ],
+    FillMountInset = ["Inset", "Вкладная"],
+    FillMountOverlay = ["Overlay", "Накладная"],
+    PanelTrimNotARectangle = [
+        "Only a rectangular panel has four ends to trim.",
+        "Подрезать торцы можно только у прямоугольной панели."
+    ],
 }
 
 impl Message {

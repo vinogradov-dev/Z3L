@@ -18,8 +18,9 @@ use catalog::Directory;
 use geom::Contact;
 use geom::DVec3;
 use model::{
-    ClassCode, Contour, EdgeBevel, EdgeRef, FillMode, FillRequest, Id, ItemId, Level, Operation, Panel,
-    PanelNominalSize, PanelOutline, PanelType, Placement, Project, ProjectError, PropertyValue, SYSTEM_CLASS, Sight,
+    ClassCode, Contour, EdgeBevel, EdgeId, EdgeRef, FillMode, FillMount, FillRequest, Id, ItemId, Level, Operation,
+    Panel, PanelNominalSize, PanelOutline, PanelTrims, PanelType, Placement, Project, ProjectError, PropertyValue,
+    SYSTEM_CLASS, Sight,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,13 @@ use crate::class_rules::{Dimension, NodeRules, allow_creation};
 use crate::commands::{CommandError, CommandOutcome, CommandSpec, Creation};
 use crate::session::Session;
 use text::Message;
+
+/// How far a part's own inner face is stepped to name the cell it stands over, in millimetres.
+///
+/// A front laid over the frame covers a void it is not in, so the point that measures that void is
+/// its inner face moved one micrometre into the opening: the niche reads a point on a face as
+/// outside it, and a micrometre is the document's own smallest step (ADR 0240).
+const INTO_THE_VOID_MM: f64 = 1.0e-3;
 
 /// Stable id of the panel creation command.
 pub const CREATE_ID: &str = "panel.create";
@@ -81,6 +89,13 @@ pub struct PanelCreate {
     /// both against the candidate panel before it enters the tree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bevels: Vec<EdgeBevel>,
+    /// The end trims the part is born with, in outline-edge order (U124, ADR 0240).
+    ///
+    /// A fill that lays a board over the frame's face hands in the trims its plan measured, so the
+    /// lap the maker sees on the ghost is the lap the part carries. Absent, every end is untrimmed,
+    /// which is the ordinary board and the file of a scene that never had a front in it.
+    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
+    pub trims: PanelTrims,
 }
 
 impl PanelCreate {
@@ -327,6 +342,58 @@ fn bevel_clear_run(
     Ok(CommandOutcome::changed())
 }
 
+/// Stable id of the end-trim command.
+pub const TRIM_SET_ID: &str = "panel.trim.set";
+
+/// User-facing label of the end-trim command.
+pub const TRIM_SET_LABEL: Message = Message::CmdSetPanelTrim;
+
+/// Parameters for `panel.trim.set`.
+///
+/// The end is one nominal outline edge and the number is that end's own trim: positive cuts it in,
+/// negative lets the board out past its size, which is where a front's lap over the frame comes from.
+/// The number belongs to the end and never accumulates, so asking for the same one twice moves
+/// nothing and the first one puts the end back (ADR 0240).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelTrimSet {
+    /// Id of the rectangle panel whose end moves.
+    pub panel: Id,
+    /// The outline edge the number names, 1 to 4.
+    pub edge: EdgeId,
+    /// The end's trim, positive cutting in and negative letting out.
+    pub trim: Length,
+}
+
+impl PanelTrimSet {
+    fn parse(params: &Value) -> Result<Self, CommandError> {
+        serde_json::from_value(params.clone())
+            .map_err(|error| CommandError::InvalidParams { command: TRIM_SET_ID, message: error.to_string() })
+    }
+}
+
+/// The `panel.trim.set` command.
+pub(crate) const TRIM_SET: CommandSpec =
+    CommandSpec::new::<PanelTrimSet>(TRIM_SET_ID, TRIM_SET_LABEL, trim_set_enabled, trim_set_run);
+
+fn trim_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = PanelTrimSet::parse(params) else {
+        return false;
+    };
+    session.project().validate_panel_trim(params.panel, params.edge, params.trim).is_ok()
+}
+
+fn trim_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = PanelTrimSet::parse(params)?;
+    project.set_panel_trim(params.panel, params.edge, params.trim)?;
+    Ok(CommandOutcome::changed())
+}
+
 /// The parent-frame placement that puts the new panel exactly over its source.
 ///
 /// A node stores a placement relative to its parent and a panel's local zero is its contour's base
@@ -517,6 +584,7 @@ impl PanelCreateStandard {
             class: Some(class),
             outline: None,
             bevels: Vec::new(),
+            trims: PanelTrims::ZERO,
         })
     }
 }
@@ -633,6 +701,13 @@ pub(super) fn create_panel(
             }
         }
     };
+    if let Some(trims) = (!params.trims.is_zero()).then_some(params.trims) {
+        // The trims belong to the act of making the part: the plan's board already has the size and
+        // the placement its ends describe, so the record rides in the same revision and the same
+        // undo entry (ADR 0240).
+        project.set_panel_trims(id, trims)?;
+        project.settle_revision(before);
+    }
     if let Some(class) = params.class {
         project.set_property(id, SYSTEM_CLASS, PropertyValue::class(class))?;
         // The role is part of the act of making the part, not a second change to it: the class is
@@ -693,11 +768,11 @@ fn build_set_run(
 ) -> Result<CommandOutcome, CommandError> {
     let params = PanelBuildSet::parse(params)?;
     let before = project.revision();
-    let (placement, nominal_size, outline, bevels) = build_plan(project, params, contact)?;
+    let (placement, nominal_size, outline, bevels, trims) = build_plan(project, params, contact)?;
     // The part keeps its id, its name, its material and its class: the plan moves it into the section
     // it fills and cuts it the way the other build reads that section (U123).
     project.set_node_placement(params.panel, placement)?;
-    project.set_panel_shape(params.panel, nominal_size, outline, &bevels)?;
+    project.set_panel_shape(params.panel, nominal_size, outline, &bevels, trims)?;
     project.settle_revision(before);
     Ok(CommandOutcome::changed())
 }
@@ -711,7 +786,7 @@ fn build_plan(
     project: &Project,
     params: PanelBuildSet,
     contact: &dyn Contact,
-) -> Result<(Placement, PanelNominalSize, PanelOutline, Vec<EdgeBevel>), CommandError> {
+) -> Result<(Placement, PanelNominalSize, PanelOutline, Vec<EdgeBevel>, PanelTrims), CommandError> {
     let refused = |message: &str| CommandError::InvalidParams { command: BUILD_SET_ID, message: message.to_owned() };
     let panel = project.panel(params.panel).ok_or_else(|| refused("the node is not a panel"))?;
     let class = project
@@ -722,22 +797,46 @@ fn build_plan(
     let parent = project.parent_of(params.panel).ok_or_else(|| refused("the part has no parent"))?;
     let size = panel.nominal_size();
     let thickness = panel.last_known_thickness();
+    let trims = panel.trims();
     let frame = project.world_placement(params.panel).ok_or_else(|| refused("the part has no frame"))?;
     let centre = frame.transform_point(DVec3::new(
         size.length().millimetres_f64() * 0.5,
         size.width().millimetres_f64() * 0.5,
         thickness.millimetres_f64() * 0.5,
     ));
+    // A front laid over the frame's face stands *outside* the void it covers, so the point that
+    // measures its cell is its inner face stepped one micrometre into the opening (ADR 0240); the
+    // ends it already carries are the laps it asks for, so a frame that lost a neighbour does not
+    // silently widen a front the person sized.
+    let (point, mount) = if trims.is_zero() {
+        (centre, FillMount::Inset)
+    } else {
+        let inner = frame.transform_point(DVec3::new(
+            size.length().millimetres_f64() * 0.5,
+            size.width().millimetres_f64() * 0.5,
+            thickness.millimetres_f64(),
+        ));
+        let into = frame.transform_vector(DVec3::Z);
+        let mut laps = [Length::ZERO; 4];
+        for (index, trim) in trims.as_array().into_iter().enumerate() {
+            if let Some(slot) = laps.get_mut(index) {
+                *slot = Length::from_micrometres(
+                    trim.micrometres().checked_neg().ok_or_else(|| refused("an end trim is not a usable number"))?,
+                );
+            }
+        }
+        (inner + into * INTO_THE_VOID_MM, FillMount::Overlay { laps })
+    };
     let mut probe = project.clone();
     probe.remove_node(params.panel)?;
-    let niche = probe.niche(centre, Sight::none(), Some(contact)).map_err(|refusal| CommandError::NoNiche {
-        message: crate::read::no_niche_sentence(centre.to_array(), refusal),
+    let niche = probe.niche(point, Sight::none(), Some(contact)).map_err(|refusal| CommandError::NoNiche {
+        message: crate::read::no_niche_sentence(point.to_array(), refusal),
     })?;
-    let request = FillRequest::new(centre, fill, params.mode, thickness, None);
+    let request = FillRequest::new(point, fill, params.mode, thickness, None).with_mount(mount);
     let plan = probe
         .fill_plan_in(&niche, parent, request, Sight::none())
         .map_err(|refusal| CommandError::FillRefused { command: BUILD_SET_ID, refusal })?;
-    Ok((plan.placement, plan.nominal_size, plan.outline, plan.bevels))
+    Ok((plan.placement, plan.nominal_size, plan.outline, plan.bevels, plan.trims))
 }
 
 /// Stable id of the panel rename command.
@@ -951,6 +1050,40 @@ mod tests {
             source: EdgeRef::Rect { edge: RectEdge::Bottom.id() },
             angle: Degrees::from_millidegrees(angle),
         }
+    }
+
+    #[test]
+    fn an_end_trim_moves_one_side_and_is_one_undo_entry() {
+        // U124, ADR 0240: the card's number is the end's own, and the command moves that side by the
+        // difference — so the same number twice writes nothing and undo takes the change back whole.
+        let mut session = session();
+        let panel = panel_id();
+        let before = session.project().panel(panel).expect("the sample panel").nominal_size();
+        let request =
+            PanelTrimSet { panel, edge: RectEdge::Left.id(), trim: Length::from_millimetres(-14).expect("a lap") };
+        let asked = params(&request);
+        let spec = CommandRegistry::new().get(TRIM_SET_ID).expect("registered");
+        assert!(spec.enabled(&session, &asked), "a rectangle panel takes an end trim");
+        let revision = session.project().revision();
+        session.dispatch(TRIM_SET_ID, &asked).expect("the end is let out");
+        let grown = session.project().panel(panel).expect("the panel").nominal_size();
+        assert_eq!(
+            grown.length(),
+            before.length().checked_add(Length::from_millimetres(14).expect("a lap")).expect("a length")
+        );
+        assert_eq!(
+            session.project().panel(panel).expect("the panel").trims().get(RectEdge::Left.id()),
+            Length::from_millimetres(-14).expect("a lap")
+        );
+        assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one revision");
+
+        session.undo().expect("one undo step");
+        assert_eq!(
+            session.project().panel(panel).expect("the panel").nominal_size(),
+            before,
+            "one entry takes it back"
+        );
+        assert!(!session.can_undo(), "the trim was one entry");
     }
 
     #[test]
