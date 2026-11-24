@@ -249,6 +249,124 @@ impl TryFrom<EdgeBevelWire> for EdgeBevel {
     }
 }
 
+/// Largest trim one end of a panel may carry, either way: one metre, the document's ceiling.
+///
+/// A trim is signed, so the cap is on its magnitude; the panel's own size check refuses a trim that
+/// would leave no board.
+pub const MAX_TRIM: Length = Length::from_micrometres(1_000_000);
+
+/// Why a trim is not a number an end of a board may carry.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum TrimError {
+    /// The trim lies outside the band a document length can hold.
+    #[error("an end trim of {trim} is outside the {max} a panel end takes")]
+    TooLarge {
+        /// The rejected trim.
+        trim: Length,
+        /// The largest accepted magnitude.
+        max: Length,
+    },
+}
+
+/// The four end trims of a panel outline: the workshop's «подрезка торца».
+///
+/// One signed number per nominal edge, in the edge numbering the card and `EdgeId` already use:
+/// edge 1 the end at zero width, 2 the end at the full length, 3 the end at the full width and 4 the
+/// end at zero length. A **positive** trim cuts that end in, a **negative** one lets the board out
+/// past its size — which is how an overlay front gets its lap over the frame (ADR 0240).
+///
+/// The number belongs to the end and never accumulates: a command moves the end by the difference
+/// between the number asked and the number stored, so typing the same number twice moves nothing and
+/// the first number puts the end back where it was.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "PanelTrimsWire")]
+pub struct PanelTrims {
+    bottom: Length,
+    right: Length,
+    top: Length,
+    left: Length,
+}
+
+impl PanelTrims {
+    /// No end trimmed: the board is the size it says it is.
+    pub const ZERO: Self = Self { bottom: Length::ZERO, right: Length::ZERO, top: Length::ZERO, left: Length::ZERO };
+
+    /// The four trims in edge order, edge 1 first.
+    pub fn new(bottom: Length, right: Length, top: Length, left: Length) -> Result<Self, TrimError> {
+        let trims = Self { bottom, right, top, left };
+        trims.validate()?;
+        Ok(trims)
+    }
+
+    /// The trim on one outline edge, or zero for an edge a nominal outline does not have.
+    pub const fn get(self, edge: EdgeId) -> Length {
+        match edge.get() {
+            1 => self.bottom,
+            2 => self.right,
+            3 => self.top,
+            4 => self.left,
+            _ => Length::ZERO,
+        }
+    }
+
+    /// The same trims with one end replaced.
+    pub fn with(self, edge: EdgeId, trim: Length) -> Result<Self, TrimError> {
+        let mut trims = self;
+        match edge.get() {
+            1 => trims.bottom = trim,
+            2 => trims.right = trim,
+            3 => trims.top = trim,
+            4 => trims.left = trim,
+            _ => {
+                return Err(TrimError::TooLarge { trim, max: MAX_TRIM });
+            }
+        }
+        trims.validate()?;
+        Ok(trims)
+    }
+
+    /// Whether every end is untrimmed, which is what an ordinary board answers.
+    pub const fn is_zero(&self) -> bool {
+        self.bottom.is_zero() && self.right.is_zero() && self.top.is_zero() && self.left.is_zero()
+    }
+
+    /// The four trims in edge order, edge 1 first.
+    pub const fn as_array(self) -> [Length; 4] {
+        [self.bottom, self.right, self.top, self.left]
+    }
+
+    fn validate(self) -> Result<(), TrimError> {
+        for trim in [self.bottom, self.right, self.top, self.left] {
+            let magnitude = trim.micrometres().checked_abs().ok_or(TrimError::TooLarge { trim, max: MAX_TRIM })?;
+            if magnitude > MAX_TRIM.micrometres() {
+                return Err(TrimError::TooLarge { trim, max: MAX_TRIM });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct PanelTrimsWire {
+    #[serde(default)]
+    bottom: Length,
+    #[serde(default)]
+    right: Length,
+    #[serde(default)]
+    top: Length,
+    #[serde(default)]
+    left: Length,
+}
+
+impl TryFrom<PanelTrimsWire> for PanelTrims {
+    type Error = TrimError;
+
+    fn try_from(wire: PanelTrimsWire) -> Result<Self, Self::Error> {
+        Self::new(wire.bottom, wire.right, wire.top, wire.left)
+    }
+}
+
 fn validate_feature_dimension(field: &'static str, value: Length) -> Result<(), PanelDimensionError> {
     if !value.is_positive() {
         return Err(PanelDimensionError::NonPositive { field, value });

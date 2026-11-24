@@ -39,7 +39,7 @@ pub(crate) use machining::core_violation_of;
 
 use crate::panel::banding::{normalize_band_order, validate_corner_banding};
 use crate::panel::geometry::validate_dimension;
-use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, validate_contour_features};
+use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, PanelTrims, validate_contour_features};
 use crate::{
     Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, PivotLocal,
     Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
@@ -131,6 +131,8 @@ pub struct Panel {
     /// Banded segments in application order; the last one is drawn on top.
     band_order: Vec<SegmentSource>,
     bevels: Vec<EdgeBevel>,
+    /// The end trims, one signed number per nominal edge (ADR 0240).
+    trims: PanelTrims,
     properties: Properties,
 }
 
@@ -170,6 +172,7 @@ impl Panel {
             ring_banding: Vec::new(),
             band_order: Vec::new(),
             bevels: Vec::new(),
+            trims: PanelTrims::ZERO,
             properties: Properties::new(),
         })
     }
@@ -204,6 +207,7 @@ impl Panel {
             ring_banding: Vec::new(),
             band_order: Vec::new(),
             bevels: Vec::new(),
+            trims: PanelTrims::ZERO,
             properties: Properties::new(),
         })
     }
@@ -462,6 +466,19 @@ impl Panel {
             EdgeRef::Rect { edge } => self.edge_banding.iter().any(|band| band.edge() == edge),
             EdgeRef::Ring { segment } => self.ring_banding.iter().any(|band| band.segment() == segment),
         }
+    }
+
+    /// The four end trims, in outline-edge order: the workshop's «подрезка торца».
+    ///
+    /// A positive number cuts that end in, a negative one lets the board out past its size; a board
+    /// that was never trimmed answers all zeros, which is an ordinary panel (ADR 0240).
+    pub const fn trims(&self) -> PanelTrims {
+        self.trims
+    }
+
+    /// Replaces the end trims; the caller has already moved the ends and checked the result.
+    pub(crate) fn set_trims(&mut self, trims: PanelTrims) {
+        self.trims = trims;
     }
 
     /// End bevels in application order, one per outline edge.
@@ -934,6 +951,8 @@ pub(crate) struct PanelWire {
     band_order: Vec<SegmentSource>,
     #[serde(default)]
     bevels: Vec<EdgeBevel>,
+    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
+    trims: PanelTrims,
     #[serde(default)]
     properties: Properties,
 }
@@ -975,6 +994,7 @@ impl TryFrom<PanelWire> for Panel {
             normalize_band_order(wire.band_order, &panel.edge_banding, &panel.corner_banding, &panel.ring_banding);
         panel.bevels = wire.bevels;
         panel.validate_bevels()?;
+        panel.trims = wire.trims;
         panel.properties = wire.properties;
         Ok(panel)
     }

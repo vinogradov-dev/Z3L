@@ -261,6 +261,21 @@ pub enum ProjectError {
         /// The panel that was asked.
         id: Id,
     },
+    /// The panel stores a ring, which has no four nominal ends to trim.
+    #[error("panel {id} is a contour panel, so it has no four ends to trim")]
+    PanelTrimNeedsRectangle {
+        /// The panel that was asked.
+        id: Id,
+    },
+    /// An end trim is outside the band a panel end may carry.
+    #[error("panel {panel} cannot carry that end trim: {source}")]
+    TrimRefused {
+        /// The panel whose end was asked for.
+        panel: Id,
+        /// Why the number is not one an end takes.
+        #[source]
+        source: crate::TrimError,
+    },
     /// A contour edit moves the panel frame beyond what the placement can represent.
     #[error("the frame of panel {panel} cannot follow its new outline")]
     PanelOutlineFrame {

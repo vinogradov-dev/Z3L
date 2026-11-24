@@ -77,7 +77,9 @@ pub use panel::{
     PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM,
     RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes, role_of_plane,
 };
-pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
+pub use panel_features::{
+    BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE, MAX_TRIM, PanelTrims, TrimError,
+};
 pub use panel_type::PanelType;
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
