@@ -104,47 +104,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[~]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
-  Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
-   and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
-   gesture with a different class — the cell differs only in the class whose fill trait names
-   the size pair (ADR 0099), they share both build rows and the ghost — so the ribbon asks the
-   person to name the class before the part and grows a cell per class. The class is fixed at
-   creation and stays: a created part's role cannot be changed (the owner, 2026-11-24), so the
-   interface offers the class once, before the click, and nothing rewrites it afterwards; the
-   build and a repeat count have no home of their own (ADR 0110 put the build in the cell, the
-   count does not exist).
-  Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
-   furniture.panels.points, whose method list carries three points and n points from its own
-   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
-   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
-   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
-   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
-   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
-   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
-   query over the void's shape and coordinates that gives the interface nothing, so the
-   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
-   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
-   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
-   Overlay wall), the build (Rectangle or the niche shape — the word stays niche) and the count
-   (evenly, from its own task). The class a new part is born with is the role its plane
-   implies, from the rule of its own task, and a key of the menu overrides it before the click.
-   Before the click the keys are the tool card's rows (ADR 0119); after it only the build is a
-   key of the part, through one new command panel.build.set, which rewrites the mode from the
-   same niche in one undo entry and refuses a node that is not a panel — a created part keeps
-   its role, so no command writes the class of a part that exists. ADR 0110 is superseded by
-   one record that says the cell is the object and the build is its property.
-  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
-   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
-   pinned-variant table and the tests that walk the method lists; the niche still answers from
-   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
-   class and the build before the click, and the context menu offers the build after it because
-   a created part keeps its role (the owner, 2026-11-24); a new part is born with the role its
-   plane implies and a menu key overrides it before it exists; panel.build.set rewrites the
-   build from the same niche in one undo entry, re-derives the outline and refuses a non-panel;
-   a stale pin is dropped on load; the context menu is one Popup declared in the module that
-   owns it; cargo xtask ci is green.
-  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs`
 - `[ ]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
   Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
    that board laid over the frame — placed from the niche's start point by one thickness, its
@@ -483,6 +442,48 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
+  Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
+   and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
+   gesture with a different class — the cell differs only in the class whose fill trait names
+   the size pair (ADR 0099), they share both build rows and the ghost — so the ribbon asks the
+   person to name the class before the part and grows a cell per class. The class is fixed at
+   creation and stays: a created part's role cannot be changed (the owner, 2026-11-24), so the
+   interface offers the class once, before the click, and nothing rewrites it afterwards; the
+   build and a repeat count have no home of their own (ADR 0110 put the build in the cell, the
+   count does not exist).
+  Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
+   furniture.panels.points, whose method list carries three points and n points from its own
+   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
+   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
+   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
+   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
+   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
+   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
+   query over the void's shape and coordinates that gives the interface nothing, so the
+   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
+   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
+   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
+   Overlay wall), the build (Rectangle or the niche shape — the word stays niche) and the count
+   (evenly, from its own task). The class a new part is born with is the role its plane
+   implies, from the rule of its own task, and a key of the menu overrides it before the click.
+   Before the click the keys are the tool card's rows (ADR 0119); after it only the build is a
+   key of the part, through one new command panel.build.set, which rewrites the mode from the
+   same niche in one undo entry and refuses a node that is not a panel — a created part keeps
+   its role, so no command writes the class of a part that exists. ADR 0110 is superseded by
+   one record that says the cell is the object and the build is its property.
+  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
+   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
+   pinned-variant table and the tests that walk the method lists; the niche still answers from
+   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
+   class and the build before the click, and the context menu offers the build after it because
+   a created part keeps its role (the owner, 2026-11-24); a new part is born with the role its
+   plane implies and a menu key overrides it before it exists; panel.build.set rewrites the
+   build from the same niche in one undo entry, re-derives the outline and refuses a non-panel;
+   a stale pin is dropped on load; the context menu is one Popup declared in the module that
+   owns it; cargo xtask ci is green.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs` — `e17d1ad`
 
 - `[x]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
   Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by

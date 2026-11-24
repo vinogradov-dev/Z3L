@@ -539,3 +539,8 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   for, `Call` gains that field, and the window answers that tab instead of the active one — or one
   channel per tab, which costs a socket and a token file each. Either is a change to the tool server's
   contract for every client, so it needs its own task and record (J24).
+
+- `[ui]` The Panel cell's second method, «Rectangle» — a plain board drawn on the work plane and then
+  sized in the card — is in the map and planned (`run: None`): cutting it needs a drawing intent that
+  turns the drawn ring into a `Rect` outline so the card can still edit the sides, and U123 shipped
+  without it. The cell draws one live method and no caret until that intent lands (U123, ADR 0239).
