@@ -1,6 +1,6 @@
 # 0161. A carried piece's gaps are dimensioned in the scene
 
-- Status: Accepted; amends 0119's placement for the furniture move, refines 0103
+- Status: Accepted; amends 0119's placement for the furniture move, refines 0103; extended to every measured gap by 0242
 - Date: 2026-11-19
 
 ## Context
