@@ -3742,81 +3742,113 @@ fn evenly_harness(name: &str) -> (Harness, egui::Pos2, egui::Pos2) {
 
 #[test]
 fn the_evenly_fill_spreads_its_boards_and_one_click_writes_them_all() {
-    // U128: the row is live — as soon as the pointer names a void its boards are spread through it,
-    // with the count riding beside the hand — and one click lays them as one batch: one revision,
+    // U128, X135: the row is live — as soon as the pointer names a void its boards are spread through
+    // it, with the count riding beside the hand — and one click lays them as one batch: one revision,
     // one undo entry, and the boards are the ones the ghosts drew.
-    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row");
+    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row");
     let before = harness.revision();
     harness.hover(pointer);
     harness.settle();
-    let (plan, anchor) = {
+    let single = {
+        let document = harness.app.tabs.active();
+        let row = document.fill_gizmo.row().expect("the pointer spread the row with no click");
+        row.plan.clone().expect("the row is a model answer")
+    };
+    assert_eq!(single.count, 1, "a hand in the calm near half keeps the row at one board");
+    assert!(single.start > 0.0 && (single.low - single.high).abs() <= 1.0, "the one board splits the void");
+    // The hand has to travel past the first board before the count moves.
+    harness.hover(higher);
+    harness.settle();
+    {
         let document = harness.app.tabs.active();
         assert_eq!(harness.revision(), before, "the ghosts write nothing");
         let row = document.fill_gizmo.row().expect("the pointer spread the row with no click");
         let plan = row.plan.clone().expect("the row is a model answer");
-        assert!(plan.count > 1, "the void holds more than one board");
+        assert!(plan.count > 1, "a hand past the first board grows the row: {}", plan.count);
         assert!(
-            (plan.low - plan.high).abs() < 1.0e-6,
-            "the row keeps the same air at both ends: {} and {}",
+            plan.low <= plan.high,
+            "the row keeps its air and lets the far one take the leftover: {} and {}",
             plan.low,
             plan.high
         );
+        assert!(plan.low.fract() == 0.0 && plan.high.fract() == 0.0, "every distance is whole millimetres");
         // The count is not a distance, so it rides beside the hand instead of on a run.
         let plate = document.count_plate_rect().expect("the row's count drew beside the hand");
         assert!(screen().contains_rect(plate), "the count is on screen: {plate:?}");
         assert!(
-            plate.center().x > pointer.x && plate.center().y > pointer.y,
-            "the count sits below and right of the hand: {plate:?} against {pointer:?}"
+            plate.center().x > higher.x && plate.center().y > higher.y,
+            "the count sits below and right of the hand: {plate:?} against {higher:?}"
         );
         assert!(
-            plate.center().distance(pointer) < 80.0,
-            "the count stays within a glance of the hand: {plate:?} against {pointer:?}"
+            plate.center().distance(higher) < 80.0,
+            "the count stays within a glance of the hand: {plate:?} against {higher:?}"
         );
         let shown = texts_inside(&harness, plate);
-        assert!(shown.iter().any(|text| text == &plan.count.to_string()), "the count shows: {shown:?}");
-        (plan, row.anchor.clone())
-    };
-
-    harness.press_at(pointer, egui::PointerButton::Primary);
-    harness.release_at(pointer, egui::PointerButton::Primary);
-    harness.settle();
-    let revision = harness.revision();
-    assert!(revision > before, "the click writes the row once");
-    let (boards, product) = {
+        assert!(
+            shown.iter().any(|text| text == &plan.count.to_string()),
+            "the plate shows the row's count: {shown:?} against {}",
+            plan.count
+        );
+        // The pitch between two neighbours is drawn as a quiet run of its own: no field owns it, so
+        // it reads without a plate and its number sits on the line (X135).
+        let (from, to, text) = document.pitch_dimension().expect("the row drew its pitch");
+        assert_eq!(text, format!("{}", plan.gap.round() as i64), "the pitch run reads the gap in whole millimetres");
+        assert!(from.distance(to) > 1.0, "the run has a length on screen: {from:?} to {to:?}");
+    }
+    let boards = {
         let document = harness.app.tabs.active();
-        let product = document.session.active_product().expect("the frame stays open");
-        let boards: Vec<_> = document
-            .session
-            .project()
-            .container(product)
-            .expect("the frame")
-            .children()
-            .iter()
-            .filter_map(|child| match child {
-                model::Node::Panel(panel) => Some(panel.clone()),
-                _ => None,
-            })
-            .collect();
-        (boards, product)
+        document.fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count).expect("a row")
     };
-    assert_eq!(boards.len(), plan.count, "the row wrote every board the ghost drew");
-    let mut heights: Vec<f64> = boards.iter().map(|panel| panel.placement().translation().z).collect();
-    heights.sort_by(|left, right| left.total_cmp(right));
-    for (index, height) in heights.iter().enumerate() {
-        let wanted = anchor.placement.translation().z + plan.pitch * index as f64;
-        assert!((height - wanted).abs() < 1.0e-6, "board {index} sits at the pitch: {height} not {wanted}");
-    }
-    for panel in &boards {
-        assert_eq!(panel.outline(), &anchor.outline, "a board is the ghost's own outline");
-        assert_eq!(panel.nominal_size(), anchor.nominal_size, "and its own frame");
-        assert_eq!(panel.placement().rotation(), anchor.placement.rotation(), "and its stance");
-    }
-
-    // One undo takes the whole row back and leaves the frame where it was.
+    harness.click(higher, egui::PointerButton::Primary);
+    harness.settle();
+    assert!(harness.revision() > before, "one click writes the row");
     let document = harness.app.tabs.active_mut();
+    let shelves = document
+        .session
+        .project()
+        .query(&model::NodeQuery::any())
+        .into_iter()
+        .filter(|id| document.session.project().panel(*id).is_some())
+        .count();
+    assert_eq!(shelves, boards, "the click wrote the boards the ghosts drew");
     document.session.undo().expect("one undo step");
-    let children = document.session.project().container(product).expect("the frame").children().len();
-    assert_eq!(children, 0, "one undo removes every board of the row");
+    assert_eq!(
+        document.session.project().query(&model::NodeQuery::any()).len(),
+        1,
+        "one undo takes the whole row back"
+    );
+}
+
+#[test]
+fn both_ends_of_a_row_stay_alive_whichever_was_typed_first() {
+    // X135: the owner pinned the near air at 80 mm, tabbed to the far field, pinned that at 80 mm too
+    // and found the near field dead. A row is not one rigid part: its two ends are two independent
+    // numbers of the same gesture, so whichever was typed last, the other still moves the row.
+    let (mut harness, _lower, higher) = evenly_harness("frame-fill-row-ends");
+    harness.hover(higher);
+    harness.settle();
+    let ctx = harness.context();
+    let type_gap = |harness: &mut Harness, param: ui::ToolParam, value: f64| {
+        harness.app.tabs.active_mut().apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome { edits: vec![ui::ToolEdit { param, value }], ..ui::ToolOutcome::default() },
+        );
+        harness.settle();
+        harness.app.tabs.active().gap_rows().filter(|rows| rows.len() == 2).map(|rows| [rows[0].value, rows[1].value])
+    };
+    let near = type_gap(&mut harness, ui::ToolParam::LowGap, 80.0).expect("two rows");
+    assert_eq!(near[0], 80.0, "the near air is the number that was typed: {near:?}");
+    // Tab to the far field, as the owner did, and type the same number there.
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    harness.settle();
+    let far = type_gap(&mut harness, ui::ToolParam::HighGap, 80.0).expect("two rows");
+    assert_eq!(far[1], 80.0, "the far air is the second number: {far:?}");
+    // The near field is still live: a new number there moves the row again.
+    let again = type_gap(&mut harness, ui::ToolParam::LowGap, 120.0).expect("two rows");
+    assert_eq!(again[0], 120.0, "the near field still acts after the far one was typed: {again:?}");
+    // And a zero in a field gives that end back to the model, which spreads the row out again.
+    let released = type_gap(&mut harness, ui::ToolParam::LowGap, 0.0).expect("two rows");
+    assert_ne!(released[0], 120.0, "a zero releases the pinned end: {released:?}");
 }
 
 #[test]
@@ -3849,7 +3881,9 @@ fn a_typed_count_spreads_the_live_row() {
     };
     assert_eq!(count, Some(4), "the field kept the typed count");
     assert_eq!(boards, 4, "the row spread four boards");
-    assert!((air.0 - air.1).abs() < 1.0e-6, "the four boards keep the same air at both ends: {air:?}");
+    // Whole millimetres, one pitch, and the leftover of the division in the far air (X135).
+    assert!(air.0.fract() == 0.0 && air.1.fract() == 0.0, "both airs are whole millimetres: {air:?}");
+    assert!(air.1 >= air.0 && air.1 - air.0 < 4.0, "the far air takes the leftover: {air:?}");
     assert_eq!(harness.revision(), before, "a typed count writes nothing until the click");
 }
 

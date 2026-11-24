@@ -379,21 +379,18 @@ pub const fn free_axis(fill: Fill) -> usize {
     }
 }
 
-/// What one row of boards asks: where the first board is, how far the hand travelled and what the
-/// maker typed.
+/// What one row of boards asks: where an end is pinned and how many boards there are.
 ///
-/// The four travel together because they are one gesture (AGENTS §1.5): the near face the first
-/// click named, the span the hand pulled along the free axis, the count a field holds, and the far
-/// gap a typed distance fixed. A row plan, its refusal and the ghosts a maker sees all read this
-/// value.
+/// The three travel together because they are one gesture (AGENTS §1.5): the near face a typed
+/// distance fixed, the count the hand named or a field holds, and the far gap another typed
+/// distance fixed. A row plan, its refusal and the ghosts a maker sees all read this value.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FillRowAsk {
-    /// The first board's near face along the free axis, in the parent frame and millimetres.
-    pub start: f64,
-    /// How far the hand travelled from `start`; `None` while the row takes the whole void.
-    pub span: Option<f64>,
-    /// The count a field holds, clamped to the boards that fit without crossing.
-    pub count: Option<usize>,
+    /// The first board's near face along the free axis, in the parent frame and millimetres, while
+    /// a typed distance pins it; `None` spreads the row through the whole void.
+    pub start: Option<f64>,
+    /// How many boards the row holds, clamped to the boards that fit without crossing.
+    pub count: usize,
     /// The distance the maker fixed from the last board's far face to the wall, in millimetres.
     ///
     /// `None` while the row shares its free length out and leaves the leftover at the far end.
@@ -470,15 +467,15 @@ pub fn fill_row(niche: &Niche, thickness: f64, axis: usize, ask: FillRowAsk) -> 
     if axis >= 3
         || !thickness.is_finite()
         || thickness <= 0.0
-        || !ask.start.is_finite()
-        || ask.span.is_some_and(|span| !span.is_finite())
+        || ask.count == 0
+        || ask.start.is_some_and(|start| !start.is_finite())
         || ask.gap.is_some_and(|gap| !gap.is_finite() || gap < 0.0)
     {
         return Err(FillRowRefusal::NoRoom);
     }
     let wall_low = niche.local_min[axis];
-    let wall_high = wall_low + niche.size[axis];
-    let room = wall_high - ask.start;
+    let room = niche.size[axis];
+    let wall_high = wall_low + room;
     if !room.is_finite() || room < thickness {
         return Err(FillRowRefusal::NoRoom);
     }
@@ -487,54 +484,86 @@ pub fn fill_row(niche: &Niche, thickness: f64, axis: usize, ask: FillRowAsk) -> 
     let fits = |length: f64| {
         if length < thickness { 1 } else { (length / thickness + ROW_TOLERANCE).floor().max(1.0) as usize }
     };
-    // A typed count claims the whole void; the hand's span claims only what it pulled, and the rest
-    // of the length is the leftover the row leaves at the far end.
-    let (span, count) = match ask.count {
-        Some(count) => (room, count.clamp(1, fits(room))),
-        None => {
-            let span = ask.span.map_or(room, |span| span.clamp(thickness, room));
-            (span, fits(span))
-        }
+    let count = ask.count.clamp(1, fits(room));
+    // The boards the pinned ends leave room for: a maker who pins both airs typed the row's two
+    // distances, so the count gives way rather than the row refusing to exist (X135).
+    let fit_between = |near: f64, far: f64| {
+        let between = room - near - far;
+        if between < thickness { 1 } else { (between / thickness + ROW_TOLERANCE).floor().max(1.0) as usize }
     };
-    let boards = count as f64 * thickness;
-    let neighbours = count as f64 - 1.0;
-    let gap = match ask.gap {
-        // The free length is shared between the boards and the far end of the span: the last share
-        // is the leftover, exactly as a row of shelves hangs in a case.
-        None => (span - boards) / count as f64,
-        Some(gap) => {
-            if neighbours < 1.0 {
-                // One board has no neighbour to divide the space with: the fixed gap must be the
-                // one the span leaves, or the row cannot honour it.
-                if (span - boards - gap).abs() > ROW_TOLERANCE {
-                    return Err(FillRowRefusal::NotDivided);
-                }
-                0.0
-            } else {
-                let shared = (span - boards - gap) / neighbours;
-                if shared < -ROW_TOLERANCE {
-                    return Err(FillRowRefusal::GapTooWide);
-                }
-                shared.max(0.0)
+    // The row's spaces, in the order they run: the near air, one between every two boards, the far
+    // air. Every one of them is a whole millimetre, because that is what a maker reads, and the row
+    // keeps one pitch throughout — the boards of a row are equally far apart or it is not a row
+    // (the owner, 2026-11-24). The leftover of the division therefore falls in one single space: the
+    // last one nothing pins, which is the far air unless a field pinned it, and then the near air.
+    let near_pin_for_fit = ask.start.map(|start| (start - wall_low).max(0.0).round());
+    let far_for_fit = ask.gap.map(f64::round);
+    let count = match (near_pin_for_fit, far_for_fit) {
+        (Some(near), Some(far)) if room - near - far < room => count.min(fit_between(near, far)),
+        _ => count,
+    };
+    let taken = count as f64 * thickness;
+    let free = room - taken;
+    let near_pin = match ask.start {
+        Some(start) => {
+            let near = start - wall_low;
+            if near < -ROW_TOLERANCE {
+                return Err(FillRowRefusal::NoRoom);
             }
+            Some(near.max(0.0).round())
+        }
+        None => None,
+    };
+    if near_pin.is_some_and(|near| near > free + ROW_TOLERANCE) {
+        // The pinned face leaves no room for the boards themselves: the void is too short for the
+        // row rather than for the gap, and the sentence says so.
+        return Err(FillRowRefusal::NoRoom);
+    }
+    let far_pin = ask.gap.map(f64::round);
+    let rest = free - near_pin.unwrap_or(0.0) - far_pin.unwrap_or(0.0);
+    if rest < -ROW_TOLERANCE {
+        return Err(FillRowRefusal::GapTooWide);
+    }
+    let (near, gap) = match (near_pin, far_pin) {
+        // An even row: the same air between the boards and at the near wall, and the far air takes
+        // the leftover — a hair wider than the rest, which is where a row of shelves leaves it.
+        (None, None) => {
+            let share = (free / (count + 1) as f64).floor();
+            (share, share)
+        }
+        // A pinned near face: the boards follow it and the far air takes the leftover.
+        (Some(near), None) => {
+            let share = (rest / count as f64).floor();
+            (near, share)
+        }
+        // A pinned far gap: the neighbours keep one pitch from the near wall, which takes the
+        // leftover because the space the leftover belongs to is the one the maker pinned.
+        (None, Some(_)) => {
+            let share = (rest / count as f64).floor();
+            (rest - (count as f64 - 1.0) * share, share)
+        }
+        // Both ends pinned: the pitch gives what whole millimetres it can, and the far gap reads
+        // back from the row — one or two millimetres wider than the number that pinned it, which is
+        // what its own plate then shows.
+        (Some(near), Some(_)) => {
+            let share = if count > 1 { (rest / (count as f64 - 1.0)).floor().max(0.0) } else { 0.0 };
+            if count == 1 && rest.abs() > ROW_TOLERANCE {
+                return Err(FillRowRefusal::GapTooWide);
+            }
+            (near, share)
         }
     };
-    let end = ask.start + boards + neighbours * gap;
-    let row = FillRowPlan {
-        count,
-        pitch: thickness + gap,
-        gap,
-        start: ask.start,
-        end,
-        low: ask.start - wall_low,
-        high: wall_high - end,
-    };
+    let start = wall_low + near;
+    let end = start + taken + (count as f64 - 1.0) * gap;
+    let row = FillRowPlan { count, pitch: thickness + gap, gap, start, end, low: near, high: wall_high - end };
     if !row.pitch.is_finite()
         || !row.end.is_finite()
         || !row.low.is_finite()
         || !row.high.is_finite()
         || row.low < -ROW_TOLERANCE
         || row.high < -ROW_TOLERANCE
+        || row.start < wall_low - ROW_TOLERANCE
+        || row.end > wall_high + ROW_TOLERANCE
     {
         return Err(FillRowRefusal::NoRoom);
     }
@@ -1960,87 +1989,103 @@ mod tests {
             .expect("the point names a shelf in the void")
     }
 
-    /// A row's ask with the first board where the plan put it.
-    fn ask(plan: &FillPlan, span: Option<f64>, count: Option<usize>, gap: Option<f64>) -> FillRowAsk {
-        FillRowAsk { start: plan.free_low, span, count, gap }
+    /// A row's ask that pins nothing: the void names every number.
+    fn even(count: usize) -> FillRowAsk {
+        FillRowAsk { start: None, count, gap: None }
     }
 
     #[test]
-    fn a_row_shares_its_span_out_and_leaves_the_rest_at_the_far_end() {
+    fn a_row_shares_the_void_out_and_leaves_the_leftover_at_the_far_end() {
         let plan = shelf_plan(200.0);
-        let thickness = plan.free_high - plan.free_low;
         let axis = free_axis(Fill::WidthAndDepth);
-        let row = plan.row(axis, ask(&plan, Some(160.0), None, None)).expect("a row fits");
-        assert_eq!(row.count, 10, "160 mm holds ten 16 mm boards");
-        assert!(row.gap.abs() < 1.0e-6, "ten boards fill their span with no gap left: {}", row.gap);
-        assert!((row.pitch - thickness).abs() < 1.0e-6);
-        // A span a little longer than fifteen boards leaves the extra millimetres to the far end.
-        let loose = plan.row(axis, ask(&plan, Some(241.0), None, None)).expect("a row fits");
-        assert_eq!(loose.count, 15, "241 mm still holds fifteen boards");
-        assert!((loose.gap - 1.0 / 15.0).abs() < 1.0e-6, "the extra millimetre is shared: {}", loose.gap);
-        assert!((loose.high - loose.gap - 0.0).abs() > 0.0, "the unused length stays at the far end");
+        let room = plan.niche.size[axis];
+        let thickness = plan.free_high - plan.free_low;
+        let row = plan.row(axis, even(4)).expect("four boards fit");
+        assert_eq!(row.count, 4);
+        // Whole millimetres everywhere, one pitch, and the leftover of the division falls in the far
+        // air (the owner, 2026-11-24): 720 mm and four 16 mm boards give 131 mm a space, and 720 -
+        // 4·16 - 4·131 = 132 mm at the far wall.
+        let free = room - 4.0 * thickness;
+        let share = (free / 5.0).floor();
+        assert!((row.low - share).abs() < 1.0e-6, "the near air is the shared one: {}", row.low);
+        assert!((row.gap - share).abs() < 1.0e-6, "the neighbours stand that far apart: {}", row.gap);
+        assert!((row.high - (free - 4.0 * share)).abs() < 1.0e-6, "the far air takes the leftover: {}", row.high);
+        assert!(row.low.fract() == 0.0 && row.gap.fract() == 0.0 && row.high.fract() == 0.0, "whole millimetres");
+        assert!((row.pitch - (thickness + row.gap)).abs() < 1.0e-6);
+        // One board is the middle of the void: the row splits the space in two.
+        let one = plan.row(axis, even(1)).expect("one board fits");
+        assert_eq!(one.count, 1);
+        assert!((one.low - one.high).abs() <= 1.0, "one board goes in the middle: {} and {}", one.low, one.high);
+        assert!((one.start - plan.niche.local_min[axis]).abs() > 1.0, "and not against the wall");
     }
 
     #[test]
-    fn a_row_grows_one_board_per_thickness_and_never_crosses() {
+    fn a_row_never_holds_more_boards_than_fit() {
         let plan = shelf_plan(200.0);
         let axis = free_axis(Fill::WidthAndDepth);
-        let wall = plan.niche.local_min[axis] + plan.niche.size[axis];
+        let room = plan.niche.size[axis];
+        let wall = plan.niche.local_min[axis] + room;
         let thickness = plan.free_high - plan.free_low;
-        let mut previous = 0;
-        let mut span = 0.0;
-        while span <= plan.niche.size[axis] {
-            let row = plan.row(axis, ask(&plan, Some(span), None, None)).expect("a row fits");
-            assert!(row.count >= previous, "the count never shrinks as the hand pulls");
-            assert!(
-                row.count <= previous + 1,
-                "{span} mm moved the count by more than one: {previous} -> {}",
-                row.count
-            );
-            assert!(row.end <= wall + ROW_TOLERANCE, "a board crossed the wall at {span} mm");
-            assert!(row.pitch >= thickness - ROW_TOLERANCE, "two boards crossed at {span} mm");
-            previous = row.count;
-            span += 1.0;
-        }
-        assert!(previous > 1, "the row grew past one board");
+        let row = plan.row(axis, even(10_000)).expect("the count clamps");
+        assert_eq!(row.count, (room / thickness + ROW_TOLERANCE).floor() as usize);
+        assert!(row.end <= wall + ROW_TOLERANCE, "no board crosses the wall");
+        assert!(row.pitch >= thickness - ROW_TOLERANCE, "two boards never cross");
+        assert!(row.gap.abs() < ROW_TOLERANCE, "boards that fill the void stand shoulder to shoulder: {}", row.gap);
     }
 
     #[test]
-    fn a_typed_count_takes_the_whole_void_and_a_fixed_gap_keeps_its_distance() {
+    fn a_pinned_end_keeps_its_number_and_the_others_share_the_rest() {
         let plan = shelf_plan(200.0);
         let axis = free_axis(Fill::WidthAndDepth);
+        let wall_low = plan.niche.local_min[axis];
+        let room = plan.niche.size[axis];
         let thickness = plan.free_high - plan.free_low;
-        let room = plan.niche.local_min[axis] + plan.niche.size[axis] - plan.free_low;
-        let typed = plan.row(axis, ask(&plan, None, Some(4), None)).expect("four boards fit");
-        assert_eq!(typed.count, 4);
-        assert!((typed.gap - (room - 4.0 * thickness) / 4.0).abs() < 1.0e-6, "the void is shared out: {}", typed.gap);
-        assert!((typed.high - typed.gap).abs() < 1.0e-6, "the leftover at the far end is the shared gap");
-        // A fixed far gap is honoured, and the neighbours divide what is left.
-        let fixed = plan.row(axis, ask(&plan, None, Some(4), Some(40.0))).expect("a fixed gap fits");
-        assert_eq!(fixed.count, 4);
-        assert!((fixed.high - 40.0).abs() < 1.0e-6, "the fixed gap is what the row leaves: {}", fixed.high);
-        let shared = (room - 4.0 * thickness - 40.0) / 3.0;
-        assert!((fixed.gap - shared).abs() < 1.0e-6, "the neighbours share the rest: {}", fixed.gap);
-        // A count past what fits is clamped instead of refused, and a gap wider than the void is not.
-        let clamped = plan.row(axis, ask(&plan, None, Some(10_000), None)).expect("the count clamps");
-        assert_eq!(clamped.count, (room / thickness + ROW_TOLERANCE).floor() as usize);
-        assert_eq!(plan.row(axis, ask(&plan, None, Some(4), Some(room))), Err(FillRowRefusal::GapTooWide));
+        let free = room - 4.0 * thickness;
+        // The near air is typed: the boards follow it, one pitch, and the far air takes the rest.
+        let near = plan.row(axis, FillRowAsk { start: Some(wall_low + 80.0), count: 4, gap: None }).expect("fits");
+        assert!((near.low - 80.0).abs() < 1.0e-6, "the typed air stands: {}", near.low);
+        let share = ((free - 80.0) / 4.0).floor();
+        assert!((near.gap - share).abs() < 1.0e-6, "the rest is shared one pitch at a time: {}", near.gap);
+        assert!((near.high - (free - 80.0 - 3.0 * share)).abs() < 1.0e-6, "the far air holds the leftover");
+        // The far air is typed: the near one takes the leftover, because the pinned space cannot.
+        let far = plan.row(axis, FillRowAsk { start: None, count: 4, gap: Some(40.0) }).expect("fits");
+        assert!((far.high - 40.0).abs() < 1.0e-6, "the typed gap is what the row leaves: {}", far.high);
+        let share = ((free - 40.0) / 4.0).floor();
+        assert!((far.gap - share).abs() < 1.0e-6, "the neighbours share the rest: {}", far.gap);
+        assert!((far.low - (free - 40.0 - 3.0 * share)).abs() < 1.0e-6, "the near air takes the leftover");
+        // Both are typed: the pitch gives what whole millimetres it can and the far air reads back.
+        let both =
+            plan.row(axis, FillRowAsk { start: Some(wall_low + 80.0), count: 4, gap: Some(40.0) }).expect("fits");
+        assert!((both.low - 80.0).abs() < 1.0e-6);
+        let share = ((free - 120.0) / 3.0).floor();
+        assert!((both.gap - share).abs() < 1.0e-6, "one pitch, floored: {}", both.gap);
+        assert!(both.high >= 40.0 - ROW_TOLERANCE && both.high < 40.0 + 4.0, "the far air reads back: {}", both.high);
+        // A gap wider than the void, or a near face outside it, is refused rather than clamped.
+        assert_eq!(
+            plan.row(axis, FillRowAsk { start: None, count: 4, gap: Some(room) }),
+            Err(FillRowRefusal::GapTooWide)
+        );
+        assert_eq!(
+            plan.row(axis, FillRowAsk { start: Some(wall_low - 1.0), count: 4, gap: None }),
+            Err(FillRowRefusal::NoRoom)
+        );
     }
 
     #[test]
-    fn a_row_of_one_board_cannot_share_a_fixed_gap() {
+    fn a_row_of_one_board_reads_its_two_airs() {
         let plan = shelf_plan(200.0);
         let axis = free_axis(Fill::WidthAndDepth);
+        let wall_low = plan.niche.local_min[axis];
+        let room = plan.niche.size[axis];
         let thickness = plan.free_high - plan.free_low;
-        let room = plan.niche.local_min[axis] + plan.niche.size[axis] - plan.free_low;
-        let span = 20.0;
-        let row = plan.row(axis, ask(&plan, Some(span), None, None)).expect("one board in 20 mm");
-        assert_eq!(row.count, 1);
-        assert!((row.gap - (span - thickness)).abs() < 1.0e-6, "one board leaves its span at the end: {}", row.gap);
-        // A typed count claims the whole void, so the only gap one board can honour is its own leftover.
-        assert_eq!(plan.row(axis, ask(&plan, Some(span), Some(1), Some(4.0))), Err(FillRowRefusal::NotDivided));
-        let exact = plan.row(axis, ask(&plan, None, Some(1), Some(room - thickness))).expect("its own leftover");
-        assert!((exact.high - (room - thickness)).abs() < 1.0e-6);
+        // One board with a typed far air: the near air is the rest of the void, exactly.
+        let far = plan.row(axis, FillRowAsk { start: None, count: 1, gap: Some(40.0) }).expect("one board fits");
+        assert!((far.low - (room - thickness - 40.0)).abs() < 1.0e-6, "the near air is the rest: {}", far.low);
+        // Both airs typed must add up to the void: a pair that does not is refused.
+        let exact = FillRowAsk { start: Some(wall_low + room - thickness - 40.0), count: 1, gap: Some(40.0) };
+        assert!(plan.row(axis, exact).is_ok(), "the two airs add up to the void");
+        let wide = FillRowAsk { start: Some(wall_low + 40.0), count: 1, gap: Some(40.0) };
+        assert_eq!(plan.row(axis, wide), Err(FillRowRefusal::GapTooWide));
     }
 
     #[test]
@@ -2048,10 +2093,11 @@ mod tests {
         let plan = shelf_plan(200.0);
         let axis = free_axis(Fill::WidthAndDepth);
         let wall = plan.niche.local_min[axis] + plan.niche.size[axis];
-        let thin = FillRowAsk { start: wall - 8.0, ..ask(&plan, None, None, None) };
+        let thin = FillRowAsk { start: Some(wall - 8.0), count: 1, gap: None };
         assert_eq!(plan.row(axis, thin), Err(FillRowRefusal::NoRoom));
-        let nan = FillRowAsk { start: f64::NAN, ..ask(&plan, None, None, None) };
+        let nan = FillRowAsk { start: Some(f64::NAN), count: 1, gap: None };
         assert_eq!(plan.row(axis, nan), Err(FillRowRefusal::NoRoom));
+        assert_eq!(plan.row(axis, even(0)), Err(FillRowRefusal::NoRoom), "a row of no boards is no row");
     }
 
     /// An empty piece with the given envelope at the origin: nothing of the sample scene stands in

@@ -54,13 +54,23 @@ operation's context menu.**
   the boards and the two ends alike, so the air at the near wall is the air between the boards — and
   one click writes them as one batch. A typed far gap keeps its own distance and the neighbours
   share the rest.
-- **The hand names the count.** The number of boards is not a maximum and not a constant: it is how
-  far the hand travelled from the middle of the void towards its wall, measured in the void's own
-  **screen** extent — one board at the middle, every board that fits at the wall (the owner,
-  2026-11-24). A maker judges the row by what the window shows, so a narrow void in a far corner
-  asks for the same travel as a wide one nearby. A count in force needs the hand to cross a whole
-  step of its own share of the void before it moves, so a twitch of the mouse leaves the row alone,
-  and the two ends are always honoured: the middle is one board and the wall is the most.
+- **The hand names the count, and the near half is calm.** The count is how far the hand travelled
+  past the first board towards the far wall, as a share of the space it had left, measured in the
+  void's own **screen** extent. Anywhere in the near half the row is one board — the board that
+  splits the void in two — and only past it does the count move, one board at a time, until the far
+  wall gives every board that fits (the owner, 2026-11-24, correcting the first law, which grew from
+  the first pixel and so could never be left at one). A maker judges the row by what the window
+  shows, so a narrow void in a far corner asks for the same travel as a wide one nearby, and a count
+  in force needs a whole step of travel before it moves, so a twitch of the mouse changes nothing.
+- **A row's distances are whole millimetres and it keeps one pitch.** A maker reads a dimension, not
+  a fraction: the near air, the gaps between the boards and the far air are whole millimetres, and
+  the boards stand one pitch apart or it is not a row. The leftover of the division therefore falls
+  in the last space nothing pins — the far air, unless a field pinned it, and then the near air. A row
+  with both ends pinned gives the count way when the boards no longer fit between them.
+- **The pitch is a reading.** The distance between two neighbours is drawn as a thin run in the quiet
+  ink with its number on it, coaxially with the two airs, and owns no field: it is what the count and
+  the two airs add up to. The two airs are the numbers a maker types; the row's ends are two
+  independent numbers of one gesture, so pinning one never kills the other.
 - **A zero gives a field back.** A count typed `0` returns the number to the hand, and the same rule
   already releases a pinned gap face (ADR 0092, ADR 0126): a zero in any of these fields means *let
   the pointer decide*, never *set it to zero*.

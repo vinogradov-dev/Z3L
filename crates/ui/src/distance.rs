@@ -127,6 +127,12 @@ pub struct Distances {
     locks: [bool; 2],
     /// The field that owns the keyboard, if any.
     active: Option<Side>,
+    /// Whether the two faces are two ends of one row rather than two faces of one part.
+    ///
+    /// A rigid part keeps its extent, so pinning one face moves the other with it; the ends of a row
+    /// are two independent distances of the same gesture, and the row's own count decides what lies
+    /// between them (X135).
+    ends: bool,
 }
 
 impl Distances {
@@ -141,7 +147,24 @@ impl Distances {
         {
             return None;
         }
-        Some(Self { wall_low, wall_high, low, high, pins: [None; 2], locks: [false; 2], active: None })
+        Some(Self { wall_low, wall_high, low, high, pins: [None; 2], locks: [false; 2], active: None, ends: false })
+    }
+
+    /// The two airs of a row of boards, whose low and high faces are two ends rather than one part.
+    ///
+    /// The same measurement and the same fields, read the other way: a pin on one end leaves the
+    /// other end where the row put it, so a maker who typed a near air and then a far one still has
+    /// both fields in hand (X135).
+    pub fn row_ends(wall_low: Option<f64>, wall_high: Option<f64>, low: f64, high: f64) -> Option<Self> {
+        Self::new(wall_low, wall_high, low, high).map(|mut ends| {
+            ends.ends = true;
+            ends
+        })
+    }
+
+    /// Whether this measurement is two ends of a row.
+    pub const fn is_row(&self) -> bool {
+        self.ends
     }
 
     /// Reads a new measurement while keeping the pins and locks the maker set.
@@ -162,6 +185,15 @@ impl Distances {
         }
         self.wall_low = wall_low;
         self.wall_high = wall_high;
+        if self.ends {
+            // A row: each end is where its own pin put it, or where the row planned it. Neither
+            // end may be dragged along by the other, because the count between them is the row's.
+            self.wall_low = wall_low;
+            self.wall_high = wall_high;
+            self.low = self.pins[Side::Low.index()].unwrap_or(low);
+            self.high = self.pins[Side::High.index()].unwrap_or(high);
+            return;
+        }
         // A pinned face is where the typed number put it, and the opposite face follows the
         // extent it had: the pointer may not stretch a part whose other face the maker pinned.
         let extent = self.high - self.low;
@@ -301,6 +333,23 @@ impl Distances {
         if value == 0.0 {
             self.pins[side.index()] = None;
             self.locks[side.index()] = false;
+            return Ok(());
+        }
+        if self.ends {
+            // A row's end is not measured from the other end: it is its own air, and the count
+            // between the two ends is the model's business (X135).
+            let (wall, face) = match side {
+                Side::Low => (self.wall_low, self.wall_low.map(|wall| wall + value)),
+                Side::High => (self.wall_high, self.wall_high.map(|wall| wall - value)),
+            };
+            let Some(face) = face.filter(|_| wall.is_some()) else {
+                return Err(DistanceRefusal::NoNeighbour);
+            };
+            match side {
+                Side::Low => self.low = face,
+                Side::High => self.high = face,
+            }
+            self.pins[side.index()] = Some(face);
             return Ok(());
         }
         if self.locks[side.opposite().index()] {

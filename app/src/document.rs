@@ -151,6 +151,10 @@ const GAP_REACH: f32 = 26.0;
 /// pointer opens: near enough to read without looking for it, far enough not to cover the hand (U128).
 const COUNT_PLATE_OFFSET: egui::Vec2 = egui::vec2(22.0, 26.0);
 
+/// The width of the run that reads a row's pitch, in points: thinner than a measured gap, because
+/// nothing here can be typed (X135).
+const PITCH_LINE_WIDTH: f32 = 1.5;
+
 /// How far a dimension recedes while the pointer is elsewhere: one tone of the same ink, never a
 /// second colour (N26).
 const GAP_DIM: f32 = 0.8;
@@ -446,6 +450,11 @@ pub(crate) struct Document {
     /// the model it measures. The runs are kept here and painted in the same late pass as the ghost
     /// (U128).
     dimensions: Vec<Dimension>,
+    /// The pitch of a row this frame: the run between two neighbouring boards and its number.
+    ///
+    /// No field owns it — the pitch is what the count and the two airs add up to, not an input — so
+    /// it is drawn as a thin run in the quiet ink, coaxially with the two measured airs (X135).
+    pitch_dimension: Option<(egui::Pos2, egui::Pos2, String)>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
     /// It is view state of this document: the menu closes when the pointer picks outside it, when
@@ -620,6 +629,7 @@ impl Document {
             tool_card_rect: None,
             distance_plates: [None; 2],
             dimensions: Vec::new(),
+            pitch_dimension: None,
             count_plate_rect: None,
             count_plate_wanted: None,
             tool_card_anchor: None,
@@ -841,6 +851,18 @@ impl Document {
     #[cfg(test)]
     pub(crate) const fn distance_plate_rects(&self) -> [Option<egui::Rect>; 2] {
         self.distance_plates
+    }
+
+    /// The pitch run the row drew last frame, for a test that reads it (X135).
+    #[cfg(test)]
+    pub(crate) fn pitch_dimension(&self) -> Option<(egui::Pos2, egui::Pos2, String)> {
+        self.pitch_dimension.clone()
+    }
+
+    /// The two gap rows the gesture's plates read, for a test that types into them (X135).
+    #[cfg(test)]
+    pub(crate) fn gap_rows(&self) -> Option<Vec<ui::ToolRow>> {
+        self.distances.as_ref().map(|measured| measured.rows())
     }
 
     /// Where the count of a row drew last frame, for a test that reads its place.
@@ -2235,7 +2257,7 @@ impl Document {
         // screen extent, one board at the middle and every board that fits at the wall. A count a
         // field holds wins over the hand, and a zero gives the hand back (U128).
         let most = ((high_wall - low_wall) / anchor.size_mm.z).floor().clamp(1.0, engine::MAX_FILL_ROW as f64) as usize;
-        let auto = fill_gizmo::hand_count(self.row_ratio(&anchor, axis, axis_world, rect, pointer), most, previous);
+        let auto = fill_gizmo::hand_count(self.row_pull(&anchor, axis, axis_world, rect, pointer), most, previous);
         // The plates' own numbers: the near face a typed field pinned, the far distance it fixed and
         // the count the third plate holds.
         let (pinned_start, pinned_gap) =
@@ -2278,11 +2300,34 @@ impl Document {
                 measured.sync(Some(low_wall), Some(high_wall), low_face, high_face);
                 measured
             }
-            None => match Distances::new(Some(low_wall), Some(high_wall), low_face, high_face) {
+            // The row's two plates are its two ends, not one rigid part (X135): both fields keep
+            // acting whichever was typed last.
+            None => match Distances::row_ends(Some(low_wall), Some(high_wall), low_face, high_face) {
                 Some(measured) => measured,
                 None => return,
             },
         };
+        // The pitch of the row: from one board's far face to the next one's near face, coaxially
+        // with the two airs the maker can type. Nothing owns it — it is what the count and the two
+        // airs add up to — so it reads as a thin quiet run rather than a third field (X135).
+        self.pitch_dimension = None;
+        if let Ok(plan) = &plan
+            && plan.count > 1
+            && plan.gap >= 0.5
+            && let (Some(first_far), Some(second_near)) =
+                (anchor.high_face(), anchor.low_face().map(|face| face + direction * plan.pitch))
+            && let (Some(from), Some(to)) = (
+                gizmo_math::screen_point(self.scene.camera, rect, first_far),
+                gizmo_math::screen_point(self.scene.camera, rect, second_near),
+            )
+        {
+            // Whole millimetres through `units`, and the number alone: the scene carries no unit,
+            // the inspector writes it out beside the same value.
+            let pitch =
+                Length::from_millimetres(plan.gap.round() as i64).map(|length| length.to_string()).unwrap_or_default();
+            let pitch = pitch.strip_suffix(" mm").unwrap_or(&pitch).to_owned();
+            self.pitch_dimension = Some((from, to, pitch));
+        }
         let placements = self.gap_fields(rect, Some(pointer), axis_world, [low_wall, high_wall], faces);
         let outcome = self.distance_fields.show_in_scene(ui, &mut distances, &placements, rect, opacity);
         self.tool_card_rect = None;
@@ -2290,10 +2335,11 @@ impl Document {
         // The count rides beside the hand and on no run: it says how many boards the row holds, and
         // a number that is not a distance does not sit on a dimension (U128).
         let mut count_row = Self::count_row(count, plan.as_ref().ok().map(|plan| plan.count));
-        // The count stands beside the hand where the gesture opened and stays there — a plate that
-        // followed the hand could never be reached — and it is a reading, not a press target: the
-        // number is typed in the inspector's row, where the words are (U128).
-        let at = *self.count_plate_wanted.get_or_insert(pointer + COUNT_PLATE_OFFSET);
+        // The count stands beside the hand and follows it: it is a reading, not a press target, so
+        // a plate that keeps its distance can be read wherever the hand works — the number itself is
+        // typed in the inspector's row, where the words are (U128, X135).
+        let at = pointer + COUNT_PLATE_OFFSET;
+        self.count_plate_wanted = Some(at);
         let (drawn, count_rect) =
             ui::tool_card::plate(ui, rect, at, egui::Id::unique("row_count"), &mut count_row, false, false, opacity);
         self.count_plate_rect = Some(count_rect);
@@ -2324,12 +2370,15 @@ impl Document {
         self.distances = Some(distances);
     }
 
-    /// How far the hand travelled from the middle of the void towards its wall, as a share of the
-    /// void's own screen extent: `0` at the middle and `1` at either wall.
+    /// How far the hand travelled past the first board towards the far wall, as a share of the
+    /// space it had left: `0` anywhere in the near half of the void and `1` at the far wall.
     ///
-    /// The measure is the picture's, not the model's — a maker judges the row by what the window
-    /// shows, so a narrow void in a far corner asks for the same travel as a wide one nearby (U128).
-    fn row_ratio(
+    /// The reference is the board a row of one lays — centred in the void, so the calm zone is half
+    /// the void plus half a board, which is what the owner asked for: one panel that splits the
+    /// space, and a count that only moves once the hand has travelled past it. The measure is the
+    /// picture's, not the model's, so a narrow void in a far corner asks for the same travel as a
+    /// wide one nearby (U128, X135).
+    fn row_pull(
         &self,
         anchor: &FillGhost,
         axis: usize,
@@ -2337,28 +2386,29 @@ impl Document {
         rect: egui::Rect,
         pointer: egui::Pos2,
     ) -> f64 {
-        let (Some(face), Some(scalar)) = (anchor.low_face(), anchor.low_face().map(|_| anchor.free_low)) else {
+        let Some(face) = anchor.low_face() else {
             return 0.0;
         };
+        let scalar = anchor.free_low;
         let low_wall = anchor.niche.local_min[axis];
         let high_wall = anchor.niche.local_max()[axis];
-        let low = face + axis_world * (low_wall - scalar);
-        let high = face + axis_world * (high_wall - scalar);
-        let (Some(low), Some(high)) = (
-            gizmo_math::screen_point(self.scene.camera, rect, low),
-            gizmo_math::screen_point(self.scene.camera, rect, high),
+        // The first board: the row of one board, centred in the void.
+        let first_far = (low_wall + high_wall) * 0.5 + anchor.size_mm.z * 0.5;
+        let pull_start = first_far.clamp(low_wall, high_wall);
+        let (Some(first), Some(high)) = (
+            gizmo_math::screen_point(self.scene.camera, rect, face + axis_world * (pull_start - scalar)),
+            gizmo_math::screen_point(self.scene.camera, rect, face + axis_world * (high_wall - scalar)),
         ) else {
             return 0.0;
         };
-        let run = high - low;
+        let run = high - first;
         let extent = run.length();
         if extent <= f32::EPSILON {
             return 0.0;
         }
         let along = run / extent;
-        let middle = (low.to_vec2() + high.to_vec2()) * 0.5;
-        let offset = (pointer.to_vec2() - middle).dot(along);
-        f64::from((offset.abs() / (extent * 0.5)).clamp(0.0, 1.0))
+        let travel = (pointer.to_vec2() - first.to_vec2()).dot(along);
+        f64::from((travel / extent).clamp(0.0, 1.0))
     }
 
     /// The world direction a fill's row grows along: the part's own thickness axis.
@@ -3391,6 +3441,7 @@ impl Document {
         // is drawn after the frame this test runs in. They leave with the tool, in `reset_fill`.
         self.tool_card_rect = None;
         self.dimensions.clear();
+        self.pitch_dimension = None;
 
         // The viewport is the whole central area; the layout divides the scene rectangle into
         // views. Every view has its own camera and every border is draggable. A press on a border
@@ -4566,6 +4617,18 @@ impl Document {
         for dimension in &self.dimensions {
             let run = if dimension.lit { ink } else { ink.gamma_multiply(GAP_DIM) };
             paint_dimension(&painter, dimension.from, dimension.to, run);
+        }
+        // The row's pitch is a reading, not an input: a thin run in the quiet ink with its number on
+        // it, so the two airs the maker can type stay the loud ones (X135).
+        if let Some((from, to, text)) = &self.pitch_dimension {
+            let quiet = theme::text_dim(ui);
+            painter.line_segment([*from, *to], egui::Stroke::new(PITCH_LINE_WIDTH, quiet));
+            for end in [*from, *to] {
+                let across = (*to - *from).normalized();
+                let across = egui::vec2(-across.y, across.x) * GAP_TICK_HALF * 0.7;
+                painter.line_segment([end - across, end + across], egui::Stroke::new(PITCH_LINE_WIDTH, quiet));
+            }
+            crate::fill_gizmo::label(ui, &painter, egui::pos2((from.x + to.x) * 0.5, (from.y + to.y) * 0.5), text);
         }
     }
 
