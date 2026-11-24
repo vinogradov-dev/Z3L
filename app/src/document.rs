@@ -184,11 +184,6 @@ struct Display {
     colors: SceneColors,
 }
 
-/// The classes a fill's card offers, in the order its row draws them (U123, ADR 0239).
-///
-/// The order is the reader's: post, shelf, wall. The overlay wall joins it with its own task.
-const FILL_CLASSES: [ClassCode; 3] = [ClassCode::VERTICAL_PANEL, ClassCode::HORIZONTAL_PANEL, ClassCode::BACK_PANEL];
-
 impl Display {
     /// Reads the display state the window currently shows.
     fn of(viewport: &ViewportSettings, colors: SceneColors) -> Self {
@@ -1940,85 +1935,6 @@ impl Document {
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
     /// product it points at. A pointer that leaves the scene drops the ghost, and a still pointer
     /// re-measures nothing.
-    /// The rows a fill's card offers before the gaps: the class of part, the build and the mounting.
-    ///
-    /// Each row travels with what it means, so a pick is read back through the list that drew it and
-    /// a row a class does not offer — the mounting belongs to a front alone — can never be picked
-    /// (U123, ADR 0239, ADR 0240). The words are messages, translated by the card like every other
-    /// row's.
-    fn fill_rows(arm: ui::FillArm, build: ui::PanelBuild) -> Vec<(FillRow, ui::ToolChoice)> {
-        let mut rows = vec![
-            (
-                FillRow::Class,
-                ui::ToolChoice {
-                    options: vec![Message::ToolPost, Message::ToolShelf, Message::ToolWall],
-                    chosen: FILL_CLASSES.iter().position(|class| *class == arm.class).unwrap_or(0),
-                },
-            ),
-            (
-                FillRow::Build,
-                ui::ToolChoice {
-                    options: vec![Message::FillMethodFit, Message::FillMethodShape],
-                    chosen: usize::from(arm.mode == model::FillMode::Shape),
-                },
-            ),
-            // A row is the same board repeated along its own thickness axis, so the choice sits
-            // beside the build and not inside it: the build says how one board reads the section.
-            (
-                FillRow::Spread,
-                ui::ToolChoice {
-                    options: vec![Message::FillSpreadOne, Message::FillSpreadEven],
-                    chosen: usize::from(build.spread.is_even()),
-                },
-            ),
-        ];
-        // A board laid over the frame is a frontal board: a shelf or a post stands across the void,
-        // so the mounting is asked only where the answer means something (ADR 0240).
-        if arm.fill == model::Fill::WidthAndHeight {
-            rows.push((
-                FillRow::Mount,
-                ui::ToolChoice {
-                    options: vec![Message::FillMountInset, Message::FillMountOverlay],
-                    chosen: usize::from(build.overlay),
-                },
-            ));
-        }
-        rows
-    }
-
-    /// The build a pick on the fill's card names.
-    ///
-    /// The pick is read through the rows the card drew, so an option or a row nobody offered answers
-    /// the build the tool already holds.
-    fn fill_choice(
-        pick: ui::ToolPick,
-        arm: ui::FillArm,
-        build: ui::PanelBuild,
-        rows: &[(FillRow, ui::ToolChoice)],
-    ) -> ui::PanelBuild {
-        let Some((row, _)) = rows.get(pick.row) else {
-            return build;
-        };
-        match row {
-            FillRow::Class => {
-                ui::PanelBuild { class: FILL_CLASSES.get(pick.option).copied().unwrap_or(arm.class), ..build }
-            }
-            FillRow::Build => ui::PanelBuild {
-                mode: match pick.option {
-                    0 => model::FillMode::Fit,
-                    1 => model::FillMode::Shape,
-                    _ => arm.mode,
-                },
-                ..build
-            },
-            FillRow::Spread => ui::PanelBuild {
-                spread: if pick.option == 1 { ui::FillSpread::Even } else { ui::FillSpread::One },
-                ..build
-            },
-            FillRow::Mount => ui::PanelBuild { overlay: pick.option == 1, ..build },
-        }
-    }
-
     /// How the fill's next click sits against the frame, with the lap the scene's numbers ask for.
     ///
     /// The lap is the scene's and not the workshop's (ADR 0240): a reopened piece builds the front it
@@ -2063,37 +1979,6 @@ impl Document {
             placements.push(FieldPlacement { side, position: middle_screen });
         }
         placements
-    }
-
-    /// Applies a press on one row of the fill's card, and answers whether the card must draw again
-    /// before anything else happens this frame.
-    ///
-    /// A class, a build, a spread or a mounting pressed on the card re-arms the tool with that
-    /// choice: the ghost, the niche's pair and the part the click makes all follow one value (U123,
-    /// ADR 0239, U125).
-    fn apply_fill_pick(
-        &mut self,
-        ctx: &egui::Context,
-        pick: ui::ToolPick,
-        arm: ui::FillArm,
-        build: ui::PanelBuild,
-        rows: &[(FillRow, ui::ToolChoice)],
-    ) -> bool {
-        let chosen = Self::fill_choice(pick, arm, build, rows);
-        if chosen == build {
-            return false;
-        }
-        self.editor.set_panel_build(chosen);
-        let lang = ui::language(ctx);
-        let rearm = chosen.class != arm.class || chosen.mode != arm.mode;
-        let armed = if rearm { self.editor.arm_fill(&self.session, chosen.class, chosen.mode, lang) } else { Ok(()) };
-        match armed {
-            Ok(()) => ctx.request_repaint(),
-            // A class the registry does not register carries no pair to fill, and the arm refuses
-            // with the sentence that says so; the card keeps the choice it had.
-            Err(refusal) => self.last_error = Some(refusal),
-        }
-        rearm || self.fill_mount().is_overlay()
     }
 
     fn update_fill(
@@ -2232,17 +2117,15 @@ impl Document {
             [(low_point, low_face), (high_point, high_face)],
         );
         // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
-        // A front laid over the frame has no number to type — its depth is the mounting's — so its
-        // card is the choices alone (ADR 0240).
-        let build = self.editor.panel_build();
-        let rows = Self::fill_rows(arm, build);
-        let choices = rows.iter().map(|(_, choice)| choice.clone()).collect::<Vec<_>>();
+        // A front laid over the frame has no number to type — its depth is the mounting's — so it
+        // draws no card at all: the choices are the operation's own menu (ADR 0240, U128).
         let overlay = self.fill_mount().is_overlay();
         let outcome = if overlay {
             self.distances = None;
-            self.distance_fields.show_choices(ui, rect, card_anchor, Some(Message::ToolPanel), choices, opacity)
+            self.tool_card_rect = None;
+            ui::DistanceOutcome::default()
         } else {
-            self.distance_fields.show(
+            let outcome = self.distance_fields.show(
                 ui,
                 &mut distances,
                 None,
@@ -2250,16 +2133,11 @@ impl Document {
                 rect,
                 card_anchor,
                 Some(Message::ToolPanel),
-                choices,
                 opacity,
-            )
+            );
+            self.tool_card_rect = outcome.rect;
+            outcome
         };
-        self.tool_card_rect = outcome.rect;
-        if let Some(pick) = outcome.pick
-            && self.apply_fill_pick(ui.ctx(), pick, arm, build, &rows)
-        {
-            return;
-        }
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
         }
@@ -2347,9 +2225,6 @@ impl Document {
             },
         };
         let placements = self.gap_fields(ui, rect, axis_world, [low_wall, high_wall], faces);
-        let build = self.editor.panel_build();
-        let rows = Self::fill_rows(arm, build);
-        let choices = rows.iter().map(|(_, choice)| choice.clone()).collect::<Vec<_>>();
         // The count is the row's third field: the shared card draws it beside the two gaps, and its
         // number is what the model clamps to the boards the void holds.
         let count_row = ui::ToolRow {
@@ -2372,16 +2247,9 @@ impl Document {
             rect,
             anchor_point,
             Some(Message::ToolPanel),
-            choices,
             opacity,
         );
         self.tool_card_rect = outcome.rect;
-        if let Some(pick) = outcome.pick
-            && self.apply_fill_pick(ui.ctx(), pick, arm, build, &rows)
-        {
-            self.distances = Some(distances);
-            return;
-        }
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
         }
@@ -2772,17 +2640,8 @@ impl Document {
             // A held drag keeps its card: the hand is on the handle, so a plate beside the pointer is
             // a deliberate target and its fields take both the hand and the keyboard (ADR 0119).
             let anchor = hand.or(pointer).unwrap_or_else(|| rect.center());
-            let outcome = self.distance_fields.show(
-                ui,
-                &mut measure.distances,
-                None,
-                &placements,
-                rect,
-                anchor,
-                None,
-                Vec::new(),
-                opacity,
-            );
+            let outcome =
+                self.distance_fields.show(ui, &mut measure.distances, None, &placements, rect, anchor, None, opacity);
             self.tool_card_rect = outcome.rect;
             outcome
         };
@@ -2993,7 +2852,7 @@ impl Document {
     fn points_class_row(draft: &ui::PointsDraft) -> ui::ToolChoice {
         let chosen = draft
             .class()
-            .and_then(|class| FILL_CLASSES.iter().position(|other| *other == class))
+            .and_then(|class| ui::FILL_CLASSES.iter().position(|other| *other == class))
             .map_or(0, |index| index + 1);
         ui::ToolChoice {
             options: vec![Message::PanelPointsFromPlane, Message::ToolPost, Message::ToolShelf, Message::ToolWall],
@@ -3003,7 +2862,7 @@ impl Document {
 
     /// The class a press on the by-points card names: `None` gives the role back to the plane.
     fn points_class(pick: ui::ToolPick) -> Option<ClassCode> {
-        FILL_CLASSES.get(pick.option.checked_sub(1)?).copied()
+        ui::FILL_CLASSES.get(pick.option.checked_sub(1)?).copied()
     }
 
     /// Every armed tool's parameters, as the inspector mirrors them (ADR 0119).
@@ -3020,16 +2879,16 @@ impl Document {
         if let Some(draft) = self.editor.points() {
             return Some(Self::points_view(draft, lang));
         }
-        if let Some(arm) = self.editor.fill_arm() {
-            // A front laid over the frame decides its own depth, so the card and the inspector both
-            // draw the choices and no numbers (ADR 0240).
-            let rows = if self.fill_mount().is_overlay() { Vec::new() } else { self.distances.as_ref()?.rows() };
-            let choices =
-                Self::fill_rows(arm, self.editor.panel_build()).into_iter().map(|(_, choice)| choice).collect();
+        if self.editor.fill_arm().is_some() {
+            // A front laid over the frame decides its own depth, so it has no number at all; the
+            // fill's choices are the operation's own menu and never a row of this card (U128).
+            if self.fill_mount().is_overlay() {
+                return None;
+            }
             return Some(ToolView {
                 title: Some(Message::ToolPanel),
-                choices,
-                rows,
+                choices: Vec::new(),
+                rows: self.distances.as_ref()?.rows(),
                 toggle: None,
                 commit: ui::ToolCommit::Gesture,
                 note: None,
@@ -4479,6 +4338,9 @@ impl Document {
             flags: self.editor.flags(),
             selection: self.editor.selected_nodes(),
             active_product: self.session.active_product(),
+            // A tool in hand is what the next click is about, so its popup is the operation's menu
+            // and not the node's (U128).
+            fill: self.editor.fill_arm().map(|_| self.editor.panel_build()),
         };
         let Some(action) = self.context_menu.show(ui, viewport, &source, opacity) else {
             return;
@@ -5044,22 +4906,6 @@ impl Document {
     }
 }
 
-/// What one row of a fill's card asks: the class of part, its build or its mounting.
-///
-/// The row is named beside the choices it draws, so a pick is read back through the list that drew
-/// it instead of by a hard-coded index (U123, ADR 0240).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FillRow {
-    /// Which class the next click makes, and with it which pair of the void's sides it takes.
-    Class,
-    /// How the part reads the section the walls leave.
-    Build,
-    /// Whether the gesture lays one board or a row of them spread evenly (U125).
-    Spread,
-    /// Whether the board fills the opening or lies over the frame's face.
-    Mount,
-}
-
 /// What the Delete key asks of the window.
 ///
 /// One node goes at once, because undo covers it and a one-row removal is what the person just
@@ -5530,38 +5376,6 @@ mod tests {
     use super::*;
     use crate::icons;
     use crate::view_cluster::projection_button;
-
-    #[test]
-    fn the_fill_card_asks_for_a_mounting_only_on_a_front_and_a_pick_reads_back() {
-        // Four rows for a front — class, build, spread, mounting — and three for a shelf: a board
-        // laid over the frame is a frontal board (ADR 0240), and every fill can be laid as a row
-        // (U125). A pick is read through the rows the card drew, so one row can never be mistaken
-        // for another.
-        let wall =
-            ui::FillArm { class: ClassCode::BACK_PANEL, fill: model::Fill::WidthAndHeight, mode: model::FillMode::Fit };
-        let build = ui::PanelBuild { class: wall.class, mode: wall.mode, overlay: false, spread: ui::FillSpread::One };
-        let rows = Document::fill_rows(wall, build);
-        assert_eq!(rows.len(), 4, "a front asks its mounting");
-        assert_eq!(
-            rows.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
-            [FillRow::Class, FillRow::Build, FillRow::Spread, FillRow::Mount]
-        );
-
-        let shelf = ui::FillArm {
-            class: ClassCode::HORIZONTAL_PANEL,
-            fill: model::Fill::WidthAndDepth,
-            mode: model::FillMode::Fit,
-        };
-        let shelf_build =
-            ui::PanelBuild { class: shelf.class, mode: shelf.mode, overlay: false, spread: ui::FillSpread::One };
-        assert_eq!(Document::fill_rows(shelf, shelf_build).len(), 3, "a shelf has nothing to lie over");
-
-        // A pick on the mounting turns the next click over and leaves the class and the build alone.
-        let picked = Document::fill_choice(ui::ToolPick { row: 3, option: 1 }, wall, build, &rows);
-        assert_eq!(picked, ui::PanelBuild { overlay: true, ..build }, "the mounting is the row that moved");
-        // An option nobody offered answers the build the tool holds.
-        assert_eq!(Document::fill_choice(ui::ToolPick { row: 0, option: 9 }, wall, build, &rows), build);
-    }
 
     #[test]
     fn a_typed_move_distance_pins_the_gap_to_the_next_surface() {

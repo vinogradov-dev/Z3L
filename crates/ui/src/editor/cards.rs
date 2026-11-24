@@ -20,11 +20,12 @@ use model::Id;
 use text::Message;
 
 use super::Editor;
+use super::PanelBuild;
 use super::boolean::BooleanArm;
 use crate::command::{dispatch, json};
 use crate::container_card::ContainerAction;
 use crate::contour_edit::{ContourEdit, ContourTarget};
-use crate::node_actions::NodeAction;
+use crate::node_actions::{FillPick, NodeAction};
 use crate::object_card::ObjectAction;
 use crate::panel_card::PanelAction;
 use crate::scene_tree;
@@ -69,7 +70,7 @@ impl Editor {
     pub fn show_card(&mut self, ui: &mut Ui, session: &mut Session, tool: Option<&mut ToolView>) -> ToolOutcome {
         let mut outcome = ToolOutcome::default();
         if let Some(view) = tool
-            && !view.is_empty()
+            && !view.rows.is_empty()
         {
             outcome = crate::tool_card::section(ui, view, None);
         }
@@ -233,9 +234,36 @@ impl Editor {
                 self.flags.isolate(session.project(), node);
             }
             NodeAction::ShowAll => self.flags.show_all(),
+            // A fill's choice is the operation's, so it writes no document either: the build lives
+            // in the editor, and the class or the build re-arms the tool so the ghost, the pair the
+            // class fills and the part the click makes all follow one value (U123, U128).
+            NodeAction::Fill(pick) => self.apply_fill_pick(session, pick, lang)?,
             // View state with no document behind it, so it leaves no revision and no undo entry:
             // the shell writes the mode after the menus have drawn.
             NodeAction::Mode(mode) => self.mode_request = Some(mode),
+        }
+        Ok(())
+    }
+
+    /// Takes one choice of the fill's menu into the build and re-arms the tool when it moved.
+    ///
+    /// The build is the editor's, so the choice survives the gesture; the class and the mode are
+    /// what the arm was made of, so either of them re-arms, and a mounting or a spread is only a new
+    /// value for the next click (U123, U125, ADR 0240).
+    fn apply_fill_pick(&mut self, session: &Session, pick: FillPick, lang: crate::Lang) -> Result<(), String> {
+        let build = self.panel_build();
+        let chosen = match pick {
+            FillPick::Class(class) => PanelBuild { class, ..build },
+            FillPick::Mode(mode) => PanelBuild { mode, ..build },
+            FillPick::Mount(overlay) => PanelBuild { overlay, ..build },
+            FillPick::Spread(spread) => PanelBuild { spread, ..build },
+        };
+        if chosen == build {
+            return Ok(());
+        }
+        self.set_panel_build(chosen);
+        if chosen.class != build.class || chosen.mode != build.mode {
+            self.arm_fill(session, chosen.class, chosen.mode, lang)?;
         }
         Ok(())
     }

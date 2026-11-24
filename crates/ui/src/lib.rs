@@ -73,7 +73,9 @@ pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, 
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use draw_fields::{PointRow, PointState, Reference, SketchAngle, XEnd, field_row, sketch_angle};
 pub use draw_menu::{DraftMenu, DraftMenuChoice};
-pub use editor::{BandRule, BandView, BooleanArm, Editor, FillArm, FillSpread, PanelBuild, PanelShape, SelectionBand};
+pub use editor::{
+    BandRule, BandView, BooleanArm, Editor, FILL_CLASSES, FillArm, FillSpread, PanelBuild, PanelShape, SelectionBand,
+};
 pub use inventory::{ActsOn, Applies, NodeKind, Place, Row};
 pub use measure::{Measure, MeasureClick, MeasureStage};
 pub use mesh_edit::{MeshEdit, MeshElement};

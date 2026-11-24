@@ -993,7 +993,6 @@ messages! {
     ToolMethodName = ["{}: {}", "{}: {}"],
     FillMethodFit = ["Rectangle", "Прямоугольник"],
     FillMethodShape = ["Niche shape", "По форме ниши"],
-    FillSpreadOne = ["One board", "Одна доска"],
     FillSpreadEven = ["Evenly", "Равномерно"],
     PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
     PanelMethodRectangle = ["Rectangle", "Прямоугольник"],

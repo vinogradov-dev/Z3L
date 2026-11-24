@@ -18,6 +18,13 @@ use text::{Lang, Message};
 
 use super::Editor;
 
+/// The classes a void can be filled with, in the order the menu offers them.
+///
+/// A post stands, a shelf lies and a wall closes the piece: the three are the whole vocabulary of a
+/// niche, and the order is the one a maker reads them in (U123, U128).
+pub const FILL_CLASSES: [ClassCode; 3] =
+    [ClassCode::VERTICAL_PANEL, ClassCode::HORIZONTAL_PANEL, ClassCode::BACK_PANEL];
+
 /// What the next click of the Panel cell makes, when the empty-space tool is not armed yet (U123).
 ///
 /// One cell serves every part a void can be filled with, so the choice lives beside the arm rather
