@@ -343,6 +343,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Done
 
+- `[x]` **X133** the gap runs were painted under the model and the row needed a click
+  Why: U128 shipped and the owner opened it in the window: the gap arrows were invisible, and
+   «Равномерно» did nothing until he clicked, after which a stack of boards lay on top of each
+   other. Both are defects of the frame rather than of the plan: the runs were painted where
+   they were measured, before the viewport image, so the model covered them, and the row needed
+   an anchoring click nobody asked for.
+  Shape: The runs are kept as screen values and painted in the late pass over the model: one
+   painter, wide amber, a tick on the part's plane and one head on the obstacle. The row is
+   live: follow_row keeps it on the ghost the pointer measured, plan_row shares the free length
+   so the air at the near wall is the air between the boards, one click commits the batch, and
+   a typed count claims the void. The count is a reading beside the hand and a row in the
+   inspector, and Escape leaves the tool.
+  Done: Tests: the live row exists with no click and keeps the same air at both ends; a typed
+   count spreads it without writing; one click writes the whole row as one undo entry; Escape
+   leaves the tool and writes nothing; the shots the gate writes show the runs and the row.
+   cargo xtask ci is green.
+  `files: app/src/document.rs,app/src/fill_gizmo.rs,app/src/frame_tests.rs,crates/ui/src/tool_card.rs,crates/ui/src/scrub.rs` — `acb19f1`
+
 - `[x]` **U128** the fill's choices are the operation's context menu and a measured gap is a field on its arrow
   Why: The fill's four choices and its two gap fields ride in a card anchored at the pointer:
    the anchor is taken on the gesture's first frame and cleared the moment the card vanishes,
