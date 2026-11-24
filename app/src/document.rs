@@ -29,7 +29,7 @@ use engine::node_cmds::{NODE_DELETE_MANY_ID, NODE_PLACEMENT_SET_MANY_ID};
 use engine::{MeshVertexMove, MeshVerticesMove, NodeDeleteMany, NodePlacement, NodePlacementSetMany, Session};
 use kernel_truck::TruckKernel;
 use mesh::{EvaluationCache, object_mesh};
-use model::{CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
+use model::{ClassCode, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
 use scene::{Camera, Lighting, Polyline, Projection, SceneColors, SceneFrame};
@@ -182,6 +182,11 @@ struct Display {
     /// The background, grid and line ink of the theme variant the window draws with.
     colors: SceneColors,
 }
+
+/// The classes a fill's card offers, in the order its row draws them (U123, ADR 0239).
+///
+/// The order is the reader's: post, shelf, wall. The overlay wall joins it with its own task.
+const FILL_CLASSES: [ClassCode; 3] = [ClassCode::VERTICAL_PANEL, ClassCode::HORIZONTAL_PANEL, ClassCode::BACK_PANEL];
 
 impl Display {
     /// Reads the display state the window currently shows.
@@ -1904,6 +1909,42 @@ impl Document {
     /// The model answers the measurement; the shell only maps the pointer to the face of the open
     /// product it points at. A pointer that leaves the scene drops the ghost, and a still pointer
     /// re-measures nothing.
+    /// The rows a fill's card offers before the gaps: the class of part and the way it is built.
+    ///
+    /// Two rows, each in its own order, so a pick is a pair of indexes and nothing else is stored
+    /// (U123, ADR 0239). The words are messages, translated by the card like every other row's.
+    fn fill_choices(arm: ui::FillArm) -> Vec<ui::ToolChoice> {
+        vec![
+            ui::ToolChoice {
+                options: vec![Message::ToolPost, Message::ToolShelf, Message::ToolWall],
+                chosen: FILL_CLASSES.iter().position(|class| *class == arm.class).unwrap_or(0),
+            },
+            ui::ToolChoice {
+                options: vec![Message::FillMethodFit, Message::FillMethodShape],
+                chosen: usize::from(arm.mode == model::FillMode::Shape),
+            },
+        ]
+    }
+
+    /// The class and the build a pick on the fill's card names.
+    ///
+    /// A row or an option the card does not draw answers the arm's own value, so a pick can never
+    /// move the tool to a class nobody offered.
+    fn fill_choice(pick: ui::ToolPick, arm: ui::FillArm) -> (ClassCode, model::FillMode) {
+        match pick.row {
+            0 => (FILL_CLASSES.get(pick.option).copied().unwrap_or(arm.class), arm.mode),
+            1 => {
+                let mode = match pick.option {
+                    0 => model::FillMode::Fit,
+                    1 => model::FillMode::Shape,
+                    _ => arm.mode,
+                };
+                (arm.class, mode)
+            }
+            _ => (arm.class, arm.mode),
+        }
+    }
+
     fn update_fill(
         &mut self,
         ui: &mut egui::Ui,
@@ -2046,9 +2087,34 @@ impl Document {
             placements.push(FieldPlacement { side, position: middle_screen });
         }
         // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
-        let outcome =
-            self.distance_fields.show(ui, &mut distances, &placements, rect, card_anchor, arm.class.label(), opacity);
+        let choices = Self::fill_choices(arm);
+        let outcome = self.distance_fields.show(
+            ui,
+            &mut distances,
+            &placements,
+            rect,
+            card_anchor,
+            Some(Message::ToolPanel),
+            choices,
+            opacity,
+        );
         self.tool_card_rect = outcome.rect;
+        // A class or a build pressed on the card re-arms the tool with that choice: the ghost, the
+        // niche's pair and the part the click makes all follow one value (U123, ADR 0239).
+        if let Some(pick) = outcome.pick {
+            let (class, mode) = Self::fill_choice(pick, arm);
+            if (class, mode) != (arm.class, arm.mode) {
+                self.editor.set_panel_build(ui::PanelBuild { class, mode });
+                let lang = ui::language(ui.ctx());
+                match self.editor.arm_fill(&self.session, class, mode, lang) {
+                    Ok(()) => ui.ctx().request_repaint(),
+                    // A class the registry does not register carries no pair to fill, and the arm
+                    // refuses with the sentence that says so; the card keeps the choice it had.
+                    Err(refusal) => self.last_error = Some(refusal),
+                }
+                return;
+            }
+        }
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
         }
@@ -2390,8 +2456,16 @@ impl Document {
             // A held drag keeps its card: the hand is on the handle, so a plate beside the pointer is
             // a deliberate target and its fields take both the hand and the keyboard (ADR 0119).
             let anchor = hand.or(pointer).unwrap_or_else(|| rect.center());
-            let outcome =
-                self.distance_fields.show(ui, &mut measure.distances, &placements, rect, anchor, None, opacity);
+            let outcome = self.distance_fields.show(
+                ui,
+                &mut measure.distances,
+                &placements,
+                rect,
+                anchor,
+                None,
+                Vec::new(),
+                opacity,
+            );
             self.tool_card_rect = outcome.rect;
             outcome
         };
@@ -2555,6 +2629,7 @@ impl Document {
         let along = self.contour_gizmo.along();
         Some(ToolView {
             title: Some(Message::ContourEdit),
+            choices: Vec::new(),
             rows: Vec::new(),
             toggle: Some(ui::ToolToggle {
                 words: if along { Message::AlongContour } else { Message::FreeMove },
@@ -2579,7 +2654,8 @@ impl Document {
         if let Some(arm) = self.editor.fill_arm() {
             let distances = self.distances.as_ref()?;
             return Some(ToolView {
-                title: arm.class.label(),
+                title: Some(Message::ToolPanel),
+                choices: Self::fill_choices(arm),
                 rows: distances.rows(),
                 toggle: None,
                 commit: ui::ToolCommit::Gesture,
@@ -2589,6 +2665,7 @@ impl Document {
         let measured = self.move_distances.as_ref()?;
         Some(ToolView {
             title: None,
+            choices: Vec::new(),
             rows: measured.distances.rows(),
             toggle: None,
             commit: ui::ToolCommit::Gesture,

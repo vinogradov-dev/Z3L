@@ -117,11 +117,35 @@ impl ToolRow {
     }
 }
 
+/// One row of a card that picks among a few named options (U123).
+///
+/// A class, a build and a count are one question each: which of these is in force. The row draws its
+/// options as chips in the order a maker reads them and marks the one that is on, so the card says
+/// what the next click will make without a second surface.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolChoice {
+    /// The options, in the order a maker reads them.
+    pub options: Vec<Message>,
+    /// Which option is in force.
+    pub chosen: usize,
+}
+
+/// The option a card's choice row picked: the row of [`ToolView::choices`] and the option in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolPick {
+    /// Which choice row was pressed, as an index into [`ToolView::choices`].
+    pub row: usize,
+    /// Which option of that row was pressed.
+    pub option: usize,
+}
+
 /// What both surfaces draw: the tool's name, its numbers and how its commit is offered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolView {
     /// The tool's name, drawn above the rows when it has more than one.
     pub title: Option<Message>,
+    /// The choices the tool asks before its numbers, in the order it declares them.
+    pub choices: Vec<ToolChoice>,
     /// The numbers, in the order the tool declares them.
     pub rows: Vec<ToolRow>,
     /// The tool's one two-state method, drawn beside its name, when it offers one.
@@ -171,6 +195,7 @@ impl ToolView {
     pub fn height(title: Message, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
         Self {
             title: Some(title),
+            choices: Vec::new(),
             rows: vec![ToolRow::height(value, range, decimals)],
             toggle: None,
             commit: ToolCommit::Pair { apply: Message::ApplyEnter, cancel: Message::CancelEsc },
@@ -184,7 +209,7 @@ impl ToolView {
     /// the only decisions left are to accept it or to drop it, and both sit on the row that names
     /// the tool.
     pub fn actions(title: Option<Message>, commit: ToolCommit) -> Self {
-        Self { title, rows: Vec::new(), toggle: None, commit, note: None }
+        Self { title, choices: Vec::new(), rows: Vec::new(), toggle: None, commit, note: None }
     }
 
     /// The same card with a line of context under its name, in the person's language.
@@ -205,6 +230,7 @@ impl ToolView {
     pub fn lettered_height(symbol: &'static str, value: f64, range: RangeInclusive<f64>, decimals: usize) -> Self {
         Self {
             title: None,
+            choices: Vec::new(),
             rows: vec![lettered(ToolParam::Height, symbol, value, range, decimals)],
             toggle: None,
             commit: ToolCommit::Keys,
@@ -224,12 +250,18 @@ impl ToolView {
             // starts at the bottom rather than at the smallest positive length.
             rows.push(lettered(ToolParam::TopRadius, "R", top, 0.0..=*range.end(), decimals));
         }
-        Self { title: None, rows, toggle: None, commit: ToolCommit::Keys, note: None }
+        Self { title: None, choices: Vec::new(), rows, toggle: None, commit: ToolCommit::Keys, note: None }
     }
 
     /// Whether the surface draws anything at all.
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.rows.is_empty() && self.choices.is_empty()
+    }
+
+    /// The same card with the choices its tool asks before its numbers.
+    pub fn with_choices(mut self, choices: Vec<ToolChoice>) -> Self {
+        self.choices = choices;
+        self
     }
 }
 
@@ -268,6 +300,8 @@ pub struct ToolOutcome {
     pub focused: Option<ToolParam>,
     /// Whether the tool's switch was pressed this frame.
     pub toggle: bool,
+    /// The option a choice row picked this frame, if any.
+    pub pick: Option<ToolPick>,
 }
 
 impl ToolOutcome {
@@ -375,6 +409,22 @@ pub fn section(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> To
 fn body(ui: &mut Ui, view: &mut ToolView, focus: Option<ToolParam>) -> ToolOutcome {
     let lang = language(ui.ctx());
     let mut outcome = ToolOutcome::default();
+    // The choices stand above the numbers: they say what the tool will make, and the numbers say
+    // where. A card of choices alone draws them and nothing else.
+    for (row, choice) in view.choices.iter().enumerate() {
+        ui.horizontal(|ui| {
+            for (option, label) in choice.options.iter().enumerate() {
+                if ui.selectable_label(choice.chosen == option, label.text(lang)).clicked() {
+                    outcome.pick = Some(ToolPick { row, option });
+                }
+            }
+        });
+    }
+    let choices_only = view.rows.is_empty() && !view.choices.is_empty();
+    if choices_only {
+        note_ui(ui, view.note.as_deref());
+        return outcome;
+    }
     // A tool with no number is one row: its name, its one switch and its pair, so the card costs the
     // scene a line instead of a plate (U115).
     let one_row_card = view.rows.is_empty();
@@ -685,6 +735,83 @@ mod tests {
         assert!(focused, "a gap's plate still lets a number be typed");
     }
 
+    /// The rectangle a drawn label took, so a test can press it.
+    fn text_rect(output: &egui::FullOutput, text: &str) -> Option<Rect> {
+        fn walk(shape: &egui::Shape, text: &str, found: &mut Option<Rect>) {
+            match shape {
+                egui::Shape::Text(galley) => {
+                    if galley.galley.text() == text {
+                        *found = Some(galley.visual_bounding_rect());
+                    }
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, text, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = None;
+        for clipped in &output.shapes {
+            walk(&clipped.shape, text, &mut found);
+        }
+        found
+    }
+
+    #[test]
+    fn a_choice_row_draws_its_options_and_reports_the_one_pressed() {
+        // U123: the class and the build are one row each, so the card says what the next click makes
+        // before it happens. A press answers the row and the option, and nothing else on the card is
+        // touched by it.
+        let mut tool = view().with_choices(vec![
+            ToolChoice { options: vec![Message::ToolPost, Message::ToolShelf, Message::ToolWall], chosen: 0 },
+            ToolChoice { options: vec![Message::FillMethodFit, Message::FillMethodShape], chosen: 0 },
+        ]);
+        let ctx = egui::Context::default();
+        crate::set_language(&ctx, crate::Lang::En);
+        let pointer = Pos2::new(200.0, 200.0);
+        let mut events = Vec::new();
+        let mut pressed = None;
+        let mut seen = Vec::new();
+        // A card is an area, so its first frame lays out and does not paint: the label's rectangle is
+        // read from the second frame and the press lands on the third.
+        for frame in 0..3 {
+            let input = egui::RawInput { screen_rect: Some(viewport()), events: events.clone(), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| {
+                pressed = show(ui, viewport(), pointer, &mut tool, None, 92).0.pick.or(pressed);
+            });
+            seen = texts_of(&output);
+            if frame == 1 {
+                let at = text_rect(&output, Message::FillMethodShape.text(crate::Lang::En))
+                    .expect("the build row draws its shape option");
+                let center = at.center();
+                let button = |pressed| egui::Event::PointerButton {
+                    pos: center,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                events = vec![egui::Event::PointerMoved(center), button(true), button(false)];
+            }
+            output.drop_without_applying_deltas();
+        }
+        for words in ["Post", "Shelf", "Wall", "Largest rectangle", "Niche shape"] {
+            assert!(seen.iter().any(|text| text == words), "`{words}` is on the card: {seen:?}");
+        }
+        assert_eq!(pressed, Some(ToolPick { row: 1, option: 1 }), "a press on the second row's second option");
+    }
+
+    #[test]
+    fn a_card_of_choices_alone_draws_them_and_no_field() {
+        let context = ToolView::actions(None, ToolCommit::Gesture)
+            .with_choices(vec![ToolChoice { options: vec![Message::ToolPost, Message::ToolShelf], chosen: 1 }]);
+        let (outcome, _, texts) = run_view(context, Vec::new(), Pos2::new(200.0, 200.0), 1.0);
+        assert_eq!(outcome.pick, None, "drawing presses nothing");
+        assert!(texts.iter().any(|text| text == "Post") && texts.iter().any(|text| text == "Shelf"), "{texts:?}");
+        assert!(!texts.iter().any(|text| text == "mm"), "a card of choices draws no number: {texts:?}");
+    }
+
     #[test]
     fn a_card_at_rest_asks_for_nothing() {
         let (outcome, rect, texts) = run(Vec::new(), Pos2::new(200.0, 200.0), 1.0);
@@ -721,6 +848,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::set_language(&ctx, crate::Lang::En);
         let mut tool = ToolView {
+            choices: Vec::new(),
             title: Some(Message::ContourEdit),
             rows: Vec::new(),
             toggle: Some(ToolToggle { words: Message::AlongContour, on: false }),
@@ -839,6 +967,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::set_language(&ctx, crate::Lang::En);
         let mut tool = ToolView {
+            choices: Vec::new(),
             title: None,
             commit: ToolCommit::Gesture,
             toggle: None,

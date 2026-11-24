@@ -38,7 +38,7 @@ use egui::{Id, Key, Modifiers, Pos2, Rect, Ui};
 use text::Message;
 
 use crate::FieldLabel;
-use crate::tool_card::{ToolCommit, ToolOutcome, ToolParam, ToolRow, ToolView};
+use crate::tool_card::{ToolChoice, ToolCommit, ToolOutcome, ToolParam, ToolRow, ToolView};
 
 /// One of the two opposite directions of the free axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -442,6 +442,8 @@ pub struct DistanceOutcome {
     pub changed: bool,
     /// Escape returned the direction to the pointer; the shell must not also end the tool.
     pub cancel: bool,
+    /// The option a card's choice row picked, when the tool offers choices (U123).
+    pub pick: Option<crate::tool_card::ToolPick>,
 }
 
 /// The overlay's per-frame state that is not the measurement: the field that asked for the
@@ -494,6 +496,7 @@ impl DistanceFields {
     /// card is the same [`crate::tool_card`] surface a box or a pull draws, so the two share one
     /// layout, one commit path and one edit scope (ADR 0092, ADR 0119).
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -502,10 +505,12 @@ impl DistanceFields {
         viewport: Rect,
         anchor: Pos2,
         title: Option<Message>,
+        choices: Vec<ToolChoice>,
         opacity: u32,
     ) -> DistanceOutcome {
         let (request, escape, enter) = self.begin(ui, state, placements);
-        let mut view = ToolView { title, rows: state.rows(), toggle: None, commit: ToolCommit::Gesture, note: None };
+        let mut view =
+            ToolView { title, choices, rows: state.rows(), toggle: None, commit: ToolCommit::Gesture, note: None };
         let (reported, rect) =
             crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
         let mut outcome = self.end(ui, state, reported, escape, enter);
@@ -603,7 +608,11 @@ impl DistanceFields {
         escape: bool,
         enter: bool,
     ) -> DistanceOutcome {
-        let mut outcome = DistanceOutcome { changed: self.apply(state, &reported), ..DistanceOutcome::default() };
+        let mut outcome = DistanceOutcome {
+            changed: self.apply(state, &reported),
+            pick: reported.pick,
+            ..DistanceOutcome::default()
+        };
         if let Some(side) = reported.focused.and_then(Side::of_param) {
             state.activate(Some(side));
             self.suspended = false;
@@ -858,7 +867,16 @@ mod tests {
         let mut locked = false;
         for _ in 0..2 {
             let output = context.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |ui| {
-                last = Some(fields.show(ui, &mut state, &placements, viewport, Pos2::new(400.0, 300.0), None, 92));
+                last = Some(fields.show(
+                    ui,
+                    &mut state,
+                    &placements,
+                    viewport,
+                    Pos2::new(400.0, 300.0),
+                    None,
+                    Vec::new(),
+                    92,
+                ));
             });
             if let Some(outcome) = &last {
                 locked = contains_image(&output.shapes, outcome.rect);
