@@ -10,6 +10,26 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[vendor]`.
 
+- `[scene]` A scene's factory numbers are one number and a build's default: `overlay_lap` is
+  fourteen millimetres in `DEFAULT_OVERLAY_LAP` (`crates/project/src/lib.rs`) and a file written
+  before the `settings` section existed answers it, so a scene built on the default does not say
+  which number it was built with. The home of a workshop's own numbers is O2's standards file (the
+  versioned file read through `app/src/settings_store.rs`); the day it lands, a new scene takes its
+  lap from there, an existing file keeps the number it carries, and this constant becomes only the
+  reader's last resort (U124, ADR 0240).
+
+- `[panel]` A trim records where the tool left the end, not a distance from an opening: the number
+  moves the side by the difference between it and the stored one, and the panel stores no base size.
+  A hand resize of the same side therefore leaves the number where it was, and a front whose
+  opening is later widened reads as lapping further than it does. An absolute trim needs the base
+  the opening gives, which the document does not keep (U124, ADR 0240).
+
+- `[engine]` A front laid over the frame cannot be turned into one inside the opening yet. The two
+  are told apart by the placement along the depth and by the trims, so the operation the owner
+  described — "поменять на вкладной" — would move the board one thickness in, rewrite its four ends
+  and, once hinges exist, their model; no command does it and no cell offers it. A maker deletes the
+  front and lays it again (U124, ADR 0240).
+
 - `[assistant]` `openssl-sys` is the one counted exception to the C-vendoring rule: the assistant's
   transport is `ureq` over the operating system's own TLS, and on Linux that is the system OpenSSL.
   `cargo xtask layers` allows the crate while the resolved graph leaves its `vendored` feature off and
