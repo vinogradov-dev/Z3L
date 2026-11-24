@@ -48,7 +48,7 @@ table, so one help lists everything.
 | `task [<id>]` | one task in full: fields, files with line counts and last commits, map rows, notes, `RELATED`, debt, questions, ADRs, the closing commit |
 | `task list` | one line per task, filtered by `--section`, `--status`, `--phase` and `--grep` |
 | `task --md` / `--paths` | the same task for an agent, or one path per line for a shell loop |
-| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none. `add` lands an entry at the end of `## Next` unless `--section` says otherwise, and `--at top` is the interjection: it implies `## Now` and points `state` at the new task |
+| `task add\|start\|set\|step\|note\|close\|reopen\|take\|defer\|unstart\|drop` | write the plan, each verb validated before it lands and printable with `--dry-run`; `--repair` lets a write through that removes a violation and adds none. `add` lands an entry at the end of `## Next` unless `--section` says otherwise, and `--at top` is the interjection: it implies `## Now` and points `state` at the new task |
 | `task phase <L> --name <text>` / `task phase --declare L=text …` | the phase legend: one clause per id prefix, declared or updated in the same gated write; several letters travel in one call because a plan whose ids name an undeclared phase is refused |
 | `state set k=v` / `state streams` / `state next` / `state where` | one field of the `STATE:` line, the `STREAMS:` declaration (`state streams agent=J catalog=O`, no pairs puts the plan back on one stream), the `## Next` paragraph, or the `## Where we are` prose; `state next --task <id>` moves the paragraph and the current task in one write |
 | `file <plan/map.md\|…>` | one reference file (`map`, `debt`, `questions`, `refactor`, `rename`, the template) through the same gate and diff |
@@ -124,13 +124,19 @@ none of the plan's own tasks (a declared stream may still be working one), and `
 in the same validated write, `take` puts a parked entry back and restores `task=`, and `status`,
 `next` and `task` render the empty order instead of looking up a task called `-`.
 
+A session can also end without its task moving: `unstart` clears the marker, removes the stream's
+session note and returns `state` to `idle` while the entry keeps its place in `## Now`, so the task
+that unblocks it can take the top of the order in front of it. `defer` is the other ending — the
+entry leaves the order, because its moment is later than the rest of the order — and `reopen` is
+the only verb that takes a `[x]` entry back.
+
 The phase legend is the intro paragraph of `plan/BACKLOG.md` that says what each id prefix means. A
 project may leave it out; once it is there the gate holds the file to it — every clause in the form
 the writer produces, and every letter an id starts with declared, or a sentence naming
 `cargo xtask task phase`. `edit::set_phases` rewrites the paragraph whole, so the ids and the
 vocabulary that explains them cannot drift.
 
-`Z3L`'s `cargo xtask task add|start|set|step|note|close|reopen|take|defer|drop|phase` and `cargo xtask state
+`Z3L`'s `cargo xtask task add|start|set|step|note|close|reopen|take|defer|unstart|drop|phase` and `cargo xtask state
 set` are the reference host: they take `--dry-run`, print the diff, hold `plan/.lock` while they
 write and land each file through a temp file and a rename.
 

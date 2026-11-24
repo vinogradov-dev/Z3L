@@ -114,7 +114,9 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), String> {
 /// [`run`] with the git facts supplied by `git`, so a test needs no repository.
 pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), String> {
     let Some(verb) = args.first().map(String::as_str) else {
-        return Err("usage: cargo xtask task <add|start|set|step|note|close|reopen|take|defer|drop|phase> …".to_owned());
+        return Err(
+            "usage: cargo xtask task <add|start|set|step|note|close|reopen|take|defer|unstart|drop|phase> …".to_owned()
+        );
     };
     // Before any plan file is read, because the read is half of the cycle the lock guards: a verb
     // that waits reads the backlog the writer in front of it left. Every refusal below releases it.
@@ -138,6 +140,7 @@ pub fn run_with(root: &Path, args: &[String], git: &dyn Git) -> Result<(), Strin
         "drop" => drop(root, rest, git, &lock),
         "take" => take(root, rest, git, &lock),
         "defer" => defer(root, rest, git, &lock),
+        "unstart" => unstart(root, rest, git, &lock),
         "phase" => phase(root, rest, git, &lock),
         other => Err(format!("unknown verb `{other}`")),
     }
@@ -668,6 +671,72 @@ fn defer(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(),
     apply(root, changes, &options, git, lock)?;
     if !options.dry_run {
         println!("task {id} deferred to `## Next`");
+    }
+    Ok(())
+}
+
+/// `task unstart <ID> [--next <text>]`: ends a session and leaves the entry where it stood.
+///
+/// A session that starts a task and finds it waiting on another one — a rule that has to land first,
+/// an answer from the owner — has no word for the step back: `defer` refuses a `[~]` entry, `reopen`
+/// takes only a done one, and moving the marker by hand is the write this tool exists to forbid. The
+/// gap cost two sessions before the verb existed (`plan/debt.md`, `[plan]`).
+///
+/// Unlike `defer`, the entry keeps its place in the order: the session ended, the work did not move,
+/// and a task taken out of the order has to be taken back at the top or the end — which is how a
+/// prerequisite would otherwise end up behind the task it unblocks. The `plan/SESSION*.md` note goes
+/// with the session, `state` returns to `idle`, and `## Next` names the head again because the gate
+/// requires it to name the task `STATE:` does.
+fn unstart(root: &Path, args: &[String], git: &dyn Git, lock: &Lock) -> Result<(), String> {
+    let options = Options::parse(args, &["next"])?;
+    let id = options.words.first().ok_or("task unstart needs a task id")?.clone();
+    let backlog_text = read(root, "plan/BACKLOG.md")?;
+    let tasks = crate::parse_backlog(&backlog_text);
+    let task = find(&tasks, &id)?;
+    if task.status != TaskStatus::Doing {
+        return Err(format!(
+            "task {id} is not in progress; `task take {id}` moves an open entry into the order and \
+             `task reopen {id}` brings a done one back"
+        ));
+    }
+    let backlog = edit::set_marker(&backlog_text, &id, edit::OPEN)?;
+    let moved = crate::parse_backlog(&backlog);
+    let streams = streams_of(root)?;
+    let stream = streams.owner(&id).clone();
+    let mut changes = Changes::new(root).with("plan/BACKLOG.md", backlog);
+    if stream.is_primary() {
+        let head = first_open_in(&streams, &moved, &stream);
+        let current = head.map_or_else(|| crate::NO_TASK.to_owned(), |task| task.id.clone());
+        let status = read(root, "plan/STATUS.md")?;
+        // The plan goes back to `idle`, which is the state that claims it describes the tree that is
+        // checked out: `base` and `updated` follow `HEAD` in the same write, as `close` moves them,
+        // because the session that just ended may have committed.
+        let mut values = vec![("task".to_owned(), current), ("state".to_owned(), "idle".to_owned())];
+        if let Some(head) = git.short("HEAD") {
+            values.push(("base".to_owned(), head));
+        }
+        if let Some(date) = git.commit_date("HEAD") {
+            values.push(("updated".to_owned(), date));
+        }
+        let status = edit::set_state(&status, &values)?;
+        let status = match options.value("next") {
+            Some(paragraph) => edit::set_section(&status, "Next", paragraph)?,
+            None if edit::has_section(&status, "Next") => {
+                let paragraph = head
+                    .map_or_else(|| nothing_scheduled(&moved), |task| format!("{} is next: {}", task.id, task.lead));
+                edit::set_section(&status, "Next", &paragraph)?
+            }
+            None => status,
+        };
+        changes = changes.with("plan/STATUS.md", status);
+    }
+    let note_path = stream.note_path();
+    if root.join(&note_path).exists() {
+        changes = changes.removed(&note_path);
+    }
+    apply(root, changes, &options, git, lock)?;
+    if !options.dry_run {
+        println!("task {id} unstarted; it keeps its place in the order");
     }
     Ok(())
 }
@@ -1987,6 +2056,68 @@ Phases come from the shape-base plan; `cargo xtask task phase` owns this list:\n
         let error = run(&root, &["defer", "P9"]).expect_err("P9 does not exist");
         assert!(error.contains("no task `P9`"), "{error}");
         assert_eq!(snapshot(&root), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unstarting_the_current_task_keeps_its_place_in_the_order() {
+        // The case the verb exists for: a started task turns out to wait on another one, and the
+        // prerequisite has to go in front of it. A deferred task loses its place, so the order
+        // could only put the prerequisite behind the task it unblocks.
+        let running = with_next(&STATUS.replace("state=idle", "state=doing"));
+        let backlog = BACKLOG.replace("- `[ ]` **P6**", "- `[~]` **P6**");
+        let root = project("unstart-head", &running, &backlog, Some(NOTE));
+        run(&root, &["unstart", "P6"]).expect("the session ends");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        assert!(backlog.contains("- `[ ]` **P6** the writer"), "the marker is open again: {backlog}");
+        let now = backlog.find("## Now").expect("Now is there");
+        let bugs = backlog.find("## Bugs").expect("Bugs is there");
+        let order = &backlog[now..bugs];
+        let (first, second) = (order.find("**P6**").expect("P6 stays"), order.find("**S14**").expect("S14 stays"));
+        assert!(first < second, "the entry keeps its place in the order: {order}");
+        assert!(!root.join("plan/SESSION.md").exists(), "the session note goes with the session");
+        let status = text(&root, "plan/STATUS.md");
+        assert!(status.contains("task=P6 state=idle"), "the head is the task that was stopped: {status}");
+        assert!(status.contains("P6 is next: the writer"), "the paragraph still names it: {status}");
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unstarting_leaves_a_prerequisite_able_to_take_the_top() {
+        // The whole point of keeping the place: the unstarted entry is still the head, so the task
+        // that unblocks it can take the top of the order in front of it.
+        let backlog = "## Now\n\n\
+- `[~]` **P6** the writer\n  `files: src/a.rs`\n\n\
+## Bugs\n\n\
+## Next\n\n\
+- `[ ]` **S14** the banding\n  `files: src/b.rs`\n\n\
+## Done\n";
+        let running = with_next(&STATUS.replace("state=idle", "state=doing"));
+        let root = project("unstart-then-take", &running, backlog, Some(NOTE));
+        run(&root, &["unstart", "P6"]).expect("the session ends");
+        run(&root, &["take", "S14", "--at", "top"]).expect("the prerequisite takes the head");
+        let backlog = text(&root, "plan/BACKLOG.md");
+        let now = backlog.find("## Now").expect("Now is there");
+        let bugs = backlog.find("## Bugs").expect("Bugs is there");
+        let order = &backlog[now..bugs];
+        let (prerequisite, stopped) =
+            (order.find("**S14**").expect("S14 arrived"), order.find("**P6**").expect("P6 stays"));
+        assert!(prerequisite < stopped, "the prerequisite stands in front of it: {order}");
+        assert!(text(&root, "plan/STATUS.md").contains("task=S14 state=idle"));
+        crate::check_with(&root, &FakeGit).expect("the plan is valid");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unstarting_an_open_or_unknown_task_is_refused() {
+        let root = project("unstart-open", &with_next(STATUS), BACKLOG, None);
+        let before = snapshot(&root);
+        let error = run(&root, &["unstart", "P6"]).expect_err("P6 is not in progress");
+        assert!(error.contains("is not in progress"), "{error}");
+        let error = run(&root, &["unstart", "P9"]).expect_err("P9 does not exist");
+        assert!(error.contains("no task `P9`"), "{error}");
+        assert_eq!(snapshot(&root), before, "a refusal writes nothing");
         let _ = std::fs::remove_dir_all(&root);
     }
 
