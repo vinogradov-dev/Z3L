@@ -35,13 +35,47 @@ pub struct PanelBuild {
     /// board one thickness in front of the void, its ends running past the opening by the lap the
     /// frame allows. Switching a finished front the other way is an operation, not this bit.
     pub overlay: bool,
+    /// Whether the gesture lays one board or a row of them spread evenly (U125).
+    ///
+    /// The row is chosen on the tool card, lives in the gesture and is written nowhere: it is the
+    /// operation, not a parameter of the part (the owner, 2026-11-25).
+    pub spread: FillSpread,
 }
 
 impl Default for PanelBuild {
     /// The build a fresh workspace starts on: a post that takes the largest rectangle, which is the
     /// first row of the card and what the retired Post cell ran.
     fn default() -> Self {
-        Self { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit, overlay: false }
+        Self { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit, overlay: false, spread: FillSpread::One }
+    }
+}
+
+/// Whether a fill lays one board or a row of them spread evenly (U125).
+///
+/// The choice sits beside the build rather than inside it: [`FillMode`] says how *one* part reads
+/// the section the walls leave, and a row is the same board repeated along its own thickness axis.
+/// A row is a property of the gesture and never of the document, so nothing stores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FillSpread {
+    /// One board, which is what the empty-space tool has always made.
+    #[default]
+    One,
+    /// A row of equal boards along the part's free axis, the count from the hand and the plate.
+    Even,
+}
+
+impl FillSpread {
+    /// Whether the gesture lays a row.
+    pub const fn is_even(self) -> bool {
+        matches!(self, Self::Even)
+    }
+
+    /// The other choice, for a row of the tool card to switch to.
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::One => Self::Even,
+            Self::Even => Self::One,
+        }
     }
 }
 

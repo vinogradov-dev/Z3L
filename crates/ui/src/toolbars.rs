@@ -1661,8 +1661,15 @@ mod tests {
             (ClassCode::HORIZONTAL_PANEL, FillMode::Shape),
             (ClassCode::BACK_PANEL, FillMode::Fit),
         ] {
-            let context =
-                RibbonContext { build: crate::editor::PanelBuild { class, mode, overlay: false }, ..full_context() };
+            let context = RibbonContext {
+                build: crate::editor::PanelBuild {
+                    class,
+                    mode,
+                    overlay: false,
+                    spread: crate::editor::FillSpread::One,
+                },
+                ..full_context()
+            };
             let cell = ready(kind, panel, &state, context, Lang::En);
             assert!(cell.enabled, "an open piece offers its niche");
             assert_eq!(cell.action, Some(ToolAction::Fill { class, mode }), "the card's build is what the click arms");
@@ -2121,7 +2128,12 @@ mod tests {
         for class in [ClassCode::VERTICAL_PANEL, ClassCode::HORIZONTAL_PANEL, ClassCode::BACK_PANEL] {
             let context = RibbonContext {
                 active: Some(ToolActivity::Fill { class, mode: FillMode::Shape }),
-                build: crate::editor::PanelBuild { class, mode: FillMode::Shape, overlay: false },
+                build: crate::editor::PanelBuild {
+                    class,
+                    mode: FillMode::Shape,
+                    overlay: false,
+                    spread: crate::editor::FillSpread::One,
+                },
                 ..full_context()
             };
             let rows = method_rows(panel, &Toolbars::new(), context, Lang::En);

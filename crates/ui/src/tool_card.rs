@@ -53,6 +53,8 @@ pub enum ToolParam {
     LowGap,
     /// The gap between the part's high face and the wall that stops it.
     HighGap,
+    /// How many parts a row holds, when the tool lays a row rather than one board (U125).
+    Count,
 }
 
 /// One row of the card: a name, a number and the range the shared field keeps it inside.

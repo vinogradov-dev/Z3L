@@ -104,7 +104,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
-- `[ ]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
+- `[~]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
   Why: The owner: with the cursor moving along the panel plane's normal in the positive
    direction the number of panels grows and their spacing stays even, the count moving on a 1
    mm quantum; typing the side distance to the neighbour fixes that distance and leaves the

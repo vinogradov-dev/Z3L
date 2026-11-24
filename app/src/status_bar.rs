@@ -52,6 +52,8 @@ struct StatusInfo {
     measure: Option<(MeasureStage, Option<Length>)>,
     /// The armed niche: the cell's three sides, or the reason the pointer names none.
     void: Option<Result<[Length; 3], VoidRefusal>>,
+    /// The row an evenly fill is laying: how many boards the second click would make (U125).
+    row: Option<usize>,
     /// The armed area pull: what the next click takes, or the reason the pointer names no pullable area.
     area: Option<Message>,
     /// Whether the object move is carrying a piece the pointer moves with no button held.
@@ -450,6 +452,9 @@ fn status_center_zone_ui(ui: &mut egui::Ui, info: &StatusInfo, lang: Lang) {
             theme::divider(ui);
             status_measure_ui(ui, stage, length, lang);
         }
+    } else if let Some(count) = info.row {
+        theme::divider(ui);
+        status_row_count_ui(ui, count, lang);
     } else if let Some(void) = &info.void {
         theme::divider(ui);
         status_void_ui(ui, void, lang);
@@ -514,6 +519,14 @@ fn status_measure_ui(ui: &mut egui::Ui, stage: MeasureStage, length: Length, lan
 /// One label, like the ruler's: the three sides of the cell the fill tools, the ghost and this row
 /// all read from one value (ADR 0118), and a pointer that names no space says so instead of leaving
 /// the row empty.
+/// The row gesture's count: the boards the second click would lay (U125).
+///
+/// The card at the hand carries the same number among its fields; the bar repeats it where the maker
+/// looks while the hand travels, so the count is never a number that only one surface knows.
+fn status_row_count_ui(ui: &mut egui::Ui, count: usize, lang: Lang) {
+    ui.label(egui::RichText::new(Message::StatusRow.with(lang, [count])).strong());
+}
+
 fn status_void_ui(ui: &mut egui::Ui, void: &Result<[Length; 3], VoidRefusal>, lang: Lang) {
     let text = match void {
         Ok([length, width, height]) => {
@@ -632,6 +645,9 @@ impl Document {
             void: self.editor.void_armed().then(|| {
                 self.editor.void().size().ok_or_else(|| self.editor.void().refusal().unwrap_or(VoidRefusal::Outside))
             }),
+            // The row's count is the model's answer, not a second measurement: the bar names what the
+            // second click would make (U125).
+            row: self.fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count),
             holding: self.holding_piece(),
             grid: self.snaps().grid,
             snap: self.draw_gizmo.snap_kind().or_else(|| self.measure_gizmo.snap_kind()),
@@ -671,6 +687,7 @@ mod tests {
             preview_error: None,
             measure: None,
             void: None,
+            row: None,
             area: None,
             holding: false,
             grid: true,
@@ -754,7 +771,7 @@ mod tests {
             material: Some("Chipboard".to_owned()),
             ..StatusSummary::default()
         };
-        let cases: [(&str, StatusInfo, &[&str]); 5] = [
+        let cases: [(&str, StatusInfo, &[&str]); 6] = [
             ("idle", StatusInfo { summary: long.clone(), ..idle_status() }, &["Front · Panel"]),
             (
                 "a draft",
@@ -772,6 +789,7 @@ mod tests {
                 StatusInfo { void: Some(Ok([millimetres(300), millimetres(400), millimetres(500)])), ..idle_status() },
                 &["Niche"],
             ),
+            ("an evenly fill's row", StatusInfo { row: Some(4), ..idle_status() }, &["4 panels in the row"]),
         ];
         for (name, info, words) in &cases {
             let ctx = context(Lang::En);

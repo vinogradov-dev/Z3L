@@ -1,11 +1,16 @@
 //! The editing session: document, command dispatch and undo/redo.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use catalog::Directory;
 use geom::Contact;
-use model::{BandingSpec, EdgeBanding, Geometry, Id, PanelGeometry, Project, ProjectError, WorkshopProfile};
+use model::{
+    BandingSpec, ClassCode, EdgeBanding, EdgeBevel, Geometry, Id, ItemId, PanelGeometry, PanelNominalSize,
+    PanelOutline, PanelTrims, Placement, Project, ProjectError, WorkshopProfile,
+};
 use param::EdgeBandProfile;
+use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -13,6 +18,7 @@ use crate::batch::{self, BatchEffect, BatchOptions, BatchReport, BatchStep};
 use crate::commands::{CommandError, CommandOutcome, CommandRegistry};
 use crate::diagnostics::{PanelDiagnostic, diagnose_panel};
 use crate::no_contact::NoContact;
+use crate::panel_cmds::{CREATE_ID as PANEL_CREATE_ID, PanelCreate};
 use crate::preview::Preview;
 use crate::read::{self, Query, QueryError};
 use crate::resolve;
@@ -34,6 +40,79 @@ pub struct EditScope(u64);
 pub struct OpenProductError {
     /// The id that is not a product of the document.
     pub id: Id,
+}
+
+/// The most boards one evenly fill may lay.
+///
+/// A row is bounded by the void it fills, so a real row is a few dozen boards; the cap is what keeps
+/// a hostile request — a count typed past the niche, a caller that asks for a million — from asking
+/// the document for an unbounded batch (ADR 0198).
+pub const MAX_FILL_ROW: usize = 512;
+
+/// What one evenly fill writes: the board it repeats and where the row starts.
+///
+/// The value is the whole gesture of U125: a shape every board is born with, the first board's
+/// placement, and the two numbers that repeat it — the axis the row runs along and the pitch. The
+/// numbers come from the model's [`model::FillRowPlan`], so the ghosts the maker saw and the boards
+/// the history records are one answer (N10).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FillRowCreate {
+    /// The open product the boards land in.
+    pub product: Id,
+    /// The word each board is named by; every board takes the next number no sibling carries (X63).
+    pub name: String,
+    /// The panel material the boards are made of, from the session catalogue.
+    pub material: ItemId,
+    /// The nominal length and width every board of the row is born with.
+    pub nominal_size: PanelNominalSize,
+    /// The outline every board is born with, when the tool measured one.
+    pub outline: Option<PanelOutline>,
+    /// The end bevels the shaped fill measured, one per beveled outline edge.
+    pub bevels: Vec<EdgeBevel>,
+    /// The end trims the board is laid with.
+    pub trims: PanelTrims,
+    /// The furniture class the parts play.
+    pub class: Option<ClassCode>,
+    /// The first board's placement in the parent frame.
+    pub placement: Placement,
+    /// The parent axis the row repeats along: the panel's own thickness axis.
+    pub axis: usize,
+    /// The distance from one board's near face to the next one's, in millimetres.
+    pub pitch: f64,
+    /// How many boards the row holds.
+    pub count: usize,
+}
+
+/// The name each board of a row takes: the word, then the numbers no sibling carries (X63).
+///
+/// The names are read from the document once and then claimed one by one, because the batch's steps
+/// run on a copy: two boards of one row may not be named alike, and a second row laid beside the
+/// first takes the numbers it left free.
+fn row_names(project: &Project, parent: Id, base: &str, count: usize) -> Result<Vec<String>, String> {
+    let taken: HashSet<String> = project
+        .container(parent)
+        .map(|container| container.children().iter().map(|child| child.name().to_owned()).collect())
+        .unwrap_or_default();
+    let bound = count.saturating_add(taken.len()).saturating_add(2);
+    let mut names = Vec::with_capacity(count);
+    for number in 1..=bound {
+        if names.len() >= count {
+            break;
+        }
+        let candidate = if number == 1 { base.to_owned() } else { format!("{base} {number}") };
+        if !taken.contains(&candidate) {
+            names.push(candidate);
+        }
+    }
+    if names.len() < count {
+        return Err("The row cannot name its boards: every number beside the word is taken.".to_owned());
+    }
+    Ok(names)
+}
+
+/// One command's parameters as the batch carries them.
+fn encoded<T: Serialize>(params: &T) -> Result<Value, String> {
+    serde_json::to_value(params).map_err(|error| format!("could not encode command parameters: {error}"))
 }
 
 /// The edit scope that is open right now, and whether it already owns an undo entry.
@@ -542,6 +621,62 @@ impl Session {
     /// rest replace the document inside the same entry.
     pub fn agent_batch_in(&mut self, scope: EditScope, steps: &[BatchStep], options: BatchOptions) -> BatchReport {
         self.agent_batch_in_scope(Some(scope), steps, options)
+    }
+
+    /// Creates a row's boards as one batch: one undo entry, one revision and one report.
+    ///
+    /// The evenly fill repeats one board along the part's own thickness axis (U125), so the gesture
+    /// is N commands that belong together: the steps are `panel.create`, the copy installs once, and
+    /// undo takes the whole row back in one step exactly as it takes a recipe (J4, X128, ADR 0234).
+    /// The boards are gone through in order, each named after the word with the next number no
+    /// sibling carries (X63), and each placed one pitch further along `axis` than the one before, so
+    /// the history holds the shapes the ghosts drew (N10).
+    ///
+    /// The all-or-nothing option is what a refused board costs: a row half in the tree belongs to no
+    /// maker, and a refusal leaves the document — revision, history and saved marker — as it was.
+    pub fn fill_row(&mut self, row: FillRowCreate) -> Result<BatchReport, String> {
+        let FillRowCreate {
+            product,
+            name,
+            material,
+            nominal_size,
+            outline,
+            bevels,
+            trims,
+            class,
+            placement,
+            axis,
+            pitch,
+            count,
+        } = row;
+        if axis >= 3 || !pitch.is_finite() || !placement.translation().is_finite() {
+            return Err("The row cannot be repeated along that axis.".to_owned());
+        }
+        let count = count.clamp(1, MAX_FILL_ROW);
+        let names = row_names(self.project(), product, &name, count)?;
+        let mut steps = Vec::with_capacity(count);
+        for (index, board) in names.into_iter().enumerate() {
+            let mut translation = placement.translation();
+            translation[axis] += pitch * index as f64;
+            if !translation.is_finite() {
+                return Err("The row runs past the numbers a placement can hold.".to_owned());
+            }
+            let placement = Placement::new(translation, placement.rotation())
+                .map_err(|error| format!("The row's boards cannot be placed: {error}"))?;
+            let create = PanelCreate {
+                parent: product,
+                name: board,
+                nominal_size,
+                material,
+                placement,
+                class,
+                outline: outline.clone(),
+                bevels: bevels.clone(),
+                trims,
+            };
+            steps.push(BatchStep::new(PANEL_CREATE_ID, encoded(&create)?));
+        }
+        Ok(self.batch(&steps, BatchOptions::ALL_OR_NOTHING))
     }
 
     /// The agent's one batch path, in the person's mode and possibly inside an edit scope.
@@ -1625,6 +1760,82 @@ mod tests {
         assert_eq!(container.children().len(), 0, "one undo removes both panels");
         assert_eq!(container.name(), "Cabinet", "and takes the rename back");
         assert!(!session.can_undo(), "the batch left exactly one entry");
+    }
+
+    #[test]
+    fn an_evenly_fill_lays_its_boards_as_one_undo_entry() {
+        // U125: the row is N commands of one gesture, so the document moves one revision, the answer
+        // names one entry, and one undo takes every board back at once.
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let children = session.project().container(product).expect("the product").children().len();
+        let before = session.project().revision();
+        let row = FillRowCreate {
+            product,
+            name: "Shelf".to_owned(),
+            material: sample_material_id(),
+            nominal_size: sample_panel_nominal_size(),
+            outline: None,
+            bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
+            class: None,
+            placement: Placement::IDENTITY,
+            axis: 2,
+            pitch: 120.0,
+            count: 4,
+        };
+
+        let report = session.fill_row(row).expect("the row is encoded");
+
+        assert_eq!(report.effect(), BatchEffect::Landed);
+        assert_eq!(report.created().len(), 4, "four boards landed");
+        assert_eq!(session.project().revision().get(), before.get() + 1, "a row is one operation");
+        assert_eq!(report.entries(), 1, "and leaves one entry of the history");
+        let container = session.project().container(product).expect("the product");
+        assert_eq!(container.children().len(), children + 4);
+        // Each board is named apart from its neighbours and sits one pitch above the one before.
+        let mut heights = Vec::new();
+        let mut names = Vec::new();
+        for board in report.created() {
+            let panel = session.project().panel(*board).expect("the row's boards are panels");
+            heights.push(panel.placement().translation().z);
+            names.push(panel.name().to_owned());
+        }
+        heights.sort_by(|left, right| left.total_cmp(right));
+        for (index, height) in heights.iter().enumerate() {
+            assert!((height - 120.0 * index as f64).abs() < 1.0e-6, "board {index} sits at its pitch: {height}");
+        }
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 4, "every board of the row has its own name: {names:?}");
+
+        session.undo().expect("one undo takes the whole row back");
+        assert_eq!(session.project().container(product).expect("the product").children().len(), children);
+        assert!(!session.can_undo(), "the row left exactly one entry");
+    }
+
+    #[test]
+    fn an_evenly_fill_refuses_a_row_it_cannot_place() {
+        let mut session = product_session();
+        let product = session.active_product().expect("the fixture product is open");
+        let mut row = FillRowCreate {
+            product,
+            name: "Shelf".to_owned(),
+            material: sample_material_id(),
+            nominal_size: sample_panel_nominal_size(),
+            outline: None,
+            bevels: Vec::new(),
+            trims: model::PanelTrims::ZERO,
+            class: None,
+            placement: Placement::IDENTITY,
+            axis: 3,
+            pitch: 120.0,
+            count: 4,
+        };
+        assert!(session.fill_row(row.clone()).is_err(), "an axis the frame does not have");
+        row.axis = 2;
+        row.pitch = f64::NAN;
+        assert!(session.fill_row(row).is_err(), "a pitch that is not a number");
     }
 
     #[test]

@@ -29,7 +29,10 @@ mod surface;
 mod wire;
 
 pub use error::ProjectError;
-pub use fill::{FillMode, FillMount, FillPlan, FillRefusal, FillRequest, free_axis};
+pub use fill::{
+    FillMode, FillMount, FillPlan, FillRefusal, FillRequest, FillRowAsk, FillRowPlan, FillRowRefusal, fill_row,
+    free_axis,
+};
 pub use move_query::{
     Capture, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings, Resting, RotateLimit, RotateRule, SnapEnd,
     SnapSettings, SnapSurface, Stop,

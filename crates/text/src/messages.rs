@@ -171,6 +171,7 @@ messages! {
         "Ниша · укажите на пустое место  ·  Esc выходит"
     ],
     VoidSize = ["Niche {}", "Ниша {}"],
+    StatusRow = ["{} panels in the row", "В ряду {} панелей"],
     VoidOutside = [
         "Point at the empty space inside the open product",
         "Укажите на пустое место внутри открытого изделия"
@@ -867,6 +868,7 @@ messages! {
     // ── The tool card ───────────────────────────────────────────────────────
     ToolGapLow = ["Low gap", "Нижний зазор"],
     ToolGapHigh = ["High gap", "Верхний зазор"],
+    ToolCount = ["Count", "Количество"],
 
     // ── The render place ────────────────────────────────────────────────────
     Render = ["Render", "Рендер"],
@@ -991,6 +993,8 @@ messages! {
     ToolMethodName = ["{}: {}", "{}: {}"],
     FillMethodFit = ["Rectangle", "Прямоугольник"],
     FillMethodShape = ["Niche shape", "По форме ниши"],
+    FillSpreadOne = ["One board", "Одна доска"],
+    FillSpreadEven = ["Evenly", "Равномерно"],
     PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
     PanelMethodRectangle = ["Rectangle", "Прямоугольник"],
     CmdSetPanelBuild = ["Build the part another way", "Собрать деталь иначе"],

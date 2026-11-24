@@ -1937,6 +1937,15 @@ impl Document {
                     chosen: usize::from(arm.mode == model::FillMode::Shape),
                 },
             ),
+            // A row is the same board repeated along its own thickness axis, so the choice sits
+            // beside the build and not inside it: the build says how one board reads the section.
+            (
+                FillRow::Spread,
+                ui::ToolChoice {
+                    options: vec![Message::FillSpreadOne, Message::FillSpreadEven],
+                    chosen: usize::from(build.spread.is_even()),
+                },
+            ),
         ];
         // A board laid over the frame is a frontal board: a shelf or a post stands across the void,
         // so the mounting is asked only where the answer means something (ADR 0240).
@@ -1977,6 +1986,10 @@ impl Document {
                 },
                 ..build
             },
+            FillRow::Spread => ui::PanelBuild {
+                spread: if pick.option == 1 { ui::FillSpread::Even } else { ui::FillSpread::One },
+                ..build
+            },
             FillRow::Mount => ui::PanelBuild { overlay: pick.option == 1, ..build },
         }
     }
@@ -1993,6 +2006,71 @@ impl Document {
         }
     }
 
+    /// One field per gap, drawn where the gap is: an arrow from the part's face to the wall that
+    /// stops it, and the plate at the middle of that run.
+    ///
+    /// `faces` are the part's two faces in the world with their coordinate along the axis, and
+    /// `walls` are the two walls the same way; a side with no face draws nothing.
+    fn gap_fields(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        axis_world: geom::DVec3,
+        walls: [f64; 2],
+        faces: [(geom::DVec3, f64); 2],
+    ) -> Vec<FieldPlacement> {
+        let painter = ui.painter().with_clip_rect(rect);
+        let mut placements = Vec::new();
+        for (index, side) in Side::ALL.into_iter().enumerate() {
+            let (Some((face, face_scalar)), Some(wall)) = (faces.get(index).copied(), walls.get(index).copied()) else {
+                continue;
+            };
+            let wall_point = face + axis_world * (wall - face_scalar);
+            let middle = (face + wall_point) * 0.5;
+            let (Some(face_screen), Some(wall_screen), Some(middle_screen)) = (
+                gizmo_math::screen_point(self.scene.camera, rect, face),
+                gizmo_math::screen_point(self.scene.camera, rect, wall_point),
+                gizmo_math::screen_point(self.scene.camera, rect, middle),
+            ) else {
+                continue;
+            };
+            painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
+            placements.push(FieldPlacement { side, position: middle_screen });
+        }
+        placements
+    }
+
+    /// Applies a press on one row of the fill's card, and answers whether the card must draw again
+    /// before anything else happens this frame.
+    ///
+    /// A class, a build, a spread or a mounting pressed on the card re-arms the tool with that
+    /// choice: the ghost, the niche's pair and the part the click makes all follow one value (U123,
+    /// ADR 0239, U125).
+    fn apply_fill_pick(
+        &mut self,
+        ctx: &egui::Context,
+        pick: ui::ToolPick,
+        arm: ui::FillArm,
+        build: ui::PanelBuild,
+        rows: &[(FillRow, ui::ToolChoice)],
+    ) -> bool {
+        let chosen = Self::fill_choice(pick, arm, build, rows);
+        if chosen == build {
+            return false;
+        }
+        self.editor.set_panel_build(chosen);
+        let lang = ui::language(ctx);
+        let rearm = chosen.class != arm.class || chosen.mode != arm.mode;
+        let armed = if rearm { self.editor.arm_fill(&self.session, chosen.class, chosen.mode, lang) } else { Ok(()) };
+        match armed {
+            Ok(()) => ctx.request_repaint(),
+            // A class the registry does not register carries no pair to fill, and the arm refuses
+            // with the sentence that says so; the card keeps the choice it had.
+            Err(refusal) => self.last_error = Some(refusal),
+        }
+        rearm || self.fill_mount().is_overlay()
+    }
+
     fn update_fill(
         &mut self,
         ui: &mut egui::Ui,
@@ -2006,6 +2084,12 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
+        if !self.editor.panel_build().spread.is_even() && self.fill_gizmo.row().is_some() {
+            // The card put the gesture back on one board: the row is a draft and writes nothing.
+            self.fill_gizmo.cancel_row();
+            self.fill_carriage = None;
+            self.distances = None;
+        }
         let Some(product) = self.session.active_product() else {
             // A closed, deleted or undone product ends the tool: a niche is only offered inside the
             // open piece (ADR 0098), so the arm would have nothing to point at.
@@ -2028,6 +2112,12 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
+        // An anchored evenly fill has its board: the hand now names the row's span and the plate its
+        // count, so the frame is the row's own (U125).
+        if self.editor.panel_build().spread.is_even() && self.fill_gizmo.row().is_some() {
+            self.update_row(ui, rect, arm, pointer, opacity);
+            return;
+        }
         let card_anchor = self.card_anchor(Some(pointer));
         // The point under the pointer names the cell. A pointer that names none — the hand left the
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
@@ -2109,29 +2199,20 @@ impl Document {
             return;
         };
         let axis_world = parent_world.transform_vector(unit);
-        let mut placements = Vec::new();
-        let painter = ui.painter().with_clip_rect(rect);
-        for (side, face, face_scalar) in [(Side::Low, low_point, low_face), (Side::High, high_point, high_face)] {
-            let wall = if side == Side::Low { low_wall } else { high_wall };
-            let wall_point = face + axis_world * (wall - face_scalar);
-            let middle = (face + wall_point) * 0.5;
-            let (Some(face_screen), Some(wall_screen), Some(middle_screen)) = (
-                gizmo_math::screen_point(self.scene.camera, rect, face),
-                gizmo_math::screen_point(self.scene.camera, rect, wall_point),
-                gizmo_math::screen_point(self.scene.camera, rect, middle),
-            ) else {
-                continue;
-            };
-            painter.line_segment([face_screen, wall_screen], egui::Stroke::new(1.0, ui::theme::text_dim(ui)));
-            placements.push(FieldPlacement { side, position: middle_screen });
-        }
+        let placements = self.gap_fields(
+            ui,
+            rect,
+            axis_world,
+            [low_wall, high_wall],
+            [(low_point, low_face), (high_point, high_face)],
+        );
         // A fill's gesture holds the pointer with its own click, so its card is a deliberate target.
         // A front laid over the frame has no number to type — its depth is the mounting's — so its
         // card is the choices alone (ADR 0240).
         let build = self.editor.panel_build();
         let rows = Self::fill_rows(arm, build);
         let choices = rows.iter().map(|(_, choice)| choice.clone()).collect::<Vec<_>>();
-        let mut overlay = self.fill_mount().is_overlay();
+        let overlay = self.fill_mount().is_overlay();
         let outcome = if overlay {
             self.distances = None;
             self.distance_fields.show_choices(ui, rect, card_anchor, Some(Message::ToolPanel), choices, opacity)
@@ -2139,6 +2220,7 @@ impl Document {
             self.distance_fields.show(
                 ui,
                 &mut distances,
+                None,
                 &placements,
                 rect,
                 card_anchor,
@@ -2148,27 +2230,10 @@ impl Document {
             )
         };
         self.tool_card_rect = outcome.rect;
-        // A class, a build or a mounting pressed on the card re-arms the tool with that choice: the
-        // ghost, the niche's pair and the part the click makes all follow one value (U123, ADR 0239).
-        if let Some(pick) = outcome.pick {
-            let chosen = Self::fill_choice(pick, arm, build, &rows);
-            if chosen != build {
-                self.editor.set_panel_build(chosen);
-                let lang = ui::language(ui.ctx());
-                let rearm = chosen.class != arm.class || chosen.mode != arm.mode;
-                let armed =
-                    if rearm { self.editor.arm_fill(&self.session, chosen.class, chosen.mode, lang) } else { Ok(()) };
-                match armed {
-                    Ok(()) => ui.ctx().request_repaint(),
-                    // A class the registry does not register carries no pair to fill, and the arm
-                    // refuses with the sentence that says so; the card keeps the choice it had.
-                    Err(refusal) => self.last_error = Some(refusal),
-                }
-                overlay = self.fill_mount().is_overlay();
-                if rearm || overlay {
-                    return;
-                }
-            }
+        if let Some(pick) = outcome.pick
+            && self.apply_fill_pick(ui.ctx(), pick, arm, build, &rows)
+        {
+            return;
         }
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
@@ -2185,6 +2250,186 @@ impl Document {
             ui.ctx().request_repaint();
         }
         self.distances = Some(distances);
+    }
+
+    /// Draws the row the evenly fill is laying and reads its plate (U125).
+    ///
+    /// The anchor is the first click's board; the hand names the span from it and the plate holds the
+    /// row's three numbers — the two distances to the walls and the count — so the ghosts and the
+    /// numbers are one model answer. Nothing here writes: the second click is what makes the boards.
+    fn update_row(&mut self, ui: &mut egui::Ui, rect: egui::Rect, arm: ui::FillArm, pointer: egui::Pos2, opacity: u32) {
+        let axis = model::free_axis(arm.fill);
+        let Some(product) = self.session.active_product() else {
+            return;
+        };
+        let Some(anchor) = self.fill_gizmo.row().map(|row| row.anchor.clone()) else {
+            return;
+        };
+        let Some(parent_world) = self.session.project().world_placement(product) else {
+            return;
+        };
+        let unit = axis_unit(axis);
+        let axis_world = parent_world.transform_vector(unit);
+        let low_wall = anchor.niche.local_min[axis];
+        let high_wall = anchor.niche.local_max()[axis];
+        // The hand names the row's span from the anchor; a pointer that names no place holds the
+        // row where the tool already has it.
+        let hand = self.fill_place(product, &anchor.niche, axis, pointer, rect);
+        let span = hand.map(|place| (place - anchor.free_low).max(0.0));
+        // The plate's own numbers: the near face a typed field pinned and the far distance it fixed.
+        let (pinned_start, pinned_gap) =
+            self.distances.as_ref().map_or((None, None), |measured| (measured.pinned_start(), measured.pinned_gap()));
+        let count = self.fill_gizmo.row().and_then(|row| row.count);
+        if self.fill_gizmo.plan_row(axis, span, pinned_start, pinned_gap, count) {
+            ui.ctx().request_repaint();
+        }
+        let Some(row) = self.fill_gizmo.row() else {
+            return;
+        };
+        let (low_face, high_face, faces) = match &row.plan {
+            Ok(plan) => {
+                // The row's high end is the last board's far face: the anchor's far face one pitch
+                // per board further along the axis the row runs on.
+                let Some(low_point) = row.anchor.low_face() else {
+                    return;
+                };
+                let Some(high_point) =
+                    row.anchor.high_face().map(|face| face + row.direction * ((plan.count - 1) as f64 * plan.pitch))
+                else {
+                    return;
+                };
+                (plan.start, plan.end, [(low_point, plan.start), (high_point, plan.end)])
+            }
+            // A row the model cannot lay still draws its plate: the maker fixes the number there.
+            Err(_) => {
+                let Some(distances) = self.distances.as_ref() else {
+                    return;
+                };
+                let (Some(low_point), Some(high_point)) = (row.anchor.low_face(), row.anchor.high_face()) else {
+                    return;
+                };
+                (distances.low(), distances.high(), [(low_point, distances.low()), (high_point, distances.high())])
+            }
+        };
+        let mut distances = match self.distances.take() {
+            Some(mut measured) => {
+                measured.sync(Some(low_wall), Some(high_wall), low_face, high_face);
+                measured
+            }
+            None => match Distances::new(Some(low_wall), Some(high_wall), low_face, high_face) {
+                Some(measured) => measured,
+                None => return,
+            },
+        };
+        let placements = self.gap_fields(ui, rect, axis_world, [low_wall, high_wall], faces);
+        let build = self.editor.panel_build();
+        let rows = Self::fill_rows(arm, build);
+        let choices = rows.iter().map(|(_, choice)| choice.clone()).collect::<Vec<_>>();
+        // The count is the row's third field: the shared card draws it beside the two gaps, and its
+        // number is what the model clamps to the boards the void holds.
+        let count_row = ui::ToolRow {
+            param: ui::ToolParam::Count,
+            label: Some(ui::FieldLabel::Word(Message::ToolCount)),
+            value: count.unwrap_or(row.plan.as_ref().map_or(1, |plan| plan.count)) as f64,
+            unit: "",
+            range: 1.0..=9_999.0,
+            decimals: 0,
+            locked: false,
+            disabled: false,
+            centre: false,
+        };
+        let anchor_point = self.card_anchor(Some(pointer));
+        let outcome = self.distance_fields.show(
+            ui,
+            &mut distances,
+            Some(count_row),
+            &placements,
+            rect,
+            anchor_point,
+            Some(Message::ToolPanel),
+            choices,
+            opacity,
+        );
+        self.tool_card_rect = outcome.rect;
+        if let Some(pick) = outcome.pick
+            && self.apply_fill_pick(ui.ctx(), pick, arm, build, &rows)
+        {
+            self.distances = Some(distances);
+            return;
+        }
+        if let Some(message) = self.distance_fields.error() {
+            self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
+        }
+        if outcome.changed {
+            // The typed number moved the plate: plan the row again at that exact coordinate before
+            // the frame paints, so the picture, the stage bar and the field agree.
+            let count = match outcome.count {
+                // A zero in the count field hands the number back to the hand, as every typed zero
+                // in this editor releases its pin (ADR 0092, ADR 0126).
+                Some(0) => None,
+                Some(typed) => Some(typed),
+                None => count,
+            };
+            let (start, gap) = (distances.pinned_start(), distances.pinned_gap());
+            self.fill_gizmo.plan_row(axis, span, start, gap, count);
+            ui.ctx().request_repaint();
+        }
+        self.distances = Some(distances);
+    }
+
+    /// The world direction a fill's row grows along: the part's own thickness axis.
+    fn fill_row_direction(&self, arm: ui::FillArm) -> Option<geom::DVec3> {
+        let product = self.session.active_product()?;
+        let parent_world = self.session.project().world_placement(product)?;
+        Some(parent_world.transform_vector(axis_unit(model::free_axis(arm.fill))))
+    }
+
+    /// Writes the row the evenly fill is laying: one batch, one undo entry (U125).
+    ///
+    /// The parameters are the anchor's own shape repeated at the model's pitch, so the boards the
+    /// history records are the boards the ghosts drew; the count is what the row plan answered, never
+    /// what a field held past the void.
+    fn commit_row(&mut self, lang: ui::Lang) -> Result<(), String> {
+        let arm = self.editor.fill_arm().ok_or_else(|| "The empty-space tool is not armed.".to_owned())?;
+        let Some(row) = self.fill_gizmo.row() else {
+            return Err("The row has no anchored board.".to_owned());
+        };
+        let plan = row.plan.clone().map_err(|refusal| refusal.sentence().to_owned())?;
+        let anchor = row.anchor.clone();
+        let material = self
+            .session
+            .directory()
+            .boards()
+            .next()
+            .map(|board| board.id)
+            .ok_or_else(|| Message::FillNeedsMaterial.text(lang).to_owned())?;
+        engine::allow_creation(self.session.project(), anchor.parent, self.session.active_product())
+            .map_err(|refusal| refusal.to_string())?;
+        let name = arm.class.label().map_or_else(|| Message::ToolPanel.text(lang), |label| label.text(lang)).to_owned();
+        let report = self.session.fill_row(engine::FillRowCreate {
+            product: anchor.parent,
+            name,
+            material,
+            nominal_size: anchor.nominal_size,
+            outline: Some(anchor.outline.clone()),
+            bevels: anchor.bevels.clone(),
+            trims: anchor.trims,
+            class: Some(arm.class),
+            placement: anchor.placement,
+            axis: model::free_axis(arm.fill),
+            pitch: plan.pitch,
+            count: plan.count,
+        })?;
+        if let Some((_, refusal)) = report.refusal() {
+            // The row is all or nothing: a refused board leaves the document untouched and the draft
+            // on the screen, so the maker fixes the number instead of drawing the row again.
+            return Err(refusal.to_string());
+        }
+        if !report.landed() {
+            return Err("The row was not laid.".to_owned());
+        }
+        self.fill_gizmo.cancel_row();
+        Ok(())
     }
 
     /// Drops the empty-space ghost and the exact-distance card that measured it.
@@ -2505,6 +2750,7 @@ impl Document {
             let outcome = self.distance_fields.show(
                 ui,
                 &mut measure.distances,
+                None,
                 &placements,
                 rect,
                 anchor,
@@ -3398,7 +3644,26 @@ impl Document {
                 && !pointer_on_chrome
                 && !self.distance_covers(&response)
             {
-                match self.create_fill(ui::language(ui.ctx())) {
+                // One surface, three clicks: a single fill makes its board, the evenly fill's first
+                // click anchors the board the row repeats, and its second click lays the row as one
+                // batch (U125). The anchoring click writes nothing.
+                let lang = ui::language(ui.ctx());
+                let even = self.editor.panel_build().spread.is_even();
+                let clicked = if !even {
+                    self.create_fill(lang)
+                } else if self.fill_gizmo.row().is_some() {
+                    self.commit_row(lang)
+                } else {
+                    match (self.editor.fill_arm(), self.editor.fill_arm().and_then(|arm| self.fill_row_direction(arm)))
+                    {
+                        (Some(arm), Some(direction)) => {
+                            self.fill_gizmo.begin_row(direction, model::free_axis(arm.fill));
+                            Ok(())
+                        }
+                        _ => Err(Message::FillNeedsProduct.text(lang).to_owned()),
+                    }
+                };
+                match clicked {
                     Ok(()) => {
                         // The next void is a fresh gesture: its fields may take the keyboard again.
                         self.distance_fields.dismiss(ui.ctx());
@@ -3407,6 +3672,7 @@ impl Document {
                     }
                     Err(error) => self.last_error = Some(error),
                 }
+                ui.ctx().request_repaint();
             }
         } else {
             self.reset_fill(ui.ctx());
@@ -4548,6 +4814,7 @@ impl Document {
             // The exact-distance field owns Escape while it is active: the key returns that
             // direction to the pointer, and the armed tool stays armed (ADR 0103).
             && !self.distances.as_ref().is_some_and(Distances::is_active)
+            && !self.distance_fields.owns_the_keyboard(ui.ctx())
         {
             if modals {
                 // The modal owns Escape for this frame and closes itself.
@@ -4561,6 +4828,15 @@ impl Document {
                 // Escape leaves the ruler before it leaves a container level: the tool is the mode
                 // the next click uses, and the points it held are view state, so nothing is undone.
                 self.cancel_measure();
+            } else if self.fill_gizmo.row().is_some() {
+                // Escape drops the anchored row before it drops the tool: the row is a draft and
+                // wrote nothing, so one key takes the whole gesture back and the arm stays armed
+                // for the next one (U125).
+                self.fill_gizmo.cancel_row();
+                self.fill_carriage = None;
+                self.distance_fields.dismiss(ui.ctx());
+                self.distances = None;
+                self.tool_card_rect = None;
             } else if self.editor.fill_arm().is_some() {
                 // Escape leaves the empty-space tool before it leaves a container level: the tool is
                 // the mode the next click uses.
@@ -4625,6 +4901,8 @@ enum FillRow {
     Class,
     /// How the part reads the section the walls leave.
     Build,
+    /// Whether the gesture lays one board or a row of them spread evenly (U125).
+    Spread,
     /// Whether the board fills the opening or lies over the frame's face.
     Mount,
 }
@@ -5102,17 +5380,18 @@ mod tests {
 
     #[test]
     fn the_fill_card_asks_for_a_mounting_only_on_a_front_and_a_pick_reads_back() {
-        // Three rows for a front — class, build, mounting — and two for a shelf: a board laid over
-        // the frame is a frontal board (ADR 0240). A pick is read through the rows the card drew, so
-        // the mounting row can never be mistaken for a build.
+        // Four rows for a front — class, build, spread, mounting — and three for a shelf: a board
+        // laid over the frame is a frontal board (ADR 0240), and every fill can be laid as a row
+        // (U125). A pick is read through the rows the card drew, so one row can never be mistaken
+        // for another.
         let wall =
             ui::FillArm { class: ClassCode::BACK_PANEL, fill: model::Fill::WidthAndHeight, mode: model::FillMode::Fit };
-        let build = ui::PanelBuild { class: wall.class, mode: wall.mode, overlay: false };
+        let build = ui::PanelBuild { class: wall.class, mode: wall.mode, overlay: false, spread: ui::FillSpread::One };
         let rows = Document::fill_rows(wall, build);
-        assert_eq!(rows.len(), 3, "a front asks its mounting");
+        assert_eq!(rows.len(), 4, "a front asks its mounting");
         assert_eq!(
             rows.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
-            [FillRow::Class, FillRow::Build, FillRow::Mount]
+            [FillRow::Class, FillRow::Build, FillRow::Spread, FillRow::Mount]
         );
 
         let shelf = ui::FillArm {
@@ -5120,11 +5399,12 @@ mod tests {
             fill: model::Fill::WidthAndDepth,
             mode: model::FillMode::Fit,
         };
-        let shelf_build = ui::PanelBuild { class: shelf.class, mode: shelf.mode, overlay: false };
-        assert_eq!(Document::fill_rows(shelf, shelf_build).len(), 2, "a shelf has nothing to lie over");
+        let shelf_build =
+            ui::PanelBuild { class: shelf.class, mode: shelf.mode, overlay: false, spread: ui::FillSpread::One };
+        assert_eq!(Document::fill_rows(shelf, shelf_build).len(), 3, "a shelf has nothing to lie over");
 
         // A pick on the mounting turns the next click over and leaves the class and the build alone.
-        let picked = Document::fill_choice(ui::ToolPick { row: 2, option: 1 }, wall, build, &rows);
+        let picked = Document::fill_choice(ui::ToolPick { row: 3, option: 1 }, wall, build, &rows);
         assert_eq!(picked, ui::PanelBuild { overlay: true, ..build }, "the mounting is the row that moved");
         // An option nobody offered answers the build the tool holds.
         assert_eq!(Document::fill_choice(ui::ToolPick { row: 0, option: 9 }, wall, build, &rows), build);

@@ -3664,6 +3664,7 @@ fn an_overlay_click_is_one_front_one_create_and_one_undo() {
         class: ClassCode::BACK_PANEL,
         mode: model::FillMode::Fit,
         overlay: true,
+        spread: ui::FillSpread::One,
     });
     document
         .editor
@@ -3699,6 +3700,151 @@ fn an_overlay_click_is_one_front_one_create_and_one_undo() {
         1 + 4,
         "the four members and the product are still there"
     );
+}
+
+/// An empty frame opened by the product card, a shelf fill armed with the evenly spread and the two
+/// screen points the row gesture uses: the anchor's board low in the void and a hand above it.
+fn evenly_harness(name: &str) -> (Harness, egui::Pos2, egui::Pos2) {
+    let mut harness = Harness::with_session(name, crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let (pointer, higher) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let low = placement.transform_point(geom::DVec3::new(size.x * 0.25, size.y * 0.3, size.z * 0.1));
+        let high = placement.transform_point(geom::DVec3::new(size.x * 0.25, size.y * 0.3, size.z * 0.55));
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, low).expect("the low board is on screen");
+        let higher = gizmo_math::screen_point(camera, rect, high).expect("the high hand is on screen");
+        assert!(rect.contains(pointer) && rect.contains(higher), "both presses land on the scene");
+        document.editor.set_panel_build(ui::PanelBuild {
+            class: ClassCode::HORIZONTAL_PANEL,
+            spread: ui::FillSpread::Even,
+            ..ui::PanelBuild::default()
+        });
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+        (pointer, higher)
+    };
+    (harness, pointer, higher)
+}
+
+#[test]
+fn an_evenly_fill_anchors_first_and_lays_the_row_in_one_undo_entry() {
+    // U125: the first click only anchors the board the row repeats, the hand names the span along the
+    // panel plane's normal, and the second click lays every board as one batch — one revision, one
+    // undo entry, and the boards are the ones the ghosts drew.
+    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+    assert_eq!(harness.revision(), before, "anchoring writes nothing");
+    {
+        let document = harness.app.tabs.active();
+        assert!(document.fill_gizmo.row().is_some(), "the first click anchored the row");
+    }
+
+    harness.hover(higher);
+    harness.settle();
+    let (plan, anchor) = {
+        let document = harness.app.tabs.active();
+        let row = document.fill_gizmo.row().expect("the row is still anchored");
+        let plan = row.plan.clone().expect("the row is a model answer");
+        assert!(plan.count > 1, "the hand's span holds more than one board");
+        assert!(plan.end <= 720.0, "no board crosses the case's ceiling: {}", plan.end);
+        (plan, row.anchor.clone())
+    };
+    assert_eq!(harness.revision(), before, "the row's ghosts write nothing");
+
+    harness.press_at(higher, egui::PointerButton::Primary);
+    harness.release_at(higher, egui::PointerButton::Primary);
+    harness.settle();
+    let revision = harness.revision();
+    assert!(revision > before, "the second click writes the row once");
+    let (boards, product) = {
+        let document = harness.app.tabs.active();
+        assert!(document.fill_gizmo.row().is_none(), "the row is written and gone");
+        let product = document.session.active_product().expect("the frame stays open");
+        let boards: Vec<_> = document
+            .session
+            .project()
+            .container(product)
+            .expect("the frame")
+            .children()
+            .iter()
+            .filter_map(|child| match child {
+                model::Node::Panel(panel) => Some(panel.clone()),
+                _ => None,
+            })
+            .collect();
+        (boards, product)
+    };
+    assert_eq!(boards.len(), plan.count, "the row wrote every board the ghost drew");
+    let mut heights: Vec<f64> = boards.iter().map(|panel| panel.placement().translation().z).collect();
+    heights.sort_by(|left, right| left.total_cmp(right));
+    for (index, height) in heights.iter().enumerate() {
+        let wanted = anchor.placement.translation().z + plan.pitch * index as f64;
+        assert!((height - wanted).abs() < 1.0e-6, "board {index} sits at the pitch: {height} not {wanted}");
+    }
+    for panel in &boards {
+        assert_eq!(panel.outline(), &anchor.outline, "a board is the ghost's own outline");
+        assert_eq!(panel.nominal_size(), anchor.nominal_size, "and its own frame");
+        assert_eq!(panel.placement().rotation(), anchor.placement.rotation(), "and its stance");
+    }
+
+    // One undo takes the whole row back and leaves the frame where it was.
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    let children = document.session.project().container(product).expect("the frame").children().len();
+    assert_eq!(children, 0, "one undo removes every board of the row");
+}
+
+#[test]
+fn an_escape_drops_the_row_and_leaves_no_node_and_no_revision() {
+    // U125: a cancelled row writes nothing — no node, no revision, no undo entry — and leaves the
+    // tool armed for the next gesture.
+    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row-escape");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+    harness.hover(higher);
+    harness.settle();
+    assert!(harness.app.tabs.active().fill_gizmo.row().is_some(), "the row is anchored and spread");
+
+    // The low gap's field takes the keyboard while the pointer is near it, and the first Escape is
+    // the field's: it hands the number back to the pointer (ADR 0103). The second is the row's.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    harness.settle();
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    assert!(document.fill_gizmo.row().is_none(), "Escape drops the row");
+    assert!(document.editor.fill_arm().is_some(), "and leaves the tool armed for the next one");
+    assert_eq!(harness.revision(), before, "a cancelled row writes no revision");
+    let product = document.session.active_product().expect("the frame is still open");
+    assert!(
+        document.session.project().container(product).expect("the frame").children().is_empty(),
+        "a cancelled row leaves no node"
+    );
+    assert_eq!(harness.app.tabs.active().session.project().revision(), before, "and no second write");
 }
 
 #[test]
