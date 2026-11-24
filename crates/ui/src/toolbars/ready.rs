@@ -162,17 +162,37 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 action: enabled.then_some(ToolAction::DrawPanelContour),
             }
         }
-        ToolKind::Fill { class, mode } => {
+        ToolKind::PanelPoints(method) => {
+            // A board drawn by points is a part of the open product (ADR 0098) and takes its
+            // thickness from a catalogue material, exactly as the contour cell does. The plane is
+            // the one the first three clicks span, so the hint says what to do rather than naming a
+            // plane to choose first (U126).
+            // The two methods are two rows of one cell, so the hint names the tool and then the
+            // method — «Panel by points: Three points» — exactly as a fill's does (U123, U126).
+            let method_hint = Message::ToolMethodName.with(lang, [tool.label.text(lang), method.label().text(lang)]);
+            let hint = if !has_panel_material { Message::FillNeedsMaterial.text(lang) } else { method_hint.as_str() };
+            let enabled = product_open && has_panel_material;
+            Ready {
+                enabled,
+                // The cell is one and its two methods are two rows, so the pressed state names the
+                // method that owns the pointer (U74, U126).
+                armed: is_armed(active, kind),
+                hint: tool_hint(hint, tool.key()),
+                action: enabled.then_some(ToolAction::DrawPanelPoints { method }),
+            }
+        }
+        ToolKind::Fill => {
             // A niche belongs to the open product (ADR 0098) and a part needs a material to take its
-            // thickness from; the class must actually carry the `fill` trait, so a table row that
-            // lost it disables the cell instead of arming a tool with no axis pair.
+            // thickness from; the class must actually carry the `fill` trait, so a card that chose a
+            // class without one disables the cell instead of arming a tool with no axis pair.
+            let crate::editor::PanelBuild { class, mode, .. } = context.build;
             let fills = class.traits().and_then(|traits| traits.fill()).is_some();
             let method = match mode {
                 FillMode::Fit => Message::FillMethodFit,
                 FillMode::Shape => Message::FillMethodShape,
             };
             // The two methods of one cell would otherwise read the same, so a hint that can run
-            // names the tool and then the method: «Post: Largest rectangle».
+            // names the tool and then the method: «Post: Rectangle».
             let ready = Message::ToolMethodName.with(lang, [tool.label.text(lang), method.text(lang)]);
             let hint = if !has_panel_material {
                 Message::FillNeedsMaterial.text(lang)
@@ -263,14 +283,6 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
                 action: enabled.then_some(ToolAction::BodyBoolean(op)),
             }
         }
-        ToolKind::Void => Ready {
-            // A niche belongs to the open product (ADR 0098), and naming it needs nothing else: no
-            // material, no selection and no document write (ADR 0118).
-            enabled: product_open,
-            armed: is_armed(active, kind),
-            hint: tool_hint(tool.label.text(lang), tool.key()),
-            action: product_open.then_some(ToolAction::Void),
-        },
         // A snap cell is a switch of the workspace's set, and the set belongs to the view's work
         // plane: a view an authored camera pins has none, so the cells are drawn disabled there and
         // the hint says why (U116).

@@ -10,6 +10,20 @@ editing, `[object]` constructive objects, `[panel]` panels and banding, `[scene]
 module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and its format,
 `[vendor]`.
 
+- `[scene]` A scene's factory numbers are one number and a build's default: `overlay_lap` is
+  fourteen millimetres in `DEFAULT_OVERLAY_LAP` (`crates/project/src/lib.rs`) and a file written
+  before the `settings` section existed answers it, so a scene built on the default does not say
+  which number it was built with. The home of a workshop's own numbers is O2's standards file (the
+  versioned file read through `app/src/settings_store.rs`); the day it lands, a new scene takes its
+  lap from there, an existing file keeps the number it carries, and this constant becomes only the
+  reader's last resort (U124, ADR 0240).
+
+- `[engine]` A front laid over the frame cannot be turned into one inside the opening yet. The two
+  are told apart by the placement along the depth and by the trims, so the operation the owner
+  described — "поменять на вкладной" — would move the board one thickness in, rewrite its four ends
+  and, once hinges exist, their model; no command does it and no cell offers it. A maker deletes the
+  front and lays it again (U124, ADR 0240).
+
 - `[assistant]` `openssl-sys` is the one counted exception to the C-vendoring rule: the assistant's
   transport is `ureq` over the operating system's own TLS, and on Linux that is the system OpenSSL.
   `cargo xtask layers` allows the crate while the resolved graph leaves its `vendored` feature off and
@@ -510,14 +524,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   node and a suggested fix is not a button. The tool answer carries every finding and every command,
   so the model can act on the list a person cannot yet click (J9).
 
-- `[plan]` A task that has been started cannot go back into the order: `task defer` refuses a `[~]`
-  entry, `task reopen` takes only a done one, and `task drop` deletes the entry with its note, so a
-  session that starts a task and finds it blocked (J12, 2026-11-23, whose premise the owner retired in
-  the same turn) can only close it as done — which is a lie — or move the marker by hand, which the
-  gate validates and does not see. Add the verb that returns a started task to `## Next`: one marker
-  write, the entry moved like `defer` moves it, its `plan/SESSION.<key>.md` removed, in one gated
-  write.
-
 - `[engine]` A piece cannot be put into a frame it is not a child of. Measured by the acceptance test
   (J13, scenario 5): `product.placement.set` on a product whose box would land inside another
   product's envelope is refused — "`Распашной шкаф 800×460×2200` would come to rest inside `Ниша`" —
@@ -547,3 +553,18 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   for, `Call` gains that field, and the window answers that tab instead of the active one — or one
   channel per tab, which costs a socket and a token file each. Either is a change to the tool server's
   contract for every client, so it needs its own task and record (J24).
+
+- `[ui]` The Panel cell's second method, «Rectangle» — a plain board drawn on the work plane and then
+  sized in the card — is in the map and planned (`run: None`): cutting it needs a drawing intent that
+  turns the drawn ring into a `Rect` outline so the card can still edit the sides, and U123 shipped
+  without it. The cell draws one live method and no caret until that intent lands (U123, ADR 0239).
+· `[ui]` The evenly fill's plate reads its two distances through a `Distances` that holds one
+  part's extent, so while the *far* gap is pinned the near field can show one frame of the number
+  the previous row left: a typed far distance (U125) lands with the neighbours re-divided on the next
+  frame, and the near field follows. Nothing is written wrongly and the settled frame is right, so
+  the fix is a row that owns its two ends instead of borrowing a part's; it waits for a second
+  consumer of the row gesture. The count of a row is reached by clicking its field, not by Tab: the
+  shared `Distances::tab` walks the two gaps only (U125).
+· `[ui]` `Document::update_row` repeats the plate's tail of `Document::update_fill` — the choices, the
+  pick, the re-plan — while the two share `gap_fields` and `apply_fill_pick`. A third fill gesture
+  would make the tail an atom of its own; two is not yet a pattern (U125).

@@ -7,13 +7,13 @@ use egui::{ComboBox, TextEdit, Ui};
 use engine::panel_cmds::{
     BEVEL_CLEAR_ID, BEVEL_SET_ID, BOW_CLEAR_ID, BOW_SET_ID, CORNER_BANDING_CLEAR_ID, CORNER_BANDING_SET_ID,
     CORNER_CLEAR_ID, CORNER_SET_ID, EDGE_BANDING_CLEAR_ID, EDGE_BANDING_SET_ID, MATERIAL_SET_ID, OUTLINE_CONTOUR_ID,
-    RENAME_ID, RESIZE_ID, RING_BANDING_CLEAR_ID, RING_BANDING_SET_ID,
+    RENAME_ID, RESIZE_ID, RING_BANDING_CLEAR_ID, RING_BANDING_SET_ID, TRIM_SET_ID,
 };
 use engine::{
     Dimension, EditScope, NodeRules, PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet,
     PanelCornerBandingClear, PanelCornerBandingSet, PanelCornerClear, PanelCornerSet, PanelDiagnostic,
     PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMaterialSet, PanelOutlineToContour, PanelRename, PanelResize,
-    PanelRingBandingClear, PanelRingBandingSet, Session,
+    PanelRingBandingClear, PanelRingBandingSet, PanelTrimSet, Session,
 };
 use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeId, EdgeRef, Extent, Id,
@@ -33,6 +33,9 @@ use crate::theme;
 
 /// The largest panel size a field may name, in millimetres: the document's own ceiling.
 const MAX_SIZE_MM: f64 = model::Panel::MAX_LENGTH.micrometres() as f64 / 1_000.0;
+
+/// The largest end trim a field may name, in millimetres, either way: the model's own ceiling.
+const MAX_TRIM_MM: f64 = model::MAX_TRIM.micrometres() as f64 / 1_000.0;
 
 /// Persistent state of the panel card.
 #[derive(Debug, Default)]
@@ -134,6 +137,12 @@ enum Action {
         panel: Id,
         source: EdgeRef,
         angle: Degrees,
+    },
+    /// Move one end of a rectangle panel to the number typed (U124, ADR 0240).
+    SetTrim {
+        panel: Id,
+        edge: EdgeId,
+        trim: Length,
     },
     ClearBevel {
         panel: Id,
@@ -332,6 +341,30 @@ impl PanelCard {
                             _ => errors.push(Message::LengthErrorOutOfRange.text(lang).to_owned()),
                         }
                     }
+                }
+            });
+
+            // The workshop's «подрезка торца»: one signed number per nominal end, positive cutting
+            // the end in and negative letting the board out past its size (ADR 0240). It sits beside
+            // the size because it is one: the number moves the side it names.
+            section(ui, "panel.dimensions.trims", Message::SectionEndTrims.text(lang), true, |ui| {
+                if panel.is_contour() {
+                    ui.label(Message::PanelTrimNotARectangle.text(lang));
+                } else {
+                    for edge in RectEdge::ALL {
+                        let edge_id = edge.id();
+                        let current = panel.trims().get(edge_id);
+                        ui.horizontal(|ui| {
+                            ui.label(edge_label(edge_id.get()).text(lang));
+                            let (committed, _) = millimetre_field(ui, current, -MAX_TRIM_MM..=MAX_TRIM_MM);
+                            if let Some(trim) = committed.and_then(signed_length)
+                                && trim != current
+                            {
+                                actions.push(Action::SetTrim { panel: panel_id, edge: edge_id, trim });
+                            }
+                        });
+                    }
+                    ui.label(Message::EndTrimHint.text(lang));
                 }
             });
 
@@ -838,6 +871,10 @@ fn run_action(session: &mut Session, action: &Action) -> Result<(), String> {
         Action::ClearBevel { panel, source } => {
             let params = json(&PanelBevelClear { panel: *panel, source: *source })?;
             dispatch(session, BEVEL_CLEAR_ID, &params)
+        }
+        Action::SetTrim { panel, edge, trim } => {
+            let params = json(&PanelTrimSet { panel: *panel, edge: *edge, trim: *trim })?;
+            dispatch(session, TRIM_SET_ID, &params)
         }
         Action::ToContour { panel } => {
             let params = json(&PanelOutlineToContour { panel: *panel })?;
@@ -1636,6 +1673,49 @@ mod tests {
                 .edge_banding()
                 .iter()
                 .any(|band| band.edge() == RectEdge::Bottom.id())
+        );
+    }
+
+    #[test]
+    fn an_end_trim_action_moves_its_side_through_the_engine() {
+        // U124, ADR 0240: the card writes the end's own number, and the panel's size follows it.
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
+        let panel_id = Id::new(2).expect("panel id");
+        let before = session.project().panel(panel_id).expect("panel").nominal_size();
+        let lap = Length::from_millimetres(-14).expect("a lap");
+        run_action(&mut session, &Action::SetTrim { panel: panel_id, edge: RectEdge::Bottom.id(), trim: lap })
+            .expect("the end is let out");
+        let panel = session.project().panel(panel_id).expect("panel");
+        assert_eq!(panel.trims().get(RectEdge::Bottom.id()), lap, "the number is stored on the end");
+        assert_eq!(panel.nominal_size(), before, "the frame — and so the origin — did not move");
+        let geometry = panel.geometry_with_fallbacks().expect("the board resolves");
+        assert_eq!(
+            geometry.core_width(),
+            before.width().checked_add(Length::from_millimetres(14).expect("a lap")).expect("a width"),
+            "the material the number names grew by it"
+        );
+        assert_eq!(geometry.core_length(), before.length(), "the other pair is untouched");
+    }
+
+    #[test]
+    fn the_card_draws_one_trim_field_per_end_and_refuses_a_ring() {
+        // Four fields, one per nominal end, with the card's own edge words (ADR 0240).
+        let context = egui::Context::default();
+        crate::set_language(&context, crate::Lang::En);
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
+        let panel_id = Id::new(2).expect("panel id");
+        let texts = drawn_texts(&context, &mut session, panel_id);
+        assert!(texts.iter().any(|text| text == Message::SectionEndTrims.text(crate::Lang::En)), "{texts:?}");
+        for label in [Message::EdgeBottom, Message::EdgeRight, Message::EdgeTop, Message::EdgeLeft] {
+            assert!(texts.iter().any(|text| text == label.text(crate::Lang::En)), "`{label:?}` is on the card");
+        }
+
+        // A ring stores a curve, not four nominal ends, and the card says so instead of drawing fields.
+        let (mut session, ringed) = contour_session();
+        let texts = drawn_texts(&context, &mut session, ringed);
+        assert!(
+            texts.iter().any(|text| text == Message::PanelTrimNotARectangle.text(crate::Lang::En)),
+            "a ring is told why it has no ends: {texts:?}"
         );
     }
 

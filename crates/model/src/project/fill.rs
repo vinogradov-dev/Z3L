@@ -85,12 +85,64 @@ pub struct FillRequest {
     /// the point's own coordinate to answer. Either way it is rounded to whole millimetres and kept
     /// between the cell's walls (ADR 0103).
     pub free: Option<f64>,
+    /// How the board sits against the frame: inside the opening, or laid over its face (ADR 0240).
+    pub mount: FillMount,
 }
 
 impl FillRequest {
     /// One tool's ask: the point it points at, the pair and mode its class names, and the thickness.
     pub const fn new(point: DVec3, fill: Fill, mode: FillMode, thickness: Length, free: Option<f64>) -> Self {
-        Self { point, fill, mode, thickness, free }
+        Self { point, fill, mode, thickness, free, mount: FillMount::Inset }
+    }
+
+    /// The same ask with the mounting the tool is in: the board fills the opening, or lies over the
+    /// frame's face a lap past it (ADR 0240).
+    pub const fn with_mount(self, mount: FillMount) -> Self {
+        Self { mount, ..self }
+    }
+}
+
+/// How a filled board sits against the frame the void is cut in.
+///
+/// A mounting is an operation rather than a stored form (the owner, 2026-11-24): an inset board fills
+/// the opening, and an overlay board lies one thickness in front of it with its ends running past the
+/// opening. Making a finished front the other way is a later operation that moves it in depth and
+/// rewrites its end trims — the plan does not store which of the two a part is, its trims and its
+/// placement say it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FillMount {
+    /// The board fills the opening: its inner face is the void's own start plane. Today's fill.
+    #[default]
+    Inset,
+    /// The board lies over the frame's face, running past the opening where the frame allows it.
+    Overlay {
+        /// The lap each end asks for, in outline-edge order, before the frame says what it may take.
+        ///
+        /// A creation asks every end for the workshop's number; a part re-planned from the void asks
+        /// for the ends it already has, so a frame that lost a neighbour does not silently widen a
+        /// front the person sized.
+        laps: [Length; 4],
+    },
+}
+
+impl FillMount {
+    /// The lap each end asks for, in outline-edge order: zeros for a board inside the opening.
+    pub const fn laps(self) -> [Length; 4] {
+        match self {
+            Self::Inset => [Length::ZERO; 4],
+            Self::Overlay { laps } => laps,
+        }
+    }
+
+    /// Whether the board lies over the frame's face rather than filling the opening.
+    pub const fn is_overlay(self) -> bool {
+        matches!(self, Self::Overlay { .. })
+    }
+
+    /// Whether the board fills the opening, which is the ordinary fill an absent parameter means.
+    pub const fn is_inset(&self) -> bool {
+        matches!(self, Self::Inset)
     }
 }
 
@@ -136,6 +188,12 @@ pub struct FillPlan {
     /// The base ring with every beveled edge set back by its wall's own angle, so the ghost draws
     /// the rim the finished panel ends at rather than the base rim lifted by the thickness.
     pub far_corners: Vec<DVec2>,
+    /// The end trims the board was born with, in outline-edge order (ADR 0240).
+    ///
+    /// All zeros for a board that fills the opening; an overlay front carries the negative of the lap
+    /// each end took, so the card reads back the number the plan measured and the frame cannot lie
+    /// about how far the board runs.
+    pub trims: PanelTrims,
     /// The end bevels the walls ask for, in ring-segment order.
     ///
     /// Empty when every wall meets the board square, which keeps [`FillMode::Shape`] on the standard
@@ -174,6 +232,10 @@ pub enum FillRefusal {
     ///
     /// `Shape` falls back to the slab section, as above; the classifier's own refusal.
     Wedge,
+    /// Only a board standing in the frontal plane can lie over the frame's face.
+    NotFrontal,
+    /// A part stands proud of the frame's face inside the opening, where the board would bury it.
+    InTheWay,
 }
 
 impl std::fmt::Display for FillRefusal {
@@ -203,6 +265,10 @@ impl FillRefusal {
             }
             Self::Wedge => {
                 "The void narrows across the board's thickness, where no end bevel helps; use the largest fit."
+            }
+            Self::NotFrontal => "Only a front standing across the void can lie over the frame's face.",
+            Self::InTheWay => {
+                "A part stands proud of the frame's face inside the opening; the front has nowhere to lie."
             }
         }
     }
@@ -243,7 +309,7 @@ impl Project {
         request: FillRequest,
         sight: Sight,
     ) -> Result<FillPlan, FillRefusal> {
-        let FillRequest { point, fill, mode, thickness, free } = request;
+        let FillRequest { point, fill, mode, thickness, free, mount } = request;
         if niche.product != product {
             return Err(FillRefusal::OtherProduct);
         }
@@ -260,9 +326,23 @@ impl Project {
             return Err(FillRefusal::TooSmall);
         }
         // A part the sight switched off is not a wall of the void the eye measures, but it is there
-        // for the material: the plan stops the part at its faces (X73, ADR 0175).
+        // for the material: the plan stops the part at its faces (X73, ADR 0175). An overlay board
+        // reads every part instead, because the frame it lies over is material whether the sight
+        // draws it or not (ADR 0240).
         let hidden = self.hidden_boxes(parent_world, sight);
-        let (part, placement) = board(FillInput { niche, local, gap, mode, free, fill, thickness, hidden: &hidden })?;
+        let bodies = if mount.is_overlay() { self.part_boxes(parent_world) } else { Vec::new() };
+        let (part, placement) = board(FillInput {
+            niche,
+            local,
+            gap,
+            mode,
+            free,
+            fill,
+            thickness,
+            hidden: &hidden,
+            bodies: &bodies,
+            mount,
+        })?;
         // The free axis is the panel's own thickness axis, so the two ends are its base face and its
         // far face; which of them is lower depends on the stance (ADR 0105).
         let axis = free_axis(fill);
@@ -280,6 +360,7 @@ impl Project {
             niche: niche.clone(),
             corners: part.corners,
             far_corners: part.far_corners,
+            trims: part.trims,
             bevels: part.bevels,
             free_low,
             free_high,
@@ -298,6 +379,219 @@ pub const fn free_axis(fill: Fill) -> usize {
     }
 }
 
+/// What one row of boards asks: where an end is pinned and how many boards there are.
+///
+/// The three travel together because they are one gesture (AGENTS §1.5): the near face a typed
+/// distance fixed, the count the hand named or a field holds, and the far gap another typed
+/// distance fixed. A row plan, its refusal and the ghosts a maker sees all read this value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FillRowAsk {
+    /// The first board's near face along the free axis, in the parent frame and millimetres, while
+    /// a typed distance pins it; `None` spreads the row through the whole void.
+    pub start: Option<f64>,
+    /// How many boards the row holds, clamped to the boards that fit without crossing.
+    pub count: usize,
+    /// The distance the maker fixed from the last board's far face to the wall, in millimetres.
+    ///
+    /// `None` while the row shares its free length out and leaves the leftover at the far end.
+    pub gap: Option<f64>,
+}
+
+/// The row a fill click would lay: the board a [`FillPlan`] answers, repeated.
+///
+/// The numbers are the whole row: the count, the pitch the boards repeat at, and the two gaps the
+/// plate reads. A caller draws the ghosts and writes the batch from this one answer, so the picture
+/// and the history cannot disagree (N10, U125).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FillRowPlan {
+    /// How many boards the row holds, never fewer than one and never more than fit without crossing.
+    pub count: usize,
+    /// The distance from one board's near face to the next board's near face, in millimetres.
+    pub pitch: f64,
+    /// The gap between two neighbours, in millimetres.
+    pub gap: f64,
+    /// The first board's near face, in the parent frame and millimetres.
+    pub start: f64,
+    /// The last board's far face, the same frame.
+    pub end: f64,
+    /// The distance from the near wall to the first board's near face.
+    pub low: f64,
+    /// The distance from the last board's far face to the far wall: the leftover the row leaves.
+    pub high: f64,
+}
+
+/// Why a row of boards cannot be laid in a void.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FillRowRefusal {
+    /// The void has no room along the part's own free axis, or the ask is not a usable number.
+    NoRoom,
+    /// The pinned gap leaves less than one board between itself and the first board.
+    GapTooWide,
+    /// The row's own numbers do not agree: one board has no neighbour gap to share the space with.
+    NotDivided,
+}
+
+impl std::fmt::Display for FillRowRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.sentence())
+    }
+}
+
+impl std::error::Error for FillRowRefusal {}
+
+impl FillRowRefusal {
+    /// The sentence the refusal is read by, in the wire's English.
+    ///
+    /// One wording serves the ghosts a maker sees and the caller that asks the same question, as
+    /// [`FillRefusal::sentence`] does for one board.
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::NoRoom => "The void has no room for a row of boards along this axis.",
+            Self::GapTooWide => "The fixed gap is wider than the space the row has.",
+            Self::NotDivided => "One board has no neighbour to share the space with; fix no gap or add boards.",
+        }
+    }
+}
+
+/// The row `thickness`-thick boards repeat into, along `axis` of `niche`.
+///
+/// This is the arithmetic of the gesture the owner asked for (U125): the first board is where the
+/// click put it, the count is what the hand's span holds or what a field typed, and the free length
+/// is shared between the boards and the far end, so the leftover falls there. A fixed far gap is
+/// honoured instead of shared out, and the neighbours take what is left between them.
+///
+/// The void and the board are separate arguments because a ghost holds both already: the anchor's
+/// [`FillGhost`](crate::FillGhost) reads its cell from the niche atom and its thickness from its own
+/// third extent, so the shell asks this function with the numbers it has (ADR 0118).
+pub fn fill_row(niche: &Niche, thickness: f64, axis: usize, ask: FillRowAsk) -> Result<FillRowPlan, FillRowRefusal> {
+    if axis >= 3
+        || !thickness.is_finite()
+        || thickness <= 0.0
+        || ask.count == 0
+        || ask.start.is_some_and(|start| !start.is_finite())
+        || ask.gap.is_some_and(|gap| !gap.is_finite() || gap < 0.0)
+    {
+        return Err(FillRowRefusal::NoRoom);
+    }
+    let wall_low = niche.local_min[axis];
+    let room = niche.size[axis];
+    let wall_high = wall_low + room;
+    if !room.is_finite() || room < thickness {
+        return Err(FillRowRefusal::NoRoom);
+    }
+    // The boards that fit without crossing: each takes one thickness, and the last one's far face
+    // may touch the wall.
+    let fits = |length: f64| {
+        if length < thickness { 1 } else { (length / thickness + ROW_TOLERANCE).floor().max(1.0) as usize }
+    };
+    let count = ask.count.clamp(1, fits(room));
+    // The boards the pinned ends leave room for: a maker who pins both airs typed the row's two
+    // distances, so the count gives way rather than the row refusing to exist (X135).
+    let fit_between = |near: f64, far: f64| {
+        let between = room - near - far;
+        if between < thickness { 1 } else { (between / thickness + ROW_TOLERANCE).floor().max(1.0) as usize }
+    };
+    // The row's spaces, in the order they run: the near air, one between every two boards, the far
+    // air. Every one of them is a whole millimetre, because that is what a maker reads, and the row
+    // keeps one pitch throughout — the boards of a row are equally far apart or it is not a row
+    // (the owner, 2026-11-24). The leftover of the division therefore falls in one single space: the
+    // last one nothing pins, which is the far air unless a field pinned it, and then the near air.
+    let near_pin_for_fit = ask.start.map(|start| (start - wall_low).max(0.0).round());
+    let far_for_fit = ask.gap.map(f64::round);
+    let count = match (near_pin_for_fit, far_for_fit) {
+        (Some(near), Some(far)) if room - near - far < room => count.min(fit_between(near, far)),
+        _ => count,
+    };
+    let taken = count as f64 * thickness;
+    let free = room - taken;
+    let near_pin = match ask.start {
+        Some(start) => {
+            let near = start - wall_low;
+            if near < -ROW_TOLERANCE {
+                return Err(FillRowRefusal::NoRoom);
+            }
+            Some(near.max(0.0).round())
+        }
+        None => None,
+    };
+    if near_pin.is_some_and(|near| near > free + ROW_TOLERANCE) {
+        // The pinned face leaves no room for the boards themselves: the void is too short for the
+        // row rather than for the gap, and the sentence says so.
+        return Err(FillRowRefusal::NoRoom);
+    }
+    let far_pin = ask.gap.map(f64::round);
+    let rest = free - near_pin.unwrap_or(0.0) - far_pin.unwrap_or(0.0);
+    if rest < -ROW_TOLERANCE {
+        return Err(FillRowRefusal::GapTooWide);
+    }
+    let (near, gap) = match (near_pin, far_pin) {
+        // An even row: the same air between the boards and at the near wall, and the far air takes
+        // the leftover — a hair wider than the rest, which is where a row of shelves leaves it.
+        (None, None) => {
+            let share = (free / (count + 1) as f64).floor();
+            (share, share)
+        }
+        // A pinned near face: the boards follow it and the far air takes the leftover.
+        (Some(near), None) => {
+            let share = (rest / count as f64).floor();
+            (near, share)
+        }
+        // A pinned far gap: the neighbours keep one pitch from the near wall, which takes the
+        // leftover because the space the leftover belongs to is the one the maker pinned.
+        (None, Some(_)) => {
+            let share = (rest / count as f64).floor();
+            (rest - (count as f64 - 1.0) * share, share)
+        }
+        // Both ends pinned: the pitch gives what whole millimetres it can, and the far gap reads
+        // back from the row — one or two millimetres wider than the number that pinned it, which is
+        // what its own plate then shows.
+        (Some(near), Some(_)) => {
+            let share = if count > 1 { (rest / (count as f64 - 1.0)).floor().max(0.0) } else { 0.0 };
+            if count == 1 && rest.abs() > ROW_TOLERANCE {
+                return Err(FillRowRefusal::GapTooWide);
+            }
+            (near, share)
+        }
+    };
+    let start = wall_low + near;
+    let end = start + taken + (count as f64 - 1.0) * gap;
+    let row = FillRowPlan { count, pitch: thickness + gap, gap, start, end, low: near, high: wall_high - end };
+    if !row.pitch.is_finite()
+        || !row.end.is_finite()
+        || !row.low.is_finite()
+        || !row.high.is_finite()
+        || row.low < -ROW_TOLERANCE
+        || row.high < -ROW_TOLERANCE
+        || row.start < wall_low - ROW_TOLERANCE
+        || row.end > wall_high + ROW_TOLERANCE
+    {
+        return Err(FillRowRefusal::NoRoom);
+    }
+    Ok(row)
+}
+
+impl FillPlan {
+    /// The row this board repeats into, along `axis`.
+    ///
+    /// The arithmetic of the gesture the owner asked for (U125): the first board is where the click
+    /// put it, the count is what the hand's span holds or what a field typed, and the free length is
+    /// shared between the boards and the far end, so the leftover falls there. A fixed far gap is
+    /// honoured instead of shared out, and the neighbours take what is left between them.
+    ///
+    /// `axis` is [`free_axis`] of the class the plan was made for, so a shelf's row climbs, a post's
+    /// runs across the void and a wall's runs in depth.
+    pub fn row(&self, axis: usize, ask: FillRowAsk) -> Result<FillRowPlan, FillRowRefusal> {
+        fill_row(&self.niche, self.free_high - self.free_low, axis, ask)
+    }
+}
+
+/// How far a row's own arithmetic may sit off the void it fills, in millimetres.
+///
+/// The row's numbers are sums and divisions of millimetre coordinates, so a chain of them drifts by
+/// a fraction of a micrometre; the tolerance keeps a row that exactly fills its void from being
+/// refused as one that overshoots it by a rounding error.
+const ROW_TOLERANCE: f64 = 1.0e-6;
+
 /// The outline, size and base polygon one footprint becomes.
 struct Part {
     outline: PanelOutline,
@@ -308,6 +602,8 @@ struct Part {
     far_corners: Vec<DVec2>,
     /// The end bevels, one per beveled ring segment.
     bevels: Vec<EdgeBevel>,
+    /// The end trims the board carries, in outline-edge order.
+    trims: PanelTrims,
 }
 
 /// How a fill's board sits in the product frame: which product axis each local axis runs along.
@@ -409,6 +705,9 @@ struct FillInput<'a> {
     fill: Fill,
     thickness: Length,
     hidden: &'a [HiddenBox],
+    /// Every body's box in the product frame: what an overlay board reads the frame from.
+    bodies: &'a [HiddenBox],
+    mount: FillMount,
 }
 
 /// The board a click would create in `fill`'s stance: the part and its placement.
@@ -418,8 +717,22 @@ struct FillInput<'a> {
 /// ends, so it fits whichever way the walls lean; [`FillMode::Shape`] reads the wide face and
 /// bevels every edge whose wall tilts.
 fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
-    let FillInput { niche, local, gap, mode, free, fill, thickness, hidden } = input;
+    let FillInput { niche, local, gap, mode, free, fill, thickness, hidden, bodies, mount } = input;
     let stance = stance(fill);
+    if mount.is_overlay() {
+        // A board over the frame's face is a frontal part by construction (ADR 0240): its ends run
+        // past the opening in the plane the void opens onto, and no other stance has such a plane.
+        if fill != Fill::WidthAndHeight {
+            return Err(FillRefusal::NotFrontal);
+        }
+        return overlay_board(OverlayInput {
+            niche,
+            stance,
+            gap,
+            asked: mount.laps().map(Length::millimetres_f64),
+            bodies,
+        });
+    }
     let low = niche.local_min[stance.t];
     let high = niche.local_max()[stance.t] - gap;
     if high < low {
@@ -465,6 +778,7 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     let exact = exact_section(niche, mode, &stance, &cuts, DVec2::new(local[stance.u], local[stance.v]));
     let shape = PartShape {
         footprint: &polygon,
+        trims: PanelTrims::ZERO,
         mode,
         stance: &stance,
         angles: &angles,
@@ -482,6 +796,232 @@ fn board(input: FillInput<'_>) -> Result<(Part, Placement), FillRefusal> {
     translation[stance.t] = stance.face(value, gap);
     let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
     Ok((part, placement))
+}
+
+/// One overlay board's ask: the measured void, the stance it lies in and the frame's own parts.
+struct OverlayInput<'a> {
+    /// The cell the niche atom measured, in the product frame.
+    niche: &'a Niche,
+    /// The frontal stance the board lies in.
+    stance: Stance,
+    /// One material thickness.
+    gap: f64,
+    /// The lap each end asks for, millimetres, in outline-edge order.
+    asked: [f64; 4],
+    /// Every body's box in the product frame.
+    bodies: &'a [HiddenBox],
+}
+
+/// What the frame answers an overlay board: where the opening's plane is and what stands there.
+struct OverlayFrame<'a> {
+    /// The plane the board's inner face lies on, along the thickness axis.
+    start: f64,
+    /// The lap each end asks for, millimetres, in outline-edge order.
+    asked: [f64; 4],
+    /// The frontal stance the board lies in.
+    stance: Stance,
+    /// Every body's box in the product frame.
+    bodies: &'a [HiddenBox],
+}
+
+/// The board a click lays over the frame: the opening's rectangle, grown by the laps the frame
+/// allows, one thickness in front of the void's start plane (ADR 0240).
+///
+/// The four numbers come from the frame, not from the settings alone. An end may run past the
+/// opening only where a part stands at it to run over — the lap is that part's face measured from the
+/// opening's own edge, never more than the workshop's number — and no part there is no lap, because a
+/// board whose end had nothing behind it would hang in the air. A part standing proud of the face is
+/// the other answer: the board stops at its near face and never runs over it, which is the rule the
+/// maker reads as "it does not ride onto the neighbour".
+fn overlay_board(input: OverlayInput<'_>) -> Result<(Part, Placement), FillRefusal> {
+    let OverlayInput { niche, stance, gap, asked, bodies } = input;
+    if !(gap.is_finite() && gap > 0.0 && asked.iter().all(|lap| lap.is_finite() && *lap >= 0.0)) {
+        return Err(FillRefusal::TooSmall);
+    }
+    let start = niche.local_min[stance.t];
+    // The opening where the board's own inner face lies: the widest the void is on the plane it
+    // covers, taken as the rectangle a facade is. Both builds answer it, because a front covers the
+    // opening rather than taking the shape a wall leaves inside it.
+    let opening = niche.cut(stance.t, (start, start), (stance.u, stance.v)).ok_or(FillRefusal::TooSmall)?;
+    let (low, high) = bounds_of(&opening)?;
+    let frame = OverlayFrame { start, asked, stance, bodies };
+    let (grown_low, grown_high) = overlay_rect(&frame, low, high)?;
+    // A part proud of the face *inside* the opening is material the board would bury, and no end
+    // stops it: the click is refused instead of cutting through it.
+    for body in bodies {
+        if body.min[stance.t] >= start - TRIM_TOLERANCE {
+            continue;
+        }
+        let inside_u =
+            body.min[stance.u] > grown_low.x + TRIM_TOLERANCE && body.max[stance.u] < grown_high.x - TRIM_TOLERANCE;
+        let inside_v =
+            body.min[stance.v] > grown_low.y + TRIM_TOLERANCE && body.max[stance.v] < grown_high.y - TRIM_TOLERANCE;
+        if inside_u && inside_v {
+            return Err(FillRefusal::InTheWay);
+        }
+    }
+    let trims = overlay_trims([grown_low.y, grown_high.x, grown_high.y, grown_low.x], low, high)?;
+    // The panel's frame is the opening's rectangle and the material is what the trims make of it
+    // (ADR 0240): the frame's corner is where the part is placed, so the person controls the
+    // position by the opening and never by a lap.
+    let size = PanelNominalSize::new(
+        length_of(high.x - low.x).ok_or(FillRefusal::TooSmall)?,
+        length_of(high.y - low.y).ok_or(FillRefusal::TooSmall)?,
+    )
+    .map_err(|_| FillRefusal::TooSmall)?;
+    let local = |point: DVec2| DVec2::new(point.x - low.x, point.y - low.y);
+    let corners = vec![
+        local(grown_low),
+        DVec2::new(grown_high.x - low.x, grown_low.y - low.y),
+        local(grown_high),
+        DVec2::new(grown_low.x - low.x, grown_high.y - low.y),
+    ];
+    if corners.iter().any(|corner| !corner.is_finite()) {
+        return Err(FillRefusal::TooSmall);
+    }
+    let part = Part {
+        outline: PanelOutline::Rect { corner_features: Vec::new(), edge_bows: Vec::new() },
+        nominal_size: size,
+        corners: corners.clone(),
+        far_corners: corners,
+        bevels: Vec::new(),
+        trims,
+    };
+    // The board's body runs one thickness from the plane its inner face lies on, so the panel's own
+    // base face is the front one and the stance decides which end that is in the product frame.
+    let mut translation = DVec3::ZERO;
+    translation[stance.u] = low.x;
+    translation[stance.v] = low.y;
+    translation[stance.t] = stance.face(start - gap, gap);
+    let placement = Placement::new(translation, stance.rotation()).map_err(|_| FillRefusal::NoFrame)?;
+    Ok((part, placement))
+}
+
+/// The rectangle an overlay board takes, in the board's own two axes and the product frame.
+///
+/// The four ends in outline-edge order — 1 the end at zero width, 2 the end at the full length, 3 the
+/// end at the full width, 4 the end at zero length, the numbering the card prints. An end starts on
+/// the opening's own edge and runs outward only where the frame gives it something to run over: a
+/// part that reaches the opening's plane from behind answers the lap its own face gives, capped by
+/// the workshop's number. A part standing proud of the plane is the other answer — the end stops at
+/// its near face, which trims the board back inside the opening when the neighbour reaches over it
+/// (ADR 0240). The two are read together: an end is stopped only by a part that lies beside the board
+/// as it is now, so a neighbour at one end never bites into another.
+fn overlay_rect(frame: &OverlayFrame<'_>, low: DVec2, high: DVec2) -> Result<(DVec2, DVec2), FillRefusal> {
+    let stance = frame.stance;
+    // Edge, the axis it bounds, which way that end lies, the opening's edge on it and the other axis.
+    let ends: [(usize, usize, f64, f64, usize); 4] = [
+        (0, stance.v, -1.0, low.y, stance.u),
+        (1, stance.u, 1.0, high.x, stance.v),
+        (2, stance.v, 1.0, high.y, stance.u),
+        (3, stance.u, -1.0, low.x, stance.v),
+    ];
+    let spans = [(low.x, high.x), (low.y, high.y)];
+    let mut places = [low.y, high.x, high.y, low.x];
+    for (index, (_, axis, outward, edge_at, across)) in ends.into_iter().enumerate() {
+        // A part reaching behind the plane at this end gives the board a face to run over.
+        let (span_lo, span_hi) = spans[if across == stance.u { 0 } else { 1 }];
+        let mut reach: Option<f64> = None;
+        for body in frame.bodies {
+            if body.max[stance.t] <= frame.start + TRIM_TOLERANCE {
+                continue;
+            }
+            if body.max[across] <= span_lo + TRIM_TOLERANCE || body.min[across] >= span_hi - TRIM_TOLERANCE {
+                continue;
+            }
+            let extent = if outward > 0.0 {
+                (body.max[axis] > edge_at + TRIM_TOLERANCE && body.min[axis] <= edge_at + TRIM_TOLERANCE)
+                    .then_some(body.max[axis] - edge_at)
+            } else {
+                (body.min[axis] < edge_at - TRIM_TOLERANCE && body.max[axis] >= edge_at - TRIM_TOLERANCE)
+                    .then_some(edge_at - body.min[axis])
+            };
+            if let Some(extent) = extent.filter(|extent| extent.is_finite() && *extent > 0.0) {
+                reach = Some(reach.map_or(extent, |near: f64| near.min(extent)));
+            }
+        }
+        let asked = *frame.asked.get(index).unwrap_or(&0.0);
+        places[index] = edge_at + outward * reach.map_or(0.0, |reach| asked.min(reach));
+    }
+    // A part standing proud of the plane is what an end stops at, and one end's neighbour is read
+    // against the other end as it stands after the last pass, so the two settle instead of arguing.
+    for _ in 0..OVERLAY_CLIP_PASSES {
+        let (u_lo, u_hi, v_lo, v_hi) = (places[3], places[1], places[0], places[2]);
+        let mut moved = false;
+        for (index, (_, axis, outward, edge_at, across)) in ends.into_iter().enumerate() {
+            let (span_lo, span_hi) = if across == stance.u { (u_lo, u_hi) } else { (v_lo, v_hi) };
+            let Some(mut place) = places.get(index).copied() else {
+                continue;
+            };
+            for body in frame.bodies {
+                if body.min[stance.t] >= frame.start - TRIM_TOLERANCE {
+                    continue;
+                }
+                if body.max[across] <= span_lo + TRIM_TOLERANCE || body.min[across] >= span_hi - TRIM_TOLERANCE {
+                    continue;
+                }
+                let stopped = if outward > 0.0 {
+                    if body.max[axis] > edge_at + TRIM_TOLERANCE && body.min[axis] < place {
+                        body.min[axis]
+                    } else {
+                        place
+                    }
+                } else if body.min[axis] < edge_at - TRIM_TOLERANCE && body.max[axis] > place {
+                    body.max[axis]
+                } else {
+                    place
+                };
+                if stopped == place {
+                    continue;
+                }
+                // A stop that would take the whole board is the other end's neighbour seen from this
+                // side: it is read again once that end has settled, so this pass leaves it alone.
+                let mut candidate = places;
+                if let Some(slot) = candidate.get_mut(index) {
+                    *slot = stopped;
+                }
+                let (next_u, next_v) = (candidate[1] - candidate[3], candidate[2] - candidate[0]);
+                if !(next_u > TRIM_TOLERANCE && next_v > TRIM_TOLERANCE) {
+                    continue;
+                }
+                place = stopped;
+                moved = true;
+                if let Some(slot) = places.get_mut(index) {
+                    *slot = place;
+                }
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    if !(places[1] - places[3] > TRIM_TOLERANCE && places[2] - places[0] > TRIM_TOLERANCE) {
+        return Err(FillRefusal::InTheWay);
+    }
+    Ok((DVec2::new(places[3], places[0]), DVec2::new(places[1], places[2])))
+}
+
+/// The trim each end of an overlay board carries, from where the frame put it.
+fn overlay_trims(places: [f64; 4], low: DVec2, high: DVec2) -> Result<PanelTrims, FillRefusal> {
+    // The lap an end took is how far it lies outside the opening, positive outward in every case.
+    let lap = |place: f64, edge_at: f64, outward: f64| outward * (place - edge_at);
+    let laps = [
+        lap(places[0], low.y, -1.0),
+        lap(places[1], high.x, 1.0),
+        lap(places[2], high.y, 1.0),
+        lap(places[3], low.x, -1.0),
+    ];
+    let trim = |lap: f64| document_length(-lap).ok_or(FillRefusal::TooSmall);
+    PanelTrims::new(trim(laps[0])?, trim(laps[1])?, trim(laps[2])?, trim(laps[3])?).map_err(|_| FillRefusal::TooSmall)
+}
+
+/// The box a polygon spans, or `None` when it has no usable corner.
+fn bounds_of(points: &[DVec2]) -> Result<(DVec2, DVec2), FillRefusal> {
+    let first = points.first().copied().ok_or(FillRefusal::TooSmall)?;
+    if points.iter().any(|point| !point.is_finite()) {
+        return Err(FillRefusal::TooSmall);
+    }
+    Ok(points.iter().copied().fold((first, first), |(low, high), point| (low.min(point), high.max(point))))
 }
 
 /// The polygon a fit searches: the frame's whole reserved shape when the stance is a shelf's.
@@ -651,6 +1191,8 @@ fn wall_bevels(niche: &Niche, section: &[DVec2], face: f64, stance: &Stance) -> 
 struct PartShape<'a> {
     /// The free space in the board's own two axes, in the product frame.
     footprint: &'a [DVec2],
+    /// The end trims the board carries: all zeros for a board that fills the opening.
+    trims: PanelTrims,
     /// How the part takes it.
     mode: FillMode,
     /// The axes the board runs with.
@@ -667,7 +1209,7 @@ struct PartShape<'a> {
 
 /// The part a footprint becomes in `mode`, with the section point the panel is anchored at.
 fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
-    let PartShape { footprint, mode, stance, angles, thickness, exact, pointer } = shape;
+    let PartShape { footprint, mode, stance, angles, thickness, exact, pointer, trims } = shape;
     let Some(first) = footprint.first().copied() else {
         return Err(FillRefusal::TooSmall);
     };
@@ -690,13 +1232,20 @@ fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
                 vec![DVec2::ZERO, DVec2::new(size.x, 0.0), DVec2::new(size.x, size.y), DVec2::new(0.0, size.y)];
             let outline = PanelOutline::Rect { corner_features: Vec::new(), edge_bows: Vec::new() };
             Ok((
-                Part { outline, nominal_size, corners: corners.clone(), far_corners: corners, bevels: Vec::new() },
+                Part {
+                    outline,
+                    nominal_size,
+                    corners: corners.clone(),
+                    far_corners: corners,
+                    bevels: Vec::new(),
+                    trims,
+                },
                 corner,
             ))
         }
         FillMode::Shape if exact.is_some() => {
             let ring = exact.ok_or(FillRefusal::TooSmall)?;
-            exact_part(&ring, stance)
+            exact_part(&ring, stance, trims)
         }
         FillMode::Shape => {
             let ring = local_ring(footprint, angles, stance, low, high);
@@ -722,7 +1271,7 @@ fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
             };
             let far_corners = far_face(&outline, &bevels, &ring.points, thickness)?;
             let anchor = DVec2::new(low.x, if stance.against_y { high.y } else { low.y });
-            Ok((Part { outline, nominal_size, corners: ring.points, far_corners, bevels }, anchor))
+            Ok((Part { outline, nominal_size, corners: ring.points, far_corners, bevels, trims }, anchor))
         }
     }
 }
@@ -734,7 +1283,7 @@ fn part_of(shape: PartShape<'_>) -> Result<(Part, DVec2), FillRefusal> {
 /// read the case's own radius. Nothing here bevels: a cell whose walls all stand plumb has no tilted
 /// wall, so the far face is the base face. The polygon beside the outline is the same ring sampled, which
 /// is the shape the ghost draws; the ring itself is what the panel stores (N33).
-fn exact_part(section: &Contour, stance: &Stance) -> Result<(Part, DVec2), FillRefusal> {
+fn exact_part(section: &Contour, stance: &Stance, trims: PanelTrims) -> Result<(Part, DVec2), FillRefusal> {
     let ring = section.to_geometry().map_err(|_| FillRefusal::TooSmall)?;
     let (low, high) = ring.bounds().ok_or(FillRefusal::TooSmall)?;
     let anchor = DVec2::new(low.x, if stance.against_y { high.y } else { low.y });
@@ -747,7 +1296,10 @@ fn exact_part(section: &Contour, stance: &Stance) -> Result<(Part, DVec2), FillR
     if polygon.len() < 3 {
         return Err(FillRefusal::TooSmall);
     }
-    Ok((Part { outline, nominal_size, corners: polygon.clone(), far_corners: polygon, bevels: Vec::new() }, anchor))
+    Ok((
+        Part { outline, nominal_size, corners: polygon.clone(), far_corners: polygon, bevels: Vec::new(), trims },
+        anchor,
+    ))
 }
 
 /// A section in the panel's own plane, anchored at its zero corner, with the bevel on each edge.
@@ -1210,6 +1762,13 @@ fn document_length(millimetres: f64) -> Option<Length> {
     Some(Length::from_micrometres(micrometres as i64))
 }
 
+/// How many times an overlay board's four ends are settled against the parts in front of the plane.
+///
+/// One end's answer changes the span the next one is measured against, and the spans only ever
+/// shrink, so a handful of passes settles every case a frame can pose; the cap is what keeps a
+/// pathological scene from looping.
+const OVERLAY_CLIP_PASSES: usize = 8;
+
 /// How near a face counts as touching, in millimetres: the document's own micrometre.
 ///
 /// The measured point rests a micrometre off the face it was measured from, so a body whose face
@@ -1224,6 +1783,21 @@ struct HiddenBox {
     max: DVec3,
 }
 
+/// One body's box in the product's frame, or `None` when the body has no volume there.
+fn body_box_under(inverse: Placement, surface: SurfaceBox) -> Option<HiddenBox> {
+    let mut min = DVec3::splat(f64::INFINITY);
+    let mut max = DVec3::splat(f64::NEG_INFINITY);
+    for corner in surface_corners(surface) {
+        let local = inverse.transform_point(corner);
+        if !local.is_finite() {
+            return None;
+        }
+        min = min.min(local);
+        max = max.max(local);
+    }
+    (0..3).all(|axis| min[axis] < max[axis]).then_some(HiddenBox { min, max })
+}
+
 impl Project {
     /// The parts the sight switched off, as boxes in the open product's frame.
     ///
@@ -1235,22 +1809,21 @@ impl Project {
         let Some(inverse) = world.inverse().ok() else {
             return Vec::new();
         };
-        self.hidden_body_surfaces(sight)
-            .into_iter()
-            .filter_map(|surface| {
-                let mut min = DVec3::splat(f64::INFINITY);
-                let mut max = DVec3::splat(f64::NEG_INFINITY);
-                for corner in surface_corners(surface) {
-                    let local = inverse.transform_point(corner);
-                    if !local.is_finite() {
-                        return None;
-                    }
-                    min = min.min(local);
-                    max = max.max(local);
-                }
-                (0..3).all(|axis| min[axis] < max[axis]).then_some(HiddenBox { min, max })
-            })
-            .collect()
+        self.hidden_body_surfaces(sight).into_iter().filter_map(|surface| body_box_under(inverse, surface)).collect()
+    }
+
+    /// Every part's box in the open product's frame, millimetres, drawn by the sight or not.
+    ///
+    /// An overlay board reads the frame from these boxes: what stands beside the opening gives an end
+    /// something to run over and what stands in front of the face is what stops it, and neither
+    /// question is a question about sight (ADR 0240).
+    fn part_boxes(&self, world: Placement) -> Vec<HiddenBox> {
+        let Some(inverse) = world.inverse().ok() else {
+            return Vec::new();
+        };
+        let mut surfaces = Vec::new();
+        self.body_surfaces(&self.root, &mut surfaces, 1, Sight::none());
+        surfaces.into_iter().filter_map(|surface| body_box_under(inverse, surface.box_)).collect()
     }
 
     /// The body surfaces the sight switched off, in world millimetres.
@@ -1398,6 +1971,135 @@ mod tests {
     use super::*;
     use crate::testing::millimetres;
 
+    /// The shelf plan of an empty `600 x 560 x 720` case, at the height the point names.
+    ///
+    /// The row tests read their numbers off this plan, so no test repeats the niche's arithmetic:
+    /// the pair is a shelf's (width and depth), its free axis is the case's height, and the plan's
+    /// two free ends are the board's base and far faces.
+    fn shelf_plan(height: f64) -> FillPlan {
+        let (project, product) = empty_product(600, 560, 720);
+        let point = DVec3::new(300.0, 280.0, height);
+        project
+            .fill_plan(
+                product,
+                FillRequest::new(point, Fill::WidthAndDepth, FillMode::Fit, millimetres(16), Some(height)),
+                Sight::none(),
+                None,
+            )
+            .expect("the point names a shelf in the void")
+    }
+
+    /// A row's ask that pins nothing: the void names every number.
+    fn even(count: usize) -> FillRowAsk {
+        FillRowAsk { start: None, count, gap: None }
+    }
+
+    #[test]
+    fn a_row_shares_the_void_out_and_leaves_the_leftover_at_the_far_end() {
+        let plan = shelf_plan(200.0);
+        let axis = free_axis(Fill::WidthAndDepth);
+        let room = plan.niche.size[axis];
+        let thickness = plan.free_high - plan.free_low;
+        let row = plan.row(axis, even(4)).expect("four boards fit");
+        assert_eq!(row.count, 4);
+        // Whole millimetres everywhere, one pitch, and the leftover of the division falls in the far
+        // air (the owner, 2026-11-24): 720 mm and four 16 mm boards give 131 mm a space, and 720 -
+        // 4·16 - 4·131 = 132 mm at the far wall.
+        let free = room - 4.0 * thickness;
+        let share = (free / 5.0).floor();
+        assert!((row.low - share).abs() < 1.0e-6, "the near air is the shared one: {}", row.low);
+        assert!((row.gap - share).abs() < 1.0e-6, "the neighbours stand that far apart: {}", row.gap);
+        assert!((row.high - (free - 4.0 * share)).abs() < 1.0e-6, "the far air takes the leftover: {}", row.high);
+        assert!(row.low.fract() == 0.0 && row.gap.fract() == 0.0 && row.high.fract() == 0.0, "whole millimetres");
+        assert!((row.pitch - (thickness + row.gap)).abs() < 1.0e-6);
+        // One board is the middle of the void: the row splits the space in two.
+        let one = plan.row(axis, even(1)).expect("one board fits");
+        assert_eq!(one.count, 1);
+        assert!((one.low - one.high).abs() <= 1.0, "one board goes in the middle: {} and {}", one.low, one.high);
+        assert!((one.start - plan.niche.local_min[axis]).abs() > 1.0, "and not against the wall");
+    }
+
+    #[test]
+    fn a_row_never_holds_more_boards_than_fit() {
+        let plan = shelf_plan(200.0);
+        let axis = free_axis(Fill::WidthAndDepth);
+        let room = plan.niche.size[axis];
+        let wall = plan.niche.local_min[axis] + room;
+        let thickness = plan.free_high - plan.free_low;
+        let row = plan.row(axis, even(10_000)).expect("the count clamps");
+        assert_eq!(row.count, (room / thickness + ROW_TOLERANCE).floor() as usize);
+        assert!(row.end <= wall + ROW_TOLERANCE, "no board crosses the wall");
+        assert!(row.pitch >= thickness - ROW_TOLERANCE, "two boards never cross");
+        assert!(row.gap.abs() < ROW_TOLERANCE, "boards that fill the void stand shoulder to shoulder: {}", row.gap);
+    }
+
+    #[test]
+    fn a_pinned_end_keeps_its_number_and_the_others_share_the_rest() {
+        let plan = shelf_plan(200.0);
+        let axis = free_axis(Fill::WidthAndDepth);
+        let wall_low = plan.niche.local_min[axis];
+        let room = plan.niche.size[axis];
+        let thickness = plan.free_high - plan.free_low;
+        let free = room - 4.0 * thickness;
+        // The near air is typed: the boards follow it, one pitch, and the far air takes the rest.
+        let near = plan.row(axis, FillRowAsk { start: Some(wall_low + 80.0), count: 4, gap: None }).expect("fits");
+        assert!((near.low - 80.0).abs() < 1.0e-6, "the typed air stands: {}", near.low);
+        let share = ((free - 80.0) / 4.0).floor();
+        assert!((near.gap - share).abs() < 1.0e-6, "the rest is shared one pitch at a time: {}", near.gap);
+        assert!((near.high - (free - 80.0 - 3.0 * share)).abs() < 1.0e-6, "the far air holds the leftover");
+        // The far air is typed: the near one takes the leftover, because the pinned space cannot.
+        let far = plan.row(axis, FillRowAsk { start: None, count: 4, gap: Some(40.0) }).expect("fits");
+        assert!((far.high - 40.0).abs() < 1.0e-6, "the typed gap is what the row leaves: {}", far.high);
+        let share = ((free - 40.0) / 4.0).floor();
+        assert!((far.gap - share).abs() < 1.0e-6, "the neighbours share the rest: {}", far.gap);
+        assert!((far.low - (free - 40.0 - 3.0 * share)).abs() < 1.0e-6, "the near air takes the leftover");
+        // Both are typed: the pitch gives what whole millimetres it can and the far air reads back.
+        let both =
+            plan.row(axis, FillRowAsk { start: Some(wall_low + 80.0), count: 4, gap: Some(40.0) }).expect("fits");
+        assert!((both.low - 80.0).abs() < 1.0e-6);
+        let share = ((free - 120.0) / 3.0).floor();
+        assert!((both.gap - share).abs() < 1.0e-6, "one pitch, floored: {}", both.gap);
+        assert!(both.high >= 40.0 - ROW_TOLERANCE && both.high < 40.0 + 4.0, "the far air reads back: {}", both.high);
+        // A gap wider than the void, or a near face outside it, is refused rather than clamped.
+        assert_eq!(
+            plan.row(axis, FillRowAsk { start: None, count: 4, gap: Some(room) }),
+            Err(FillRowRefusal::GapTooWide)
+        );
+        assert_eq!(
+            plan.row(axis, FillRowAsk { start: Some(wall_low - 1.0), count: 4, gap: None }),
+            Err(FillRowRefusal::NoRoom)
+        );
+    }
+
+    #[test]
+    fn a_row_of_one_board_reads_its_two_airs() {
+        let plan = shelf_plan(200.0);
+        let axis = free_axis(Fill::WidthAndDepth);
+        let wall_low = plan.niche.local_min[axis];
+        let room = plan.niche.size[axis];
+        let thickness = plan.free_high - plan.free_low;
+        // One board with a typed far air: the near air is the rest of the void, exactly.
+        let far = plan.row(axis, FillRowAsk { start: None, count: 1, gap: Some(40.0) }).expect("one board fits");
+        assert!((far.low - (room - thickness - 40.0)).abs() < 1.0e-6, "the near air is the rest: {}", far.low);
+        // Both airs typed must add up to the void: a pair that does not is refused.
+        let exact = FillRowAsk { start: Some(wall_low + room - thickness - 40.0), count: 1, gap: Some(40.0) };
+        assert!(plan.row(axis, exact).is_ok(), "the two airs add up to the void");
+        let wide = FillRowAsk { start: Some(wall_low + 40.0), count: 1, gap: Some(40.0) };
+        assert_eq!(plan.row(axis, wide), Err(FillRowRefusal::GapTooWide));
+    }
+
+    #[test]
+    fn a_void_narrower_than_one_board_has_no_row() {
+        let plan = shelf_plan(200.0);
+        let axis = free_axis(Fill::WidthAndDepth);
+        let wall = plan.niche.local_min[axis] + plan.niche.size[axis];
+        let thin = FillRowAsk { start: Some(wall - 8.0), count: 1, gap: None };
+        assert_eq!(plan.row(axis, thin), Err(FillRowRefusal::NoRoom));
+        let nan = FillRowAsk { start: Some(f64::NAN), count: 1, gap: None };
+        assert_eq!(plan.row(axis, nan), Err(FillRowRefusal::NoRoom));
+        assert_eq!(plan.row(axis, even(0)), Err(FillRowRefusal::NoRoom), "a row of no boards is no row");
+    }
+
     /// An empty piece with the given envelope at the origin: nothing of the sample scene stands in
     /// its void, so the niche is the box the walls reserve.
     fn empty_product(x: i64, y: i64, z: i64) -> (Project, Id) {
@@ -1431,6 +2133,154 @@ mod tests {
                 .expect("the post lands in the open product");
         }
         (project, product)
+    }
+
+    /// A case whose four members leave a 600 x 720 opening: the picture of a front.
+    ///
+    /// Each member stands flush with the front plane (`y = 0`) and runs back through the case, so
+    /// every edge of the opening has a part behind it for a lap to run over. The opening spans
+    /// `x = 18..618` and `z = 18..738`; nothing stands in front of it.
+    fn framed_product() -> (Project, Id) {
+        let (mut project, product) = empty_product(636, 560, 756);
+        // The board's own axes in the product's: local X down the depth, local Y up the height and
+        // local Z across the thickness, so a member is a box the placement decides.
+        let boxed = DQuat::from_rotation_axes(DVec3::Y, DVec3::Z, DVec3::X);
+        let members = [
+            (DVec3::ZERO, 560.0, 756.0),
+            (DVec3::new(618.0, 0.0, 0.0), 560.0, 756.0),
+            (DVec3::new(18.0, 0.0, 0.0), 600.0, 18.0),
+            (DVec3::new(18.0, 0.0, 738.0), 600.0, 18.0),
+        ];
+        for (translation, length, width) in members {
+            let placement = Placement::new(translation, boxed).expect("a member placement");
+            let size = PanelNominalSize::new(
+                Length::from_millimetres(length as i64).expect("a length"),
+                Length::from_millimetres(width as i64).expect("a width"),
+            )
+            .expect("a member size");
+            project.add_panel(product, "Member", size, None, millimetres(18), placement).expect("the member lands");
+        }
+        (project, product)
+    }
+
+    /// The front of the opening of a framed case, in world millimetres.
+    fn opening(project: &Project, product: Id) -> DVec3 {
+        project.world_placement(product).expect("a frame").transform_point(DVec3::new(318.0, 280.0, 378.0))
+    }
+
+    /// The plan an overlay click makes at the case's opening.
+    fn overlay(project: &Project, product: Id, lap: Length) -> Result<FillPlan, FillRefusal> {
+        project.fill_plan(
+            product,
+            FillRequest::new(opening(project, product), Fill::WidthAndHeight, FillMode::Fit, millimetres(18), None)
+                .with_mount(FillMount::Overlay { laps: [lap; 4] }),
+            Sight::none(),
+            None,
+        )
+    }
+
+    /// The board a plan describes: the material's own span, in panel-local millimetres.
+    ///
+    /// A panel's frame is its nominal rectangle and its material is what the trims make of it, so a
+    /// front's *board* is the polygon and not the size (ADR 0240).
+    fn board_span(plan: &FillPlan) -> (f64, f64) {
+        let first = plan.corners.first().copied().expect("a corner");
+        let (low, high) =
+            plan.corners.iter().copied().fold((first, first), |(low, high), point| (low.min(point), high.max(point)));
+        (high.x - low.x, high.y - low.y)
+    }
+
+    #[test]
+    fn an_overlay_front_runs_a_lap_past_the_opening_and_lies_on_its_face() {
+        // The task's own case (U124): a 600 x 720 opening, an 18 mm board and a 14 mm lap from the
+        // workshop's numbers give a 628 x 748 front whose inner face is the plane the void opens
+        // onto and whose body stands in front of it (ADR 0240). The frame stays the opening, so the
+        // part's position is controlled by the corner of the opening and never by a lap.
+        let (project, product) = framed_product();
+        let plan = overlay(&project, product, millimetres(14)).expect("the frame gives the front its lap");
+        assert_eq!(plan.nominal_size.length(), millimetres(720), "the frame is the opening's height");
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "and its width");
+        assert_eq!(plan.trims.as_array(), [millimetres(-14); 4], "each end carries the lap the frame allowed");
+        let (length, width) = board_span(&plan);
+        assert!((length - 748.0).abs() < 1.0e-9, "the board is 748 long, got {length}");
+        assert!((width - 628.0).abs() < 1.0e-9, "and 628 wide, got {width}");
+        assert!(!plan.outline.has_contour_features() && plan.outline.contour().is_none(), "a front is a rectangle");
+        // The frame's corner is the opening's own corner, and the board runs a lap past it.
+        let placed = plan.placement.translation();
+        assert!((placed.z - 18.0).abs() < 1.0e-9 && (placed.x - 18.0).abs() < 1.0e-9, "the opening's corner");
+        // The body runs one thickness in front of the start plane, so its inner face is that plane.
+        let gap = 18.0;
+        for corner in &plan.corners {
+            let inner = plan.placement.transform_point(DVec3::new(corner.x, corner.y, gap));
+            assert!(inner.y.abs() < 1.0e-9, "the inner face lies on the opening's plane: {inner:?}");
+            let outer = plan.placement.transform_point(DVec3::new(corner.x, corner.y, 0.0));
+            assert!(outer.y < -gap + 1.0e-9, "the body stands proud of the face: {outer:?}");
+        }
+        let axis = free_axis(Fill::WidthAndHeight);
+        assert!((plan.free_low - -18.0).abs() < 1.0e-9, "the front's outer face: {}", plan.free_low);
+        assert!(plan.free_high.abs() < 1.0e-9, "and its inner face is the start plane: {}", plan.free_high);
+        let _ = axis;
+    }
+
+    #[test]
+    fn an_end_with_no_part_behind_it_takes_no_lap() {
+        // The owner's rule: a board may run past the opening only where there is something to run
+        // over. An empty case leaves every end on the opening's own edge.
+        let (project, product) = empty_product(600, 560, 720);
+        let plan = overlay(&project, product, millimetres(14)).expect("an empty case still takes a front");
+        assert_eq!(plan.nominal_size.length(), millimetres(720), "the frame is the opening's height");
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "and its width");
+        let (length, width) = board_span(&plan);
+        assert!((length - 720.0).abs() < 1.0e-9 && (width - 600.0).abs() < 1.0e-9, "the board is the opening");
+        assert!(plan.trims.is_zero(), "no end carries a trim");
+    }
+
+    #[test]
+    fn a_part_standing_in_front_stops_the_lap_at_its_own_edge() {
+        // A neighbour front already covers the left member and 22 mm of the opening: the new board
+        // stops at its edge instead of running over it, and the end it stopped is trimmed back
+        // inside the opening — a positive trim, which is the card's own number (ADR 0240).
+        let (mut project, product) = framed_product();
+        // A front of the wall's own stance: its length up the case, its width across and its
+        // material towards the maker, so the body lies in the slab the board will take.
+        let faced = DQuat::from_rotation_z(-FRAC_PI_2) * DQuat::from_rotation_y(-FRAC_PI_2);
+        let placement = Placement::new(DVec3::new(0.0, -18.0, 0.0), faced).expect("a neighbour placement");
+        let size = PanelNominalSize::new(millimetres(756), millimetres(40)).expect("a front size");
+        project.add_panel(product, "Neighbour", size, None, millimetres(18), placement).expect("a neighbour");
+        let plan = overlay(&project, product, millimetres(14)).expect("the front still lies");
+        // The board's own axes: its length runs up the case and its width across it, so the neighbour
+        // is at the end the card calls the bottom.
+        assert_eq!(plan.nominal_size.width(), millimetres(600), "the frame is the opening, whatever the board does");
+        let (_, board_width) = board_span(&plan);
+        assert!(
+            (board_width - 592.0).abs() < 1.0e-9,
+            "the opening plus one lap, cut back at the neighbour: {board_width}"
+        );
+        assert_eq!(plan.trims.get(RectEdge::Bottom.id()), millimetres(22), "the end stops 22 mm inside the opening");
+        assert_eq!(plan.trims.get(RectEdge::Top.id()), millimetres(-14), "the other end keeps its lap");
+        let (board_length, _) = board_span(&plan);
+        assert!((board_length - 748.0).abs() < 1.0e-9, "the height is untouched");
+    }
+
+    #[test]
+    fn only_a_front_takes_a_mounting_and_an_inset_board_is_untouched() {
+        // The mounting is the frontal board's: a shelf or a post stands across the void, so the model
+        // refuses the over-fill by name rather than laying a board somewhere it cannot lie.
+        let (project, product) = empty_product(600, 560, 720);
+        let refused = project.fill_plan(
+            product,
+            FillRequest::new(centre(&project, product), Fill::WidthAndDepth, FillMode::Fit, millimetres(18), None)
+                .with_mount(FillMount::Overlay { laps: [millimetres(14); 4] }),
+            Sight::none(),
+            None,
+        );
+        assert_eq!(refused, Err(FillRefusal::NotFrontal), "a shelf is not a front");
+
+        // The inset board the same request makes is exactly the board it always was, and it carries
+        // no trims.
+        let inset = plan(&project, product, Fill::WidthAndHeight, FillMode::Fit, millimetres(18)).expect("a wall");
+        assert_eq!(inset.nominal_size.width(), millimetres(600), "the opening's own width");
+        assert!(inset.trims.is_zero(), "an inset board carries no trim");
     }
 
     /// The centre of the product's envelope, in world millimetres.

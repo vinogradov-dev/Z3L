@@ -74,10 +74,13 @@ pub use panel::{
     DerivedHoles, Drilling, EdgeBanding, EdgeRef, EntryFace, FaceSide, Hole, HoleDiagnostic, HoleError,
     MACHINING_DESCRIPTORS, Machining, MachiningAnchor, MachiningCapabilities, MachiningCategory, MachiningDescriptor,
     MachiningKind, MachiningParams, MachiningStage, Panel, PanelContourError, PanelDimensionError, PanelError,
-    PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, RING_TOLERANCE_MM,
-    RectCorner, RectEdge, RingBanding, SegmentSource, classify_outline, derive_holes,
+    PanelGeometry, PanelGeometryError, PanelNominalSize, PanelOutline, PanelRect, PanelRectError, PointsBoard,
+    PointsError, PointsPlane, PointsRing, RING_TOLERANCE_MM, RectCorner, RectEdge, RingBanding, SegmentSource,
+    board_from_three, classify_outline, derive_holes, ring_from_points, role_of_plane,
 };
-pub use panel_features::{BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE};
+pub use panel_features::{
+    BevelError, CornerFeature, CornerFeatureKind, EdgeBevel, EdgeBow, MAX_BEVEL_ANGLE, MAX_TRIM, PanelTrims, TrimError,
+};
 pub use panel_type::PanelType;
 pub use placement::{EulerAngles, PivotLocal, Placement, PlacementError};
 pub use primitive::{
@@ -86,11 +89,11 @@ pub use primitive::{
 };
 pub use profile::{Sheet, WorkshopProfile};
 pub use project::{
-    Capture, FillMode, FillPlan, FillRefusal, FillRequest, MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings,
-    Niche, NichePlane, NicheRefusal, NicheShape, Probe, ProbeFace, ProbeHit, Project, ProjectError, Resting,
-    RotateLimit, RotateRule, SNAP_GRID_MM, SceneMark, Sight, SnapAnswer, SnapAxis, SnapEnd, SnapKind, SnapKinds,
-    SnapMode, SnapPlane, SnapRequest, SnapSettings, SnapSurface, SnapTarget, Stop, SurfaceKind, free_axis,
-    round_free_coordinate, snap_axis, snap_grid,
+    Capture, FillMode, FillMount, FillPlan, FillRefusal, FillRequest, FillRowAsk, FillRowPlan, FillRowRefusal,
+    MoveAxes, MoveAxis, MoveLimit, MoveRule, MoveSettings, Niche, NichePlane, NicheRefusal, NicheShape, Probe,
+    ProbeFace, ProbeHit, Project, ProjectError, Resting, RotateLimit, RotateRule, SNAP_GRID_MM, SceneMark, Sight,
+    SnapAnswer, SnapAxis, SnapEnd, SnapKind, SnapKinds, SnapMode, SnapPlane, SnapRequest, SnapSettings, SnapSurface,
+    SnapTarget, Stop, SurfaceKind, fill_row, free_axis, round_free_coordinate, snap_axis, snap_grid,
 };
 pub use properties::{
     Properties, PropertyChange, PropertyError, PropertyValue, SYSTEM_CLASS, SYSTEM_COMPONENT, SYSTEM_PROTOTYPE_ID,

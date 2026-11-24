@@ -342,7 +342,13 @@ fn node_menu(
     selection: &Selection,
     actions: &mut Vec<NodeAction>,
 ) {
-    let source = MenuSource { project: rows.project, flags, selection: selection.ids(), active_product: rows.active };
+    let source = MenuSource {
+        project: rows.project,
+        flags,
+        selection: selection.ids(),
+        active_product: rows.active,
+        fill: None,
+    };
     if let Some(action) = node_actions::show(ui, &node_actions::entries(subject, &source)) {
         actions.push(action);
         ui.close();

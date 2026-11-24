@@ -269,10 +269,27 @@ pub const KEYS: &[Binding] = &[
     Binding { id: "sketch.create.circle.three-points", key: egui::Key::C, chord: Chord::Shift, label: "Shift+C" },
     Binding { id: "sketch.create.polygon", key: egui::Key::N, chord: Chord::Plain, label: "N" },
     Binding { id: "sketch.measure.length", key: egui::Key::M, chord: Chord::Plain, label: "M" },
-    // The niche is filed under the cell that arms it: the atom's own row names the mechanism, the
-    // map's method names the button (ADR 0117).
-    Binding { id: "furniture.panels.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
+    // The niche is filed under the atom, not under a cell: the ribbon has no niche cell (U123), and
+    // the empty space is one mechanism the fill plans from, the status bar names and the product's
+    // own context menu arms (ADR 0117, ADR 0118).
+    Binding { id: "probe.void", key: egui::Key::V, chord: Chord::Plain, label: "V" },
 ];
+
+/// The words a capability prints for one node, when they depend on what the node is now (U123).
+///
+/// A row carries one fixed label, which is the right name for a capability whose effect does not
+/// depend on the subject. A part's build does: the row offers the build the board does *not* have, so
+/// the table answers its words here instead of the entry inventing them, and the inventory stays the
+/// one place that says what a capability is called.
+pub fn live_words(id: &str, project: &model::Project, node: model::Id) -> Option<Message> {
+    match id {
+        "panel.build.set" => {
+            let shaped = project.panel(node).is_some_and(|panel| panel.outline_contour().is_some());
+            Some(if shaped { Message::FillMethodFit } else { Message::FillMethodShape })
+        }
+        _ => None,
+    }
+}
 
 /// The binding with `id`, if a key runs it.
 pub fn binding(id: &str) -> Option<&'static Binding> {
@@ -460,6 +477,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Node),
         icon: None,
     },
+    // The build a part was made with is the one property its own menu rewrites; the row it draws is
+    // named after the build it makes, so the table answers those words through `live_words` (U123).
+    Row {
+        id: "panel.build.set",
+        label: Message::CmdSetPanelBuild,
+        places: &[Place::ContextMenu],
+        applies: Applies::Context(ActsOn::Panel),
+        icon: None,
+    },
     Row {
         id: "panel.resize",
         label: Message::CmdResizePanel,
@@ -554,6 +580,13 @@ pub const ROWS: &[Row] = &[
     Row {
         id: "panel.bevel.clear",
         label: Message::CmdClearBevel,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Panel),
+        icon: None,
+    },
+    Row {
+        id: "panel.trim.set",
+        label: Message::CmdSetPanelTrim,
         places: &[Place::Card],
         applies: Applies::Context(ActsOn::Panel),
         icon: None,

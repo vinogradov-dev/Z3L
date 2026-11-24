@@ -45,7 +45,8 @@ A scene file is UTF-8 JSON with the extension `.z3l`:
     "next_id": 120,
     "root": {},
     "active_camera": 17
-  }
+  },
+  "settings": { "overlay_lap": 14000 }
 }
 ```
 
@@ -53,6 +54,14 @@ A scene file is UTF-8 JSON with the extension `.z3l`:
   says so instead of guessing.
 - `format_version` versions the framing: the envelope keys, the document key and the top-level
   layout.
+- `settings` holds the factory's numbers the piece was built with — today the lap an overlay front
+  takes past the opening, in micrometres. They are the *scene's* and not the workspace's: the theme
+  and the language belong to a person, a lap belongs to the furniture, and a command reads it from
+  the scene it writes ([0240](../decisions/0240-a-lap-is-the-boards-own-number.md)). The key is
+  additive: a build that does not know it keeps it in the preserved sections, so `format_version`
+  does not move for it. A file written before the section existed answers the build's default
+  ([`DEFAULT_OVERLAY_LAP`](../../crates/project/src/lib.rs)), which is the gap the workshop's
+  standards file (O2) closes.
 - `document` holds the document exactly as the model defines it. It is the only payload the file has;
   cameras and lights are nodes inside it, not a second section ([0036](../decisions/0036-cameras-and-lights-are-scene-objects.md)).
 - The two versions are independent. A new geometry feature bumps `schema`; only a change to the
@@ -71,7 +80,8 @@ A scene file is UTF-8 JSON with the extension `.z3l`:
   constructive object ([0037](../decisions/0037-a-geometry-object-is-a-mesh-or-a-feature-history.md),
   [0054](../decisions/0054-a-primitive-keeps-the-parameters-that-built-it.md));
 - camera and light parameters, and the active camera;
-- scene settings: world ambient and, later, render settings;
+- scene settings: the factory's numbers (today the overlay lap) and, later, world ambient and render
+  settings;
 - the document schema, revision and id allocator;
 - the format version.
 

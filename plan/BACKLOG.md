@@ -195,144 +195,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
    1000 mm panel keeps its edge; `cargo xtask ci` is green.
   `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
-  Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
-   and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
-   gesture with a different class — the cell differs only in the class whose fill trait names
-   the size pair (ADR 0099), they share both build rows and the ghost — so the ribbon asks the
-   person to name the class before the part and grows a cell per class. The class cannot be
-   changed after the click either: panel.create takes it and no command rewrites it, so a wrong
-   class costs a delete and a redraw, and the two builds and a repeat count have no home of
-   their own (ADR 0110 put the build in the cell, the count does not exist).
-  Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
-   furniture.panels.points, whose method list carries three points and n points from its own
-   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
-   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
-   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
-   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
-   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
-   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
-   query over the void's shape and coordinates that gives the interface nothing, so the
-   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
-   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
-   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
-   Overlay wall), the build (largest fit or the niche shape — the word stays niche) and the
-   count (evenly, from its own task). The class a new part is born with is the role its plane
-   implies, from the rule of its own task, and a key of the menu overrides it, as the class
-   picker writes a class on a node. Before the click the keys are the tool card's rows (ADR
-   0119); after it the same keys are the node context menu through one new command
-   panel.build.set, which rewrites class and mode from the same niche in one undo entry and
-   refuses a node that is not a panel. ADR 0110 is superseded by one record that says the cell
-   is the object and the build is its property.
-  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
-   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
-   pinned-variant table and the tests that walk the method lists; the niche still answers from
-   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
-   class, the build and the count before the click and the context menu offers them after it; a
-   new part is born with the role its plane implies and a menu key overrides it;
-   panel.build.set is one undo entry, re-derives the outline from the niche and refuses a
-   non-panel; a stale pin is dropped on load; the context menu is one Popup declared in the
-   module that owns it; cargo xtask ci is green.
-  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs`
-- `[ ]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
-  Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
-   that board laid over the frame — placed from the niche's start point by one thickness, its
-   sizes grown by a lap all round, one lap default out of the project's settings (the factory's
-   numbers, 14 mm usually). N28 answered the earlier question the other way — the tool creates
-   the plain frontal fill and the mounting is a property edited later — and the owner has now
-   made the mounting a creation key, so the board needs a placement rule and a lap, neither of
-   which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
-   position, and the outline is the section itself.
-  Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
-   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
-   answer: all four), clips the grown section by whatever stands proud of the face so the lap
-   runs over the frame's edge and never over a part that is in the way, places the board one
-   thickness off the niche's start point along the normal so it covers the frame's face instead
-   of filling the opening, and stores the four laps on the panel so the card can edit them. The
-   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
-   edge rather than being buried in it, and a begun board whose section the clip empties is
-   refused with a sentence. The lap default is a project value, not a workspace one: the
-   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
-   numbers, whose home is O2's standards file, and until that file lands the build falls back
-   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
-   test that names the plane it places on, because the owner's rule — start minus the thickness
-   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
-   row and one lap field per edge; the ADR says the lap is document data and the default is the
-   project's.
-  Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
-   inner face lies on the niche's start plane and whose body stands proud of the frame's face;
-   a part standing in front of that face clips the lap to the part's own edge and the board is
-   never buried in it; one click is one panel.create and one undo entry; the four laps are
-   stored on the part and the card edits them; a project file without the setting answers 14 mm
-   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
-   green.
-  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs`
-- `[ ]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
-  Why: The owner: with the cursor moving along the panel plane's normal in the positive
-   direction the number of panels grows and their spacing stays even, the count moving on a 1
-   mm quantum; typing the side distance to the neighbour fixes that distance and leaves the
-   remainder at the far end; the count is never more than the boards that fit without crossing,
-   whatever the niche allows. Nothing today makes more than one panel per click, and the niche
-   already answers the span the row needs.
-  Shape: One operation, designed before it is coded (design-operation). Intent: a maker fills a
-   section with N equal boards in one gesture. Input: the fill is armed, the evenly key chosen;
-   the first click creates the board under the pointer and holds it as the row's anchor, the
-   hand moving along the panel plane's normal then names the span, and every 1 mm of travel
-   re-plans the row, so the count steps on whole millimetres; a second click commits and Esc
-   drops the row. The plan is a pure query beside fill_plan (Project::fill_row): the count is
-   the last board whose near face does not cross its neighbour and whose far face is inside the
-   span, and the span is the niche's free length unless the hand names a shorter one. Feedback:
-   every board's ghost draws at once, the count and the two side distances live in one plate at
-   the hand (ADR 0119), and the status bar names the count. A typed side distance fixes the
-   gap, the row keeps its pitch from the anchor and the leftover span stays free at the far
-   end. Commit is one session batch (J4), so the whole row is one undo entry. Edge: no open
-   product, a span narrower than one board, a gap wider than the span, and a pinned gap that no
-   longer divides the niche all answer with the sentence that says which.
-  Done: A drag along the normal gives the same count as Project::fill_row answers and never
-   crosses the boards; a 1 mm move changes the count by at most one; a typed gap keeps the
-   pitch and leaves the remainder at the far end; the row commits as one undo entry and one
-   Escape restores the document; a cancelled row leaves no node and no revision; the ghost and
-   the created boards are the same outlines; cargo xtask ci is green.
-  `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs`
-- `[ ]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
-  Why: The owner: a point tool that names points in space, the first three fixing the plane, as
-   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
-   rather than one — a board by three points, which builds the standard four-corner panel, and
-   a board by n points, which is finished by the checkbox, so a count above four only ever
-   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
-   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
-   different faces, cannot be drawn at all: the work plane is chosen before the first point,
-   which is the wrong order for this tool. The class the board takes is the role its plane
-   implies, because there is no niche here to name it.
-  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
-   asked for. Three points: the first two are one edge and the third fixes the width, its
-   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
-   as a ghost from the third click and the board commits on the third click — a true rectangle,
-   which classify_outline calls a standard panel, and the only way the program makes a standard
-   board out of a plane it was given. N points: the first point starts the ring, the second
-   gives the direction, the third fixes the plane, every later point is projected onto it, and
-   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
-   triangular contour panel and n points an n-gon; more than four points only ever commit
-   through it, which is the owner's simplification. The points come from the snap resolver, not
-   from a work plane, so the first click may stand on a face, an edge or a corner, and the
-   plane is the one the first three points span — collinear points are refused with the
-   sentence the card shows, never a plane guessed from the first two. The class a created board
-   carries is the role its plane implies, from the rule of its own task, and a menu key
-   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
-   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
-   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
-   mean two things and hides one meaning behind a key; one tool with an optional finish on the
-   third point asks the maker to guess which commit they are in; a method row says it out loud
-   and the cell's pinned method remembers it (U74).
-  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
-   resolver, the plane fixing on the third point; the three-point method turns three clicks
-   into a rectangle whose fourth corner is the ghost and whose classification is a standard
-   panel; the n-point method closes three points into a triangular contour panel and n points
-   into an n-gon, and a fifth point never commits without Finish; the created board carries the
-   role its plane implies and a menu key overrides it; collinear points are refused with a
-   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
-   node and no revision; cargo xtask ci is green.
-  `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs`
 - `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
    that end, a negative grows it. The overlay wall is the same mechanism read the other way:
@@ -361,35 +223,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    size; the overlay wall reads its lap through the same field; the schema version moved and no
    migration code exists; cargo xtask ci is green.
   `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
-- `[ ]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
-  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
-   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
-   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
-   degrees against the frontal position is a wall. Today a class is a creation parameter and
-   nothing derives one: panel.create takes a class, no command writes it after the click, so a
-   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
-   ring has no role to carry and a maker would have to type one.
-  Shape: One function in model beside classify_outline — the role a plane implies: take the
-   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
-   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
-   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
-   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
-   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
-   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
-   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
-   derived class into panel.create; the niche fill keeps naming its class, because the class is
-   what picks the section pair (ADR 0099); the card shows the role the part carries and the
-   class picker overrides it through node.property.set, which already owns the reserved class
-   key. One record carries the rule, the frame it is measured in and the two ties, because the
-   tie-breaks are a decision and not a rounding.
-  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
-   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
-   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
-   the frontal answers wall; a board drawn by three points on a leaned face is born with the
-   class its plane implies and the card shows it; an explicit class passed to panel.create
-   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
-   green.
-  `files: crates/model/src/class.rs,crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs`
 - `[ ]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
   Why: The image the owner points at is lit by one big source the size of a window: shadows
    that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
@@ -509,6 +342,272 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
 
 ## Done
+
+- `[x]` **X136** the row was too twitchy, its pitch stood at the far end, and the overlay key leaked to a shelf
+  Why: The row of «Равномерно» was too sensitive to place a small count, its pitch run stood at
+   the far end of the row instead of where the maker looks, and choosing a wall with
+   «накладная» and then a shelf or a post carried the mounting into a class with no face over
+   the frame, so the click refused.
+  Shape: hand_count follows a curve and settles on six points of screen travel between changes,
+   so the small counts are easy to leave and the feel is the same at any zoom or niche size;
+   the pitch run is drawn between the two neighbours nearest the hand with its number standing
+   off the run; PanelBuild::can_overlay keeps «накладная» for the wall alone and drops it when
+   the class changes.
+  Done: Tests: the count climbs a board at a time and half the travel names a handful, a twitch
+   moves nothing, the pitch run reads the gap nearest the hand, and a wall's overlay key is
+   dropped when a shelf or a post is chosen. cargo xtask ci is green.
+  `files: app/src/fill_gizmo.rs,app/src/document.rs,crates/ui/src/editor/fill.rs,crates/ui/src/editor/cards.rs,crates/ui/src/editor/tests.rs,crates/ui/src/node_actions.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `9106caf`
+
+- `[x]` **X135** the row's count is calm in the near half, whole millimetres and a drawn pitch
+  Why: The live row of U128 still cannot hold one board in the middle of a void: the count grew
+   from the first pixel, and the owner's gesture (K3) keeps the whole near half calm and grows
+   the number only past the count-1 board. Its numbers are fractional where a maker reads whole
+   millimetres, the pitch between two boards is not drawn at all, and pinning one end of the
+   row makes the other field dead.
+  Shape: hand_count: the calm zone is the near half plus half a board (the count-1 board
+   centred in the void), and the count grows from the count-1 board's far face to the far wall,
+   normalised by that screen extent so the gesture is the same in a big void and a small one.
+   fill_row: every space whole millimetres with a constant pitch, the leftover of the division
+   in the last space that is not pinned; FillRowAsk loses the hand's span and takes start:
+   Option<f64> and count: usize. The row draws the pitch between two neighbours as a thin grey
+   dimension. The two end fields of a row keep working whichever was typed last.
+  Done: Tests: the middle of the void is one board, the near half changes nothing and the far
+   half grows the count to what fits; a row's spaces are whole millimetres with the leftover at
+   the free end; pinning the far gap then typing the near one moves the row; the pitch run is
+   on the plates. cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,app/src/fill_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,crates/ui/src/distance.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `a810da5`
+
+- `[x]` **X134** the row filled the whole void at once and the hand must name its count
+  Why: The live row of U128 filled the whole void as soon as «Равномерно» was ticked, which is
+   not the gesture the owner described: the pointer is meant to name how many boards the row
+   holds, nearer the middle fewer and nearer the wall more, and a twitch of the mouse must move
+   nothing.
+  Shape: hand_count(ratio, most, last): one board at the middle of the void and every board
+   that fits at its wall, ratio read from the hand's travel in the void's own screen extent
+   (Document::row_ratio), with a whole step of dead band around the count in force. A typed
+   count wins and a typed zero gives the number back to the hand.
+  Done: Tests: the middle asks for one board, the wall for the most, a twitch inside a step
+   moves nothing and a whole step does; a frame test hovers two places and reads two counts; a
+   typed count wins and a zero returns the hand's number. cargo xtask ci is green.
+  `files: app/src/fill_gizmo.rs,app/src/document.rs,app/src/frame_tests.rs,docs/decisions/0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md` — `f7a048e`
+
+- `[x]` **X133** the gap runs were painted under the model and the row needed a click
+  Why: U128 shipped and the owner opened it in the window: the gap arrows were invisible, and
+   «Равномерно» did nothing until he clicked, after which a stack of boards lay on top of each
+   other. Both are defects of the frame rather than of the plan: the runs were painted where
+   they were measured, before the viewport image, so the model covered them, and the row needed
+   an anchoring click nobody asked for.
+  Shape: The runs are kept as screen values and painted in the late pass over the model: one
+   painter, wide amber, a tick on the part's plane and one head on the obstacle. The row is
+   live: follow_row keeps it on the ghost the pointer measured, plan_row shares the free length
+   so the air at the near wall is the air between the boards, one click commits the batch, and
+   a typed count claims the void. The count is a reading beside the hand and a row in the
+   inspector, and Escape leaves the tool.
+  Done: Tests: the live row exists with no click and keeps the same air at both ends; a typed
+   count spreads it without writing; one click writes the whole row as one undo entry; Escape
+   leaves the tool and writes nothing; the shots the gate writes show the runs and the row.
+   cargo xtask ci is green.
+  `files: app/src/document.rs,app/src/fill_gizmo.rs,app/src/frame_tests.rs,crates/ui/src/tool_card.rs,crates/ui/src/scrub.rs` — `acb19f1`
+
+- `[x]` **U128** the fill's choices are the operation's context menu and a measured gap is a field on its arrow
+  Why: The fill's four choices and its two gap fields ride in a card anchored at the pointer:
+   the anchor is taken on the gesture's first frame and cleared the moment the card vanishes,
+   so a maker chasing it loses both the field and the choice, and the two gaps — distances to
+   the walls that stop the board — are drawn as a 1 pt grey run with no heads while the same
+   measurement on a carried piece is an amber dimension. The owner asked (2026-11-24): the
+   choices belong to the operation's own context menu, the numbers belong on the arrows, and
+   that arrow grammar serves every distance field in the program.
+  Shape: node_actions::Entry gains checked: Option<bool> and show draws the tick left of the
+   label, in one column, with a right gutter so a long word never reads as cropped; while the
+   fill is armed the viewport popup is the operation's menu alone — class, build, the
+   «Равномерно» toggle and the mounting that only a wall offers — 150 pt wide, and the node's
+   rows stay in the tree. DistanceFields::show_in_scene draws the fill's two gaps as plates in
+   the middle of their runs, and one painter (Document::paint_dimension) replaces gap_fields'
+   hairline and paint_gap_arrow's double head: amber helper ink, 3 pt, one head on the
+   obstacle, a tick on the part's own face, dimmed while the hand is elsewhere. A row's pitch
+   is a thin coaxial run read aloud and never typed, and the count is a plate with a × beside
+   the hand. The tool card keeps sizes alone. ADR 0242 supersedes the card part of ADR 0119 for
+   these two cases and extends ADR 0161 to the fill.
+  Done: Tests: the popup draws the tick left of the label and only the operation's rows while
+   the fill is armed; one painter serves the fill and the carry at one ink and width; a typed
+   gap pins its face and the plate moves with the run; the count plate follows the hand; Enter,
+   Tab and Escape keep their meanings; the inspector still mirrors the gaps; cargo xtask ci is
+   green.
+  `files: app/src/document.rs,app/src/fill_gizmo.rs,crates/ui/src/distance.rs,crates/ui/src/node_actions.rs,crates/ui/src/tool_card.rs,crates/ui/src/inventory.rs,crates/ui/src/editor/fill.rs,crates/text/src/messages.rs,app/tests/scenarios.rs,docs/decisions` — `37e5b8d`
+
+- `[x]` **U126** a panel is drawn by points in space, and the third point already fixes the plane
+  Why: The owner: a point tool that names points in space, the first three fixing the plane, as
+   many points as the maker wants, the ring finished by a checkbox; and, refined, two tools
+   rather than one — a board by three points, which builds the standard four-corner panel, and
+   a board by n points, which is finished by the checkbox, so a count above four only ever
+   commits from there. Today a board is born from a niche or drawn as a ring on a work plane
+   (furniture.panels.contour), so a board lying on a leaned face, or between points taken on
+   different faces, cannot be drawn at all: the work plane is chosen before the first point,
+   which is the wrong order for this tool. The class the board takes is the role its plane
+   implies, because there is no niche here to name it.
+  Shape: One cell, furniture.panels.points, whose method list holds the two tools the owner
+   asked for. Three points: the first two are one edge and the third fixes the width, its
+   perpendicular distance from that edge in the plane, so the fourth corner is computed, drawn
+   as a ghost from the third click and the board commits on the third click — a true rectangle,
+   which classify_outline calls a standard panel, and the only way the program makes a standard
+   board out of a plane it was given. N points: the first point starts the ring, the second
+   gives the direction, the third fixes the plane, every later point is projected onto it, and
+   the card's Finish checkbox or Enter closes the ring as it stands, so three points give the
+   triangular contour panel and n points an n-gon; more than four points only ever commit
+   through it, which is the owner's simplification. The points come from the snap resolver, not
+   from a work plane, so the first click may stand on a face, an edge or a corner, and the
+   plane is the one the first three points span — collinear points are refused with the
+   sentence the card shows, never a plane guessed from the first two. The class a created board
+   carries is the role its plane implies, from the rule of its own task, and a menu key
+   overrides it, so three clicks on a leaned side give a post without asking. Commit is one
+   panel.create carrying the ring and the class, one undo entry. Ruled out and recorded in the
+   ADR: a modifier (Enter for four corners, Shift+Enter for three) makes the same three clicks
+   mean two things and hides one meaning behind a key; one tool with an optional finish on the
+   third point asks the maker to guess which commit they are in; a method row says it out loud
+   and the cell's pinned method remembers it (U74).
+  Done: The cell arms from the Furniture tab and takes points anywhere through the snap
+   resolver, the plane fixing on the third point; the three-point method turns three clicks
+   into a rectangle whose fourth corner is the ghost and whose classification is a standard
+   panel; the n-point method closes three points into a triangular contour panel and n points
+   into an n-gon, and a fifth point never commits without Finish; the created board carries the
+   role its plane implies and a menu key overrides it; collinear points are refused with a
+   message, not a panic; one click chain is one undo entry; Escape drops the ring and leaves no
+   node and no revision; cargo xtask ci is green.
+  `files: crates/ui/src/editor/drawing.rs,crates/ui/src/editor/creation.rs,crates/ui/src/toolbars/spec.rs,crates/ui/src/tool_card.rs,crates/engine/src/panel_cmds/panel.rs` — `4a30e8c`
+
+- `[x]` **U125** evenly spreads a row of boards from the first one, and the count is what fits
+  Why: The owner: with the cursor moving along the panel plane's normal in the positive
+   direction the number of panels grows and their spacing stays even, the count moving on a 1
+   mm quantum; typing the side distance to the neighbour fixes that distance and leaves the
+   remainder at the far end; the count is never more than the boards that fit without crossing,
+   whatever the niche allows. Nothing today makes more than one panel per click, and the niche
+   already answers the span the row needs.
+  Shape: One operation, designed before it is coded (design-operation). Intent: a maker fills a
+   section with N equal boards in one gesture. Input: the fill is armed, the evenly key chosen;
+   the first click creates the board under the pointer and holds it as the row's anchor, the
+   hand moving along the panel plane's normal then names the span, and every 1 mm of travel
+   re-plans the row, so the count steps on whole millimetres; a second click commits and Esc
+   drops the row. The plan is a pure query beside fill_plan (Project::fill_row): the count is
+   the last board whose near face does not cross its neighbour and whose far face is inside the
+   span, and the span is the niche's free length unless the hand names a shorter one. Feedback:
+   every board's ghost draws at once, the count and the two side distances live in one plate at
+   the hand (ADR 0119), and the status bar names the count. A typed side distance fixes the
+   gap, the row keeps its pitch from the anchor and the leftover span stays free at the far
+   end. Commit is one session batch (J4), so the whole row is one undo entry. Edge: no open
+   product, a span narrower than one board, a gap wider than the span, and a pinned gap that no
+   longer divides the niche all answer with the sentence that says which.
+  Done: A drag along the normal gives the same count as Project::fill_row answers and never
+   crosses the boards; a 1 mm move changes the count by at most one; a typed gap keeps the
+   pitch and leaves the remainder at the far end; the row commits as one undo entry and one
+   Escape restores the document; a cancelled row leaves no node and no revision; the ghost and
+   the created boards are the same outlines; cargo xtask ci is green.
+  `files: crates/model/src/project/fill.rs,crates/engine/src/session.rs,crates/ui/src/editor/fill.rs,app/src/fill_gizmo.rs` — `610ab58`
+
+- `[x]` **U124** an overlay front panel lies over the frame's face with a lap all round, and the lap is the factory's number
+  Why: The owner: a wall is the frontal panel inscribed in the area, and the overlay wall is
+   that board laid over the frame — placed from the niche's start point by one thickness, its
+   sizes grown by a lap all round, one lap default out of the project's settings (the factory's
+   numbers, 14 mm usually). N28 answered the earlier question the other way — the tool creates
+   the plain frontal fill and the mounting is a property edited later — and the owner has now
+   made the mounting a creation key, so the board needs a placement rule and a lap, neither of
+   which the fill has: FillRequest carries a point, a pair, a mode, a thickness and a free-axis
+   position, and the outline is the section itself.
+  Shape: A mounting on the created part, chosen at creation: inset, which is today's fill, and
+   overlay, which grows the frontal section by a lap on each of its four edges (the owner's
+   answer: all four), clips the grown section by whatever stands proud of the face so the lap
+   runs over the frame's edge and never over a part that is in the way, places the board one
+   thickness off the niche's start point along the normal so it covers the frame's face instead
+   of filling the opening, and stores the four laps on the panel so the card can edit them. The
+   clip reads the same part boxes the fill already stops at, so the lap ends on the part's own
+   edge rather than being buried in it, and a begun board whose section the clip empties is
+   refused with a sentence. The lap default is a project value, not a workspace one: the
+   settings section of the scene file (crates/project/src/lib.rs) carries the factory's
+   numbers, whose home is O2's standards file, and until that file lands the build falls back
+   to 14 mm and plan/debt.md records the flip. The fill grows a FillRequest mount field and one
+   test that names the plane it places on, because the owner's rule — start minus the thickness
+   — is one sentence and the sign is only settled by the assertion. The card gains a mounting
+   row and one lap field per edge; the ADR says the lap is document data and the default is the
+   project's.
+  Done: A 600 x 720 niche with an 18 mm board and a 14 mm lap gives a 628 x 748 board whose
+   inner face lies on the niche's start plane and whose body stands proud of the frame's face;
+   a part standing in front of that face clips the lap to the part's own edge and the board is
+   never buried in it; one click is one panel.create and one undo entry; the four laps are
+   stored on the part and the card edits them; a project file without the setting answers 14 mm
+   and says so in plan/debt.md; an inset board is unchanged by the new field; cargo xtask ci is
+   green.
+  `files: crates/model/src/project/fill.rs,crates/model/src/project/niche.rs,crates/engine/src/panel_cmds/panel.rs,crates/project/src/lib.rs,crates/ui/src/panel_card.rs` — `68bab1d`
+
+- `[x]` **U123** the Panels group is three cells, and what a panel becomes is chosen on the part
+  Why: The owner: from the Panel group remove the separate buttons that create a post, a shelf
+   and a wall, and keep Panel, Panel by contour, Panel by points. The three class cells are one
+   gesture with a different class — the cell differs only in the class whose fill trait names
+   the size pair (ADR 0099), they share both build rows and the ghost — so the ribbon asks the
+   person to name the class before the part and grows a cell per class. The class is fixed at
+   creation and stays: a created part's role cannot be changed (the owner, 2026-11-24), so the
+   interface offers the class once, before the click, and nothing rewrites it afterwards; the
+   build and a repeat count have no home of their own (ADR 0110 put the build in the cell, the
+   count does not exist).
+  Shape: The group becomes furniture.panels.panel, furniture.panels.contour and
+   furniture.panels.points, whose method list carries three points and n points from its own
+   task. The panel cell has one method list: Fill in the niche, the empty-space fill whose
+   class picks the section pair, and Rectangle, a plain board drawn on the work plane and then
+   sized in the card. The contour cell does not change. The post, shelf and wall cells, the
+   FILL_POST_SHAPE, FILL_SHELF_SHAPE and FILL_WALL_SHAPE rows and the ids they pin retire, and
+   a ribbon.pinned_variants entry naming a retired id loads as no pin. The niche cell
+   furniture.panels.void leaves the ribbon too: the owner counts it as an information tool, a
+   query over the void's shape and coordinates that gives the interface nothing, so the
+   probe.void atom keeps its V binding, its row in ATOMS and the product's context menu, and
+   the fill keeps reading it (ADR 0118) — the group is three cells and nothing else. What a
+   panel becomes is one creation menu: the class (Post, Shelf, Wall and, from its own task,
+   Overlay wall), the build (Rectangle or the niche shape — the word stays niche) and the count
+   (evenly, from its own task). The class a new part is born with is the role its plane
+   implies, from the rule of its own task, and a key of the menu overrides it before the click.
+   Before the click the keys are the tool card's rows (ADR 0119); after it only the build is a
+   key of the part, through one new command panel.build.set, which rewrites the mode from the
+   same niche in one undo entry and refuses a node that is not a panel — a created part keeps
+   its role, so no command writes the class of a part that exists. ADR 0110 is superseded by
+   one record that says the cell is the object and the build is its property.
+  Done: The Furniture tab draws the panel and the contour cells and no post, shelf or wall cell
+   and no niche cell; the retired ids are gone from the ribbon map, the inventory, the
+   pinned-variant table and the tests that walk the method lists; the niche still answers from
+   ATOMS, its key and the product's context menu, and a fill plans from it; the card offers the
+   class and the build before the click, and the context menu offers the build after it because
+   a created part keeps its role (the owner, 2026-11-24); a new part is born with the role its
+   plane implies and a menu key overrides it before it exists; panel.build.set rewrites the
+   build from the same niche in one undo entry, re-derives the outline and refuses a non-panel;
+   a stale pin is dropped on load; the context menu is one Popup declared in the module that
+   owns it; cargo xtask ci is green.
+  `files: crates/ui/src/toolbars/spec.rs,crates/ui/src/toolbars.rs,crates/ui/src/editor/fill.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/node_actions.rs` — `e17d1ad`
+
+- `[x]` **N32** a panel's role is the plane it lies in, and the two 45-degree ties are decided
+  Why: The owner: every panel needs its role — post, shelf, wall — and the role is decided by
+   the angles the plane lies at: a plane nearer the vertical is a post, one nearer the horizon
+   a shelf, and the frontal one a wall; at the disputed 45 degrees the shelf wins, and 45
+   degrees against the frontal position is a wall. Today a class is a creation parameter and
+   nothing derives one: panel.create takes a class, no command writes it after the click, so a
+   board drawn by points on a leaned face, a rectangle drawn on a sloped panel or a contour
+   ring has no role to carry and a maker would have to type one.
+  Shape: One function in model beside classify_outline — the role a plane implies: take the
+   panel's face normal in its parent's frame, measure its inclination to the horizontal, and
+   answer shelf when the plane is at or below 45 degrees from the horizontal (the tie included,
+   the owner's rule), otherwise take the vertical family: a normal within 45 degrees of the
+   frame's X axis is a post and anything else is a wall, the tie going to the wall. Every
+   normal answers exactly one of the three, so a test walks a sphere of normals and asserts a
+   partition, and the two 45 degree cases are asserted on their own. Consumers: the creation
+   paths that have no niche — the by-points tool and a rectangle drawn on a plane — write the
+   derived class into panel.create; the niche fill keeps naming its class, because the class is
+   what picks the section pair (ADR 0099); the card shows the role the part carries and the
+   class picker overrides it through node.property.set, which already owns the reserved class
+   key. One record carries the rule, the frame it is measured in and the two ties, because the
+   tie-breaks are a decision and not a rounding.
+  Done: A sphere of normals partitions into the three roles with no gap and no overlap; a
+   vertical side plane answers post, a horizontal plane answers shelf and a frontal plane
+   answers wall; exactly 45 degrees to the horizontal answers shelf and exactly 45 degrees from
+   the frontal answers wall; a board drawn by three points on a leaned face is born with the
+   class its plane implies and the card shows it; an explicit class passed to panel.create
+   still wins; the class picker can change it afterwards in one undo entry; cargo xtask ci is
+   green.
+  `files: crates/model/src/panel/classify.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/editor/drawing.rs,docs/decisions/README.md` — `25801c2`
 
 - `[x]` **X132** the wardrobe recipe still writes a raw placement for a part the typed create could name
   Why: X117 gave the surface a typed create, but the wardrobe recipe — the document every

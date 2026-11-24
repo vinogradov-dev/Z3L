@@ -63,9 +63,9 @@ impl Editor {
             self.box_draft().is_some(),
             self.fill_arm().map(|arm| (arm.class, arm.mode)),
             self.measure().is_some(),
-            self.void_armed(),
             self.area_pull().is_some(),
             self.boolean_arm().map(|arm| (arm.kind(), arm.op())),
+            self.points.as_ref().map(crate::panel_points::PointsDraft::method),
         );
         let draft = self.drawing.as_ref().map(|draft| (draft.tool(), draft.len(), draft.is_closed()));
         let context = toolbars::RibbonContext {
@@ -83,6 +83,7 @@ impl Editor {
             snap_mode: view.snap_mode,
             shadows: view.shadows,
             draft,
+            build: self.panel_build(),
         };
         let mut actions = Vec::new();
         let list_rect = toolbars::show(ui, &mut self.toolbars, context, &mut actions);
@@ -131,6 +132,16 @@ impl Editor {
                     self.start_panel_drawing();
                     outcome.started_drawing = true;
                 }
+                ToolAction::DrawPanelPoints { method } => {
+                    // A second press on the same method drops the tool, like the ruler and the fill:
+                    // the mode owns the next clicks until the person leaves it (U126).
+                    if self.points().is_some_and(|draft| draft.method() == method) {
+                        self.cancel_points();
+                    } else {
+                        self.start_points(method);
+                        outcome.started_drawing = true;
+                    }
+                }
                 ToolAction::Measure => {
                     // A second press drops the ruler, like the fill arm: the mode owns the next
                     // clicks until the person leaves it, and Escape is not the only way out.
@@ -160,15 +171,12 @@ impl Editor {
                         return Err(Message::BooleanNeedsBody.text(lang).to_owned());
                     }
                 }
-                ToolAction::Void => {
-                    // A second press drops the niche tool, like the ruler and the fill arm: the mode
-                    // owns the pointer until the person leaves it, and Escape is not the only way out.
-                    self.toggle_void();
-                }
                 ToolAction::Fill { class, mode } => {
-                    // A second click on the same method drops the tool; the arm is a mode, not a
-                    // one-shot, because a maker places several posts in one piece. Picking the other
-                    // method of the same cell arms it with that mode instead of dropping the tool.
+                    // A second click on the same build drops the tool; the arm is a mode, not a
+                    // one-shot, because a maker places several posts in one piece. Pressing the cell
+                    // with another class or build chosen on the card arms that one instead of
+                    // dropping the tool, and the card's choice is remembered for the next click.
+                    self.set_panel_build(crate::editor::PanelBuild { class, mode, ..self.panel_build() });
                     if self.fill_arm().is_some_and(|arm| arm.class == class && arm.mode == mode) {
                         self.cancel_fill();
                     } else {

@@ -32,6 +32,21 @@ use crate::command::{dispatch, dispatch_in, json};
 use crate::product_card::ProductDraft;
 use crate::target::creation_target;
 
+/// What a created part is cut to: the outline it is born with, its end bevels and its end trims.
+///
+/// One value because the three are one measure of one click: a fill reads them off the plan beside
+/// the size and the placement, and a creation that carried them apart would let a ghost and a part
+/// disagree about a bevel or a lap (ADR 0107, ADR 0240).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PanelShape {
+    /// The outline the part is born with; `None` keeps the plain rectangle.
+    pub outline: Option<PanelOutline>,
+    /// The end bevels a shaped fill measured, one per outline edge.
+    pub bevels: Vec<EdgeBevel>,
+    /// The end trims a front was laid with, one per nominal edge.
+    pub trims: model::PanelTrims,
+}
+
 impl Editor {
     /// The container armed to receive the next created nodes, if any.
     pub fn creation_parent(&self) -> Option<Id> {
@@ -128,8 +143,7 @@ impl Editor {
         parent: Id,
         name: String,
         nominal_size: PanelNominalSize,
-        outline: Option<PanelOutline>,
-        bevels: Vec<EdgeBevel>,
+        shape: PanelShape,
         placement: Placement,
         class: Option<ClassCode>,
     ) -> Result<Id, String> {
@@ -137,7 +151,17 @@ impl Editor {
             .map_err(|refusal| refusal.to_string())?;
         let material = Self::panel_material(session)?;
         let name = Self::free_name(session, parent, &name);
-        let params = json(&PanelCreate { parent, name, nominal_size, material, placement, class, outline, bevels })?;
+        let params = json(&PanelCreate {
+            parent,
+            name,
+            nominal_size,
+            material,
+            placement,
+            class,
+            outline: shape.outline,
+            bevels: shape.bevels,
+            trims: shape.trims,
+        })?;
         let outcome = dispatch(session, PANEL_CREATE_ID, &params)?;
         let created = outcome.created_id();
         self.select_created(created);
@@ -206,6 +230,7 @@ impl Editor {
         self.drawing = None;
         self.fill = None;
         self.measure = None;
+        self.points = None;
         // The niche is a measurement of a mode that no longer owns the pointer, so the value goes
         // with the arm: a report row never names a space the pointer left (ADR 0118).
         self.void_armed = false;

@@ -31,7 +31,8 @@
 use eframe::egui::{self, FontId, Pos2, Rect, Stroke, Ui};
 use geom::DVec3;
 use model::{
-    EdgeBevel, Fill, FillMode, FillRefusal, Id, Niche, PanelNominalSize, PanelOutline, Placement, Project, Sight,
+    EdgeBevel, Fill, FillMode, FillMount, FillRefusal, FillRowAsk, FillRowPlan, FillRowRefusal, Id, Niche,
+    PanelNominalSize, PanelOutline, PanelTrims, Placement, Project, Sight,
 };
 use scene::Camera;
 use ui::theme;
@@ -65,6 +66,11 @@ pub(crate) struct FillGhost {
     pub(crate) free_high: f64,
     /// The end bevels the shaped fill measured, one per beveled outline edge.
     pub(crate) bevels: Vec<EdgeBevel>,
+    /// The end trims the front is laid with, one per nominal edge (ADR 0240).
+    ///
+    /// A board that fills the opening carries none; a front laid over the frame carries the lap each
+    /// end took, so the part the click writes is the front the eye measured.
+    pub(crate) trims: PanelTrims,
     /// The outline's corners on the panel's base face, in world millimetres.
     world: Vec<DVec3>,
     /// The far face's corners: the base rim with every beveled edge set back, in the world.
@@ -110,8 +116,95 @@ struct PlanKey {
     point: DVec3,
     fill: Fill,
     mode: FillMode,
+    mount: FillMount,
     thickness: Length,
     free: Option<f64>,
+}
+
+/// What the fill gesture asks its plan with: the class's pair, the build, the mounting and the board.
+///
+/// The four travel together because they are one arm's whole vocabulary (AGENTS §1.5): the axis pair
+/// the class names, the build the cell ran, the mounting the card holds and the material's thickness.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FillAsk {
+    /// The pair of the niche's sides the part takes.
+    pub(crate) fill: Fill,
+    /// How the part reads the section the walls leave.
+    pub(crate) mode: FillMode,
+    /// How the board sits against the frame: inside the opening, or laid over its face.
+    pub(crate) mount: FillMount,
+    /// The material's thickness, which is the part's third side.
+    pub(crate) thickness: Length,
+    /// The free-axis place a field pinned, or `None` while the pointer carries it.
+    pub(crate) free: Option<f64>,
+}
+
+/// The row an evenly fill would lay: the board the pointer measured, repeated.
+///
+/// The anchor is the board the pointer named: every board of the row repeats its outline, size and
+/// placement, one pitch further along the free axis (U125, U128). The row itself is a model answer
+/// re-derived per frame from the numbers the plates hold, so a still hand re-plans nothing and the
+/// ghost is never a second measurement.
+#[derive(Clone, Debug)]
+pub(crate) struct RowState {
+    /// The board the pointer measured, which the row repeats.
+    pub(crate) anchor: FillGhost,
+    /// The direction the row repeats along, in world millimetres, a unit vector.
+    pub(crate) direction: DVec3,
+    /// The row as it stands, or the reason it cannot be laid.
+    pub(crate) plan: Result<FillRowPlan, FillRowRefusal>,
+    /// The count a field typed, while the field holds one; `None` lets the hand name it.
+    pub(crate) count: Option<usize>,
+    /// The count the hand named last, and the pull it named it at.
+    ///
+    /// The pull is kept so the next change needs a real distance of travel and not a twitch of the
+    /// mouse: the count moves only once the hand has gone `ROW_SETTLE_POINTS` further (X135).
+    pub(crate) auto: usize,
+    pub(crate) auto_pull: f64,
+}
+
+/// How the count follows the hand's travel: `1.0` is a straight line, above it the small counts take
+/// a larger share of the travel and the last stretch to the wall races.
+///
+/// The number is the one knob of the row's feel: a maker who finds the small counts still too twitchy
+/// raises it, and one who wants an even climb lowers it towards `1.0` (X135).
+const ROW_CURVE: f64 = 1.6;
+
+/// How far the hand must travel, in screen points, before the count moves again.
+///
+/// The band is a distance and not a number of boards, so it feels the same in a shallow niche and a
+/// deep one, at any zoom: the count moves only when the hand has gone this far since the last change,
+/// and a twitch of the mouse leaves the row alone (the owner, 2026-11-24, «чувствительность поменьше»).
+pub(crate) const ROW_SETTLE_POINTS: f64 = 6.0;
+
+/// The count a hand asks for: `pull` is how far it travelled past the first board towards the far
+/// wall, as a share of the space it has left — `0` wherever the hand still stands in the near half
+/// of the void, `1` at the far wall.
+///
+/// One board where the hand starts, and every board that fits once it reaches the far wall (the
+/// owner, 2026-11-24). The near half is calm on purpose: the row opens as one board that splits the
+/// void in two, and the hand has to travel past it before the count moves at all — a count that grew
+/// from the first pixel could never be left at one. Past the board the count rises one board at a
+/// time, and a count in force needs a whole step of travel before it moves, so a twitch of the mouse
+/// leaves the row alone. The two ends are always honoured: the near half is one board, the far wall
+/// is the most.
+pub(crate) fn hand_count(pull: f64, most: usize) -> usize {
+    let most = most.max(1);
+    if most == 1 || !pull.is_finite() {
+        return most;
+    }
+    // The count follows the hand behind a curve, not in a straight line: the first boards need a
+    // real stretch of travel, so a maker can leave three or five and aim at them, and the count only
+    // races near the far wall, where the wall itself stops it (the owner, 2026-11-24, after the
+    // straight line proved too twitchy for the small numbers).
+    let raw = 1.0 + pull.clamp(0.0, 1.0).powf(ROW_CURVE) * (most - 1) as f64;
+    if raw <= 1.0 {
+        return 1;
+    }
+    if raw >= most as f64 {
+        return most;
+    }
+    raw.round().clamp(1.0, most as f64) as usize
 }
 
 /// The empty-space tool's live state: the ghost, or the reason there is none.
@@ -122,6 +215,8 @@ pub(crate) struct FillGizmo {
     /// The cell, the point and the numbers the ghost was planned from, so a still pointer over a
     /// still void plans nothing.
     measured: Option<PlanKey>,
+    /// The row an evenly fill is laying, while the gesture holds one (U125).
+    row: Option<RowState>,
 }
 
 impl FillGizmo {
@@ -130,6 +225,86 @@ impl FillGizmo {
         self.ghost = None;
         self.refusal = None;
         self.measured = None;
+        self.row = None;
+    }
+
+    /// The row the evenly fill would lay right now, if the pointer names a void.
+    pub(crate) fn row(&self) -> Option<&RowState> {
+        self.row.as_ref()
+    }
+
+    /// The count the hand named last, for a surface that re-plans the row without measuring a hand.
+    pub(crate) fn auto(&self) -> usize {
+        self.row.as_ref().map_or(1, |row| row.auto)
+    }
+
+    /// Records the count the hand now names and the pull it names it at.
+    pub(crate) fn settle_auto(&mut self, auto: usize, pull: f64) {
+        if let Some(row) = self.row.as_mut() {
+            row.auto = auto.max(1);
+            row.auto_pull = pull;
+        }
+    }
+
+    /// Keeps the row on the board the pointer measured, spread along `direction`.
+    ///
+    /// The row needs no click of its own (the owner, 2026-11-24): while «Равномерно» is on, the
+    /// boards are already spread through the void under the pointer and one click writes them. The
+    /// count a field holds survives a new measurement, because it is the gesture's number and not
+    /// the space's.
+    pub(crate) fn follow_row(&mut self, axis: usize, direction: DVec3) -> bool {
+        let Some(anchor) = self.ghost.clone() else {
+            return self.row.take().is_some();
+        };
+        let count = self.row.as_ref().and_then(|row| row.count);
+        let auto = self.row.as_ref().map_or(1, |row| row.auto);
+        let plan = model::fill_row(
+            &anchor.niche,
+            anchor.size_mm.z,
+            axis,
+            FillRowAsk { start: None, count: count.unwrap_or(auto), gap: None },
+        );
+        let changed = self.row.as_ref().is_none_or(|row| row.plan != plan || row.anchor != anchor);
+        let auto_pull = self.row.as_ref().map_or(0.0, |row| row.auto_pull);
+        self.row = Some(RowState { anchor, direction, plan, count, auto, auto_pull });
+        // The row is spread before any number is typed: the same air at the ends and between.
+        self.plan_row(axis, None, None, count, auto) || changed
+    }
+
+    /// Re-plans the row from the numbers a plate holds.
+    ///
+    /// `start` is the near face a typed field pinned, `gap` the far distance it fixed and `count`
+    /// the number it asked for. While neither distance is typed the row is spread evenly through the
+    /// whole void — the same air at the near wall, between the boards and the far wall — which is
+    /// what a maker reading the gesture expects to see. A number the model cannot honour leaves the
+    /// row's refusal on the state, which the plates show; nothing is written.
+    pub(crate) fn plan_row(
+        &mut self,
+        axis: usize,
+        start: Option<f64>,
+        gap: Option<f64>,
+        count: Option<usize>,
+        auto: usize,
+    ) -> bool {
+        let Some(row) = self.row.as_mut() else {
+            return false;
+        };
+        row.count = count;
+        row.auto = auto.max(1);
+        // The count in force: what a field typed, or what the hand named. A pinned end is the
+        // model's business as much as the count is: it shares the void out, keeps one pitch and
+        // leaves the leftover in the space nothing pinned (U128, X135).
+        let boards = count.unwrap_or(row.auto).max(1);
+        let ask = FillRowAsk { start, count: boards, gap };
+        let plan = model::fill_row(&row.anchor.niche, row.anchor.size_mm.z, axis, ask);
+        let changed = plan != row.plan;
+        row.plan = plan;
+        changed
+    }
+
+    /// Drops the anchored row and leaves the tool armed where it was.
+    pub(crate) fn cancel_row(&mut self) -> bool {
+        self.row.take().is_some()
     }
 
     /// The part the next click would create, if any.
@@ -149,24 +324,23 @@ impl FillGizmo {
         product: Id,
         point: DVec3,
         niche: &Niche,
-        fill: Fill,
-        mode: FillMode,
-        thickness: Length,
-        free: Option<f64>,
+        ask: FillAsk,
         sight: Sight<'_>,
     ) -> bool {
+        let FillAsk { fill, mode, mount, thickness, free } = ask;
         if self.measured.as_ref().is_some_and(|key| {
             key.niche == *niche
                 && key.point == point
                 && key.fill == fill
                 && key.mode == mode
+                && key.mount == mount
                 && key.thickness == thickness
                 && key.free == free
         }) {
             return false;
         }
-        self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, thickness, free });
-        match plan_at(project, product, point, niche, fill, mode, thickness, free, sight) {
+        self.measured = Some(PlanKey { niche: niche.clone(), point, fill, mode, mount, thickness, free });
+        match plan_at(project, product, point, niche, ask, sight) {
             Ok(ghost) => {
                 self.ghost = Some(ghost);
                 self.refusal = None;
@@ -185,20 +359,35 @@ impl FillGizmo {
     /// points at is not one cell. A `None` sentence drops the ghost silently, which is what a frame
     /// with no resolved point wants.
     pub(crate) fn refuse(&mut self, reason: Option<String>) -> bool {
-        let changed = self.ghost.is_some() || self.refusal.is_some();
+        let changed = self.ghost.is_some() || self.refusal.is_some() || self.row.is_some();
         self.ghost = None;
         self.refusal = reason;
         self.measured = None;
+        self.row = None;
         changed
     }
 
-    /// Paints the ghost's wireframe and the three sizes, in the theme's accent.
+    /// Paints the ghost, the row's boards, or the sentence that says why there is none.
     ///
     /// The outline is a wireframe, not a solid: it must read through the panels around it and never
     /// hide the void it measures. A rectangle draws its twelve edges; a shaped shelf draws its two
-    /// rims and one edge per corner, so a trapezoid reads as a trapezoid before the click.
+    /// rims and one edge per corner, so a trapezoid reads as a trapezoid before the click. A row
+    /// repeats the anchored board's wireframe once per board and carries the sizes on the first one
+    /// alone (U125).
     pub(crate) fn paint(&self, ui: &Ui, rect: Rect, camera: Camera) {
         let painter = ui.painter().with_clip_rect(rect);
+        if let Some(row) = self.row.as_ref() {
+            match &row.plan {
+                Ok(plan) => {
+                    for index in 0..plan.count.min(engine::MAX_FILL_ROW) {
+                        let offset = row.direction * (plan.pitch * index as f64);
+                        row.anchor.paint_at(ui, &painter, rect, camera, offset, index == 0);
+                    }
+                }
+                Err(refusal) => label(ui, &painter, rect.center(), refusal.sentence()),
+            }
+            return;
+        }
         let Some(ghost) = self.ghost.as_ref() else {
             // An armed tool with no ghost says why: the pointer is outside the open piece, the void
             // is too small for the material, or its section is not one shape.
@@ -207,44 +396,59 @@ impl FillGizmo {
             }
             return;
         };
+        ghost.paint_at(ui, &painter, rect, camera, DVec3::ZERO, true);
+    }
+}
+
+impl FillGhost {
+    /// Paints this board's wireframe and its three sizes, in the theme's accent, moved by `offset`.
+    ///
+    /// A row repeats one board, so the ghosts travel as one paint call per board and only the first
+    /// carries the three sizes: a callout on every board of a stack would be a wall of numbers.
+    fn paint_at(&self, ui: &Ui, painter: &egui::Painter, rect: Rect, camera: Camera, offset: DVec3, sizes: bool) {
         let ink = theme::accent(ui);
         let stroke = Stroke::new(1.6, ink);
-        let count = ghost.world.len();
-        if count < 3 || ghost.top.len() != count {
+        let count = self.world.len();
+        if count < 3 || self.top.len() != count {
             return;
         }
         for index in 0..count {
             let next = (index + 1) % count;
             let (Some(base), Some(far), Some(corner), Some(raised)) =
-                (ghost.world.get(index), ghost.world.get(next), ghost.top.get(index), ghost.top.get(next))
+                (self.world.get(index), self.world.get(next), self.top.get(index), self.top.get(next))
             else {
                 continue;
             };
             for (from, to) in [(*base, *far), (*corner, *raised), (*base, *corner)] {
-                if let (Some(start), Some(end)) = (screen_point(camera, rect, from), screen_point(camera, rect, to)) {
+                if let (Some(start), Some(end)) =
+                    (screen_point(camera, rect, from + offset), screen_point(camera, rect, to + offset))
+                {
                     painter.line_segment([start, end], stroke);
                 }
             }
         }
-        for (axis, millimetres) in [(0usize, ghost.size_mm.x), (1, ghost.size_mm.y)] {
-            let Some(edge) = widest_edge(&ghost.world, ghost.axes[axis]) else {
-                continue;
-            };
-            let Some(next) = ghost.world.get((edge + 1) % count) else {
-                continue;
-            };
-            let Some(start) = ghost.world.get(edge) else {
-                continue;
-            };
-            let Some(midpoint) = screen_point(camera, rect, (*start + *next) * 0.5) else {
-                continue;
-            };
-            label(ui, &painter, midpoint, &format!("{millimetres:.0}"));
+        if !sizes {
+            return;
         }
-        if let (Some(base), Some(raised)) = (ghost.world.first(), ghost.top.first())
-            && let Some(midpoint) = screen_point(camera, rect, (*base + *raised) * 0.5)
+        for (axis, millimetres) in [(0usize, self.size_mm.x), (1, self.size_mm.y)] {
+            let Some(edge) = widest_edge(&self.world, self.axes[axis]) else {
+                continue;
+            };
+            let Some(next) = self.world.get((edge + 1) % count) else {
+                continue;
+            };
+            let Some(start) = self.world.get(edge) else {
+                continue;
+            };
+            let Some(midpoint) = screen_point(camera, rect, (*start + *next) * 0.5 + offset) else {
+                continue;
+            };
+            label(ui, painter, midpoint, &format!("{millimetres:.0}"));
+        }
+        if let (Some(base), Some(raised)) = (self.world.first(), self.top.first())
+            && let Some(midpoint) = screen_point(camera, rect, (*base + *raised) * 0.5 + offset)
         {
-            label(ui, &painter, midpoint, &format!("{:.0}", ghost.size_mm.z));
+            label(ui, painter, midpoint, &format!("{:.0}", self.size_mm.z));
         }
     }
 }
@@ -283,7 +487,8 @@ pub(crate) fn plan(
         model::NicheRefusal::Unrepresentable => refusal_sentence(FillRefusal::Unrepresentable),
         model::NicheRefusal::Footprint => refusal_sentence(FillRefusal::Footprint),
     })?;
-    plan_at(project, product, point, &niche, fill, FillMode::Fit, thickness, None, sight)
+    let ask = FillAsk { fill, mode: FillMode::Fit, mount: FillMount::Inset, thickness, free: None };
+    plan_at(project, product, point, &niche, ask, sight)
 }
 
 /// Plans the part a click would create in `niche` and answers the wireframe the maker sees.
@@ -292,19 +497,16 @@ pub(crate) fn plan(
 /// the plan's base polygon on both faces, in the world, and the two faces the distance fields
 /// measure. `free` pins the free-axis position — a typed distance fixes it, the pointer drives it
 /// otherwise (ADR 0103).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn plan_at(
     project: &Project,
     product: Id,
     point: DVec3,
     niche: &Niche,
-    fill: Fill,
-    mode: FillMode,
-    thickness: Length,
-    free: Option<f64>,
+    ask: FillAsk,
     sight: Sight<'_>,
 ) -> Result<FillGhost, String> {
-    let request = model::FillRequest::new(point, fill, mode, thickness, free);
+    let FillAsk { fill, mode, mount, thickness, free } = ask;
+    let request = model::FillRequest::new(point, fill, mode, thickness, free).with_mount(mount);
     // The plan stops the part at a hidden body's faces, so the ghost is the part the click creates.
     let plan = project.fill_plan_in(niche, product, request, sight).map_err(refusal_sentence)?;
     let parent_world = project.world_placement(product).ok_or_else(|| "The open product has no frame.".to_owned())?;
@@ -335,8 +537,10 @@ pub(crate) fn plan_at(
     let far_along = base_along + plan.placement.transform_vector(DVec3::Z)[axis] * gap;
     let (base_centre, far_centre) = (midpoint(&world), midpoint(&top));
     let faces = if base_along <= far_along { [base_centre, far_centre] } else { [far_centre, base_centre] };
-    let size_mm =
-        DVec3::new(plan.nominal_size.length().millimetres_f64(), plan.nominal_size.width().millimetres_f64(), gap);
+    // The callouts measure the board, not its frame: a front's material is what the eye sees and
+    // what the click cuts, and its frame is the opening the person controls the position by
+    // (ADR 0240). For an ordinary fill the two are the same polygon.
+    let size_mm = DVec3::new(reach(&world, axes[0]), reach(&world, axes[1]), gap);
     Ok(FillGhost {
         parent: plan.product,
         outline: plan.outline,
@@ -344,6 +548,7 @@ pub(crate) fn plan_at(
         placement: plan.placement,
         niche: plan.niche,
         bevels: plan.bevels,
+        trims: plan.trims,
         size_mm,
         free_low: plan.free_low,
         free_high: plan.free_high,
@@ -352,6 +557,15 @@ pub(crate) fn plan_at(
         faces,
         axes,
     })
+}
+
+/// How far a ring reaches along one direction, in millimetres.
+fn reach(points: &[DVec3], direction: DVec3) -> f64 {
+    let (low, high) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), point| {
+        let along = point.dot(direction);
+        (low.min(along), high.max(along))
+    });
+    if high.is_finite() && low.is_finite() { high - low } else { 0.0 }
 }
 
 /// The reason a void cannot be filled, in the words the model states for every caller.
@@ -363,7 +577,7 @@ fn refusal_sentence(refusal: FillRefusal) -> String {
 }
 
 /// Paints one size at `position`, on a quiet plate so it stays legible over the scene.
-fn label(ui: &Ui, painter: &egui::Painter, position: Pos2, text: &str) {
+pub(crate) fn label(ui: &Ui, painter: &egui::Painter, position: Pos2, text: &str) {
     let galley = painter.layout_no_wrap(text.to_owned(), FontId::monospace(11.0), theme::text(ui));
     let rect = Rect::from_center_size(position, galley.size() + egui::vec2(6.0, 2.0));
     painter.rect_filled(rect, 3.0, theme::surface(ui));
@@ -469,6 +683,94 @@ mod tests {
     }
 
     #[test]
+    fn the_evenly_fill_spreads_its_boards_through_the_void_without_a_click() {
+        // U128: the row is live. As soon as the pointer names a void the boards are spread from the
+        // near wall to the far one with the same air at both ends; the hand names how many, a typed
+        // count claims the void, and a typed far gap keeps its own distance.
+        let (project, product) = piece();
+        let point = DVec3::new(300.0, 280.0, 200.0);
+        let niche = niche_at(&project, point);
+        let ask = FillAsk {
+            fill: Fill::WidthAndDepth,
+            mode: FillMode::Fit,
+            mount: FillMount::Inset,
+            thickness: millimetres(17),
+            free: None,
+        };
+        let mut gizmo = FillGizmo::default();
+        gizmo.hover(&project, product, point, &niche, ask, Sight::none());
+        assert!(gizmo.follow_row(2, DVec3::Z), "the pointer's board anchors the row with no click");
+        let room = 720.0_f64;
+        let thickness = 17.0_f64;
+        let fits = (room / thickness) as usize;
+        assert_eq!(
+            gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count),
+            Some(1),
+            "the row opens on one board: the hand is at the middle of the void"
+        );
+
+        // A hand at the wall asks for every board that fits: whole millimetres, one pitch, and the
+        // leftover of the division in the far air (X135).
+        gizmo.plan_row(2, None, None, None, fits);
+        let plan = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
+        assert_eq!(plan.count, fits);
+        let air = ((room - fits as f64 * thickness) / (fits as f64 + 1.0)).floor();
+        assert!((plan.low - air).abs() < 1.0e-6, "the near air is the shared one: {} against {air}", plan.low);
+        assert!((plan.gap - air).abs() < 1.0e-6, "and the boards stand that far apart: {}", plan.gap);
+        assert!(
+            plan.high >= air - 1.0e-6 && plan.high < air + fits as f64,
+            "the far air takes the leftover: {}",
+            plan.high
+        );
+        assert!(plan.low.fract() == 0.0 && plan.gap.fract() == 0.0, "every distance is whole millimetres");
+        let sum = plan.low + plan.count as f64 * thickness + (plan.count as f64 - 1.0) * plan.gap + plan.high;
+        assert!((sum - room).abs() < 1.0e-6, "the row adds up to the void: {sum} against {room}");
+
+        // A typed count claims the void, clamped to what fits without crossing.
+        gizmo.plan_row(2, None, None, Some(10_000), 1);
+        let typed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
+        assert_eq!(typed.count, fits);
+        assert_eq!(gizmo.row().and_then(|row| row.count), Some(10_000), "the field keeps what was typed");
+
+        // A typed far gap is honoured, and the neighbours divide what is left.
+        gizmo.plan_row(2, None, Some(40.0), Some(4), 1);
+        let fixed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
+        assert_eq!(fixed.count, 4);
+        assert!((fixed.high - 40.0).abs() < 1.0e-6, "the typed gap is the distance the row leaves: {}", fixed.high);
+        let shared = ((room - 4.0 * thickness - 40.0) / 4.0).floor();
+        assert!((fixed.gap - shared).abs() < 1.0e-6, "the neighbours share the rest equally: {}", fixed.gap);
+
+        // A pointer that names no void drops the row and leaves the tool armed.
+        gizmo.refuse(None);
+        assert!(gizmo.row().is_none(), "no void, no row");
+    }
+
+    #[test]
+    fn the_hand_names_the_count_past_the_first_board() {
+        // U128, X135: the near half of the void is calm and the row opens at one board that splits
+        // it, then the count grows with the hand until the far wall, where every board that fits is
+        // in the row.
+        assert_eq!(hand_count(-1.0, 40), 1, "behind the first board nothing grows");
+        assert_eq!(hand_count(0.0, 40), 1, "the first board is one board, however big the void");
+        assert_eq!(hand_count(1.0, 40), 40, "the far wall is every board that fits");
+        assert_eq!(hand_count(2.0, 40), 40, "a hand past the wall is still the wall");
+        assert_eq!(hand_count(0.5, 3), 2, "halfway with three boards is two");
+        assert_eq!(hand_count(0.5, 1), 1, "a void that holds one board asks for one");
+        // The curve keeps the small counts apart: half the travel is nowhere near half the boards,
+        // which is what makes three or five boards easy to leave in place.
+        let half = hand_count(0.5, 40);
+        assert!(half > 8 && half < 20, "half the travel names a handful of boards, not half of forty: {half}");
+        // And it only ever climbs.
+        let mut previous = 1;
+        for step in 0..=100 {
+            let count = hand_count(f64::from(step) / 100.0, 40);
+            assert!(count >= previous, "the count never shrinks as the hand pulls: {previous} then {count}");
+            assert!(count <= previous + 2, "and it climbs a board at a time: {previous} then {count}");
+            previous = count;
+        }
+    }
+
+    #[test]
     fn a_shelf_takes_the_void_width_and_depth_and_the_pointer_height() {
         let (project, product) = piece();
         let ghost = plan(
@@ -542,7 +844,9 @@ mod tests {
             .expect("a wall fills the void");
         assert_eq!(ghost.nominal_size.length(), millimetres(720), "the niche height is the wall's length");
         assert_eq!(ghost.nominal_size.width(), millimetres(600), "and the niche width is its width");
-        assert_eq!(ghost.size_mm, DVec3::new(720.0, 600.0, 18.0));
+        // The callouts measure the board's own span, so they agree with the polygon to a rounding
+        // step and not to the bit.
+        assert!((ghost.size_mm - DVec3::new(720.0, 600.0, 18.0)).length() < 1e-6, "{:?}", ghost.size_mm);
         let near = |point: DVec3, wanted: DVec3| (point - wanted).length() < 1e-9;
         assert!(near(ghost.placement.translation(), DVec3::new(0.0, 280.0, 0.0)), "{:?}", ghost.placement);
         // Vertex 1 is the base corner: the panel's length runs up, its width across the front and its
@@ -590,6 +894,11 @@ mod tests {
         }
     }
 
+    /// The ask the tests plan with: one pair, one build, the sample board, no pinned place.
+    fn ask(fill: Fill, mode: FillMode) -> FillAsk {
+        FillAsk { fill, mode, mount: FillMount::Inset, thickness: millimetres(18), free: None }
+    }
+
     #[test]
     fn a_shelf_in_a_splayed_void_takes_the_trapezoid_outline() {
         let (project, product) = splayed_piece();
@@ -599,10 +908,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none(),
         )
         .expect("a shelf fills the splayed void");
@@ -747,10 +1053,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Fit,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Fit),
             Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);
@@ -771,10 +1074,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none()
         ));
         let ghost = gizmo.ghost().expect("the leaned void takes a ghost");
@@ -807,10 +1107,7 @@ mod tests {
             product,
             point,
             &niche_at(&project, point),
-            Fill::WidthAndDepth,
-            FillMode::Shape,
-            millimetres(18),
-            None,
+            ask(Fill::WidthAndDepth, FillMode::Shape),
             Sight::none()
         ));
         let drawn = paint_ghost(&mut gizmo);

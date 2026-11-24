@@ -43,6 +43,7 @@ mod node_actions;
 mod object_card;
 mod palette;
 mod panel_card;
+mod panel_points;
 mod pivot_card;
 mod placement_card;
 mod point_fields;
@@ -72,16 +73,21 @@ pub use distance::{DistanceFields, DistanceOutcome, DistanceRefusal, Distances, 
 pub use draw::{DrawDraft, DrawDraftError, DrawIntent, DrawTool, DrawnNode};
 pub use draw_fields::{PointRow, PointState, Reference, SketchAngle, XEnd, field_row, sketch_angle};
 pub use draw_menu::{DraftMenu, DraftMenuChoice};
-pub use editor::{BandRule, BandView, BooleanArm, Editor, FillArm, SelectionBand};
+pub use editor::{
+    BandRule, BandView, BooleanArm, Editor, FILL_CLASSES, FillArm, FillSpread, PanelBuild, PanelShape, SelectionBand,
+};
 pub use inventory::{ActsOn, Applies, NodeKind, Place, Row};
 pub use measure::{Measure, MeasureClick, MeasureStage};
 pub use mesh_edit::{MeshEdit, MeshElement};
 pub use node_actions::{MenuSource, NodeAction, Subject, ViewportMenu};
 pub use palette::{Palette, PaletteContext, PaletteKey};
+pub use panel_points::{PanelPoints, PointsDraft, PointsDraftError, PointsFigure};
 pub use point_fields::{CURSOR_CLEARANCE, FieldAction, FieldEdit, FieldLabel, FieldParam, FieldRow, FieldSet};
 pub use scene_tree::Pick;
 pub use text::{Counted, Lang, Message};
-pub use tool_card::{ToolAction, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolRow, ToolToggle, ToolView};
+pub use tool_card::{
+    ToolAction, ToolChoice, ToolCommit, ToolEdit, ToolOutcome, ToolParam, ToolPick, ToolRow, ToolToggle, ToolView,
+};
 pub use toolbars::{RibbonView, RibbonViewAction};
 pub use transform::TransformMode;
 pub use view_flags::ViewFlags;

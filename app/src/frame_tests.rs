@@ -229,6 +229,11 @@ impl Harness {
         self.settle()
     }
 
+    /// The `egui` context the harness drives, for a test that hands a surface one frame of it.
+    fn context(&self) -> egui::Context {
+        self.ctx.clone()
+    }
+
     /// The scene rectangle the last frame gave the split views.
     fn scene(&self) -> egui::Rect {
         self.app.tabs.active().scene_rect().expect("a drawn frame gives the scene a rectangle")
@@ -1743,15 +1748,8 @@ fn a_carried_piece_measures_its_gaps_in_the_scene_and_a_press_over_one_puts_it_d
     harness.hover(body - up * 10.0);
     assert!(harness.app.tabs.active().holding_piece(), "the shelf is in hand");
     assert!(!harness.app.tabs.active().tool_card_is_up(), "a carried piece draws no card");
-    let chrome = harness.settle();
-    let scene = harness.scene();
-    let fields: Vec<egui::Rect> = harness
-        .drawn_rects
-        .iter()
-        .filter(|(rect, text)| scene.contains_rect(*rect) && text == "mm")
-        .map(|(rect, _)| *rect)
-        .filter(|rect| !chrome.panels.panels().any(|panel| panel.contains_rect(*rect)))
-        .collect();
+    let _chrome = harness.settle();
+    let fields: Vec<egui::Rect> = harness.app.tabs.active().distance_plate_rects().into_iter().flatten().collect();
     assert_eq!(fields.len(), 2, "one field per gap, drawn in the scene: {fields:?}");
     assert!(harness.drew(Message::ToolGapLow.text(Lang::En)), "the inspector names the low gap");
     assert!(harness.drew(Message::ToolGapHigh.text(Lang::En)), "and the high one");
@@ -2605,7 +2603,7 @@ fn the_frame_pull_draws_the_plate_the_solid_pull_draws() {
         document.editor.start_product_pull(Lang::En).expect("the base is fixed");
         document.editor.pull_box_height(mm(720)).expect("the pull");
     }
-    let frame_view = frame.app.tabs.active().tool_view().expect("the frame's pull draws a plate");
+    let frame_view = frame.app.tabs.active().tool_view(Lang::En).expect("the frame's pull draws a plate");
     assert_eq!(frame_view.rows.first().map(|row| row.value), Some(720.0), "the plate shows the pull");
 
     let (session, body) = one_body();
@@ -2616,7 +2614,7 @@ fn the_frame_pull_draws_the_plate_the_solid_pull_draws() {
         document.editor.select_node(Some(body));
         document.extrude_gizmo.start(body, mm(40));
     }
-    let solid_view = solid.app.tabs.active().tool_view().expect("the solid's pull draws a plate");
+    let solid_view = solid.app.tabs.active().tool_view(Lang::En).expect("the solid's pull draws a plate");
 
     assert_eq!(without_the_number(&frame_view), without_the_number(&solid_view), "one plate, one tool");
     assert_eq!(frame_view.title, None, "no word stands above the number");
@@ -3080,7 +3078,7 @@ fn a_cone_is_drawn_by_its_base_circle_and_finished_by_its_pull() {
         assert!(document.extrude_gizmo.is_active(), "{tool:?}: the pull is open");
         assert_eq!(document.extrude_gizmo.object(), Some(object));
         assert_eq!(document.extrude_gizmo.top(), Some(Length::ZERO), "{tool:?}: the taper starts at the apex");
-        let view = document.tool_view().expect("{tool:?}: the pull draws a card");
+        let view = document.tool_view(Lang::En).expect("{tool:?}: the pull draws a card");
         assert_eq!(view.rows.len(), 2, "{tool:?}: the height and the top radius");
         // Dragging previews the solid without writing it.
         let revision = document.session.project().revision();
@@ -3414,8 +3412,7 @@ fn splayed_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
                 product,
                 "Post".to_owned(),
                 nominal,
-                None,
-                Vec::new(),
+                ui::PanelShape::default(),
                 placement,
                 None,
             )
@@ -3472,8 +3469,7 @@ fn leaned_shelf_harness(name: &str) -> (Harness, model::Id, egui::Pos2) {
             product,
             "Wall".to_owned(),
             nominal,
-            None,
-            Vec::new(),
+            ui::PanelShape::default(),
             placement,
             None,
         )
@@ -3595,6 +3591,386 @@ fn the_fit_mode_keeps_a_standard_panel_in_a_splayed_niche() {
     assert!(document.session.project().panel(created).is_none(), "one undo removes the fitted part");
 }
 
+/// A case whose four members leave an opening, and the pointer on that opening.
+///
+/// Each member stands flush with the front plane and runs back through the case, so a front laid
+/// over the frame has a part behind every one of its ends to lap over (U124, ADR 0240).
+fn framed_front_harness(name: &str) -> (Harness, model::Id, egui::Pos2, model::PanelNominalSize) {
+    let mut harness = Harness::with_session(name, crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let document = harness.app.tabs.active_mut();
+    let product = document.session.active_product().expect("the card opens the frame");
+    let envelope =
+        document.session.project().container(product).and_then(|product| product.envelope()).expect("an envelope");
+    let (width, depth, height) =
+        (envelope.x().millimetres_f64(), envelope.y().millimetres_f64(), envelope.z().millimetres_f64());
+    let board = 18.0;
+    // A side member's thickness is across the case, a rail's is up it: one rotation stands a board
+    // on its edge, the other lays it flat.
+    let upright = geom::DQuat::from_rotation_axes(geom::DVec3::Y, geom::DVec3::Z, geom::DVec3::X);
+    let flat = geom::DQuat::IDENTITY;
+    for (translation, rotation, length, panel_width) in [
+        (geom::DVec3::ZERO, upright, depth, height),
+        (geom::DVec3::new(width - board, 0.0, 0.0), upright, depth, height),
+        (geom::DVec3::new(board, 0.0, 0.0), flat, width - 2.0 * board, depth),
+        (geom::DVec3::new(board, 0.0, height - board), flat, width - 2.0 * board, depth),
+    ] {
+        let placement = model::Placement::new(translation, rotation).expect("a member placement");
+        let nominal = model::PanelNominalSize::new(
+            units::Length::from_millimetres(length as i64).expect("a length"),
+            units::Length::from_millimetres(panel_width as i64).expect("a width"),
+        )
+        .expect("a member size");
+        document
+            .editor
+            .create_panel_sized(
+                &mut document.session,
+                product,
+                "Member".to_owned(),
+                nominal,
+                ui::PanelShape::default(),
+                placement,
+                None,
+            )
+            .expect("the member lands in the open frame");
+    }
+    let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+    let inside = geom::DVec3::new(width * 0.5, depth * 0.5, height * 0.5);
+    let pointer = gizmo_math::screen_point(document.camera(), rect, inside).expect("the opening is on screen");
+    assert!(rect.contains(pointer), "the press lands on the scene: {pointer:?} in {rect:?}");
+    // The frame is the opening itself; the fourteen millimetre laps are the material's, and the
+    // board that comes out is the opening plus a lap at each of its four ends (ADR 0240).
+    let opening = model::PanelNominalSize::new(
+        units::Length::from_millimetres((height - 2.0 * board) as i64).expect("a length"),
+        units::Length::from_millimetres((width - 2.0 * board) as i64).expect("a width"),
+    )
+    .expect("an opening size");
+    (harness, product, pointer, opening)
+}
+
+#[test]
+fn an_overlay_click_is_one_front_one_create_and_one_undo() {
+    // U124, ADR 0240: with the mounting key on, the click lays the front over the frame's face —
+    // the opening plus the laps the members allow — and the whole of it is one `panel.create` and
+    // one undo entry.
+    let (mut harness, product, pointer, front) = framed_front_harness("frame-fill-overlay");
+    let document = harness.app.tabs.active_mut();
+    document.editor.set_panel_build(ui::PanelBuild {
+        class: ClassCode::BACK_PANEL,
+        mode: model::FillMode::Fit,
+        overlay: true,
+        spread: ui::FillSpread::One,
+    });
+    document
+        .editor
+        .arm_fill(&document.session, ClassCode::BACK_PANEL, model::FillMode::Fit, Lang::En)
+        .expect("the front fill arms inside the open frame");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    let planned = harness.app.tabs.active().fill_gizmo.ghost().cloned().expect("the opening took a ghost");
+    assert_eq!(planned.nominal_size, front, "the ghost's frame is the opening");
+    assert_eq!(planned.trims.as_array(), [testkit::millimetres(-14); 4], "and its board carries the laps it took");
+    assert!((planned.size_mm.x - 712.0).abs() < 1.0e-9, "the board is the opening plus a lap at each end");
+    assert!((planned.size_mm.y - 592.0).abs() < 1.0e-9, "and across too");
+    harness.release_at(pointer, egui::PointerButton::Primary);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    let created = document.editor.selected_node().expect("the new part is selected");
+    let panel = document.session.project().panel(created).expect("the click created a panel");
+    assert_eq!(panel.nominal_size(), planned.nominal_size, "the stored frame is the ghost's");
+    assert_eq!(panel.placement(), planned.placement, "and its placement");
+    assert_eq!(panel.trims().as_array(), planned.trims.as_array(), "and the trims it was laid with");
+    assert!(!panel.is_contour(), "a front is the rectangle the opening is");
+    assert_eq!(document.session.project().parent_of(created), Some(product), "it lands in the open frame");
+    assert!(harness.revision() > before, "the click writes the document once");
+
+    let document = harness.app.tabs.active_mut();
+    document.session.undo().expect("one undo step");
+    assert!(document.session.project().panel(created).is_none(), "one undo removes the whole front");
+    // The frame is where it was: the click wrote one entry and not one per trims, size or place.
+    assert_eq!(
+        document.session.project().query(&model::NodeQuery::any()).len(),
+        1 + 4,
+        "the four members and the product are still there"
+    );
+}
+
+/// An empty frame opened by the product card, a shelf fill armed with the evenly spread and the two
+/// screen points the row gesture uses: the anchor's board low in the void and a hand above it.
+fn evenly_harness(name: &str) -> (Harness, egui::Pos2, egui::Pos2) {
+    let mut harness = Harness::with_session(name, crate::scene_build::empty_session().expect("empty"));
+    harness.settle();
+    harness.app.product_card.start();
+    harness.settle();
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    let (pointer, higher) = {
+        let document = harness.app.tabs.active_mut();
+        let product = document.session.active_product().expect("the card opens the frame");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let low = placement.transform_point(geom::DVec3::new(size.x * 0.25, size.y * 0.3, size.z * 0.1));
+        let high = placement.transform_point(geom::DVec3::new(size.x * 0.25, size.y * 0.3, size.z * 0.55));
+        let rect = document.scene_rect().expect("a drawn frame gives the scene a rectangle");
+        let camera = document.camera();
+        let pointer = gizmo_math::screen_point(camera, rect, low).expect("the low board is on screen");
+        let higher = gizmo_math::screen_point(camera, rect, high).expect("the high hand is on screen");
+        assert!(rect.contains(pointer) && rect.contains(higher), "both presses land on the scene");
+        document.editor.set_panel_build(ui::PanelBuild {
+            class: ClassCode::HORIZONTAL_PANEL,
+            spread: ui::FillSpread::Even,
+            ..ui::PanelBuild::default()
+        });
+        document
+            .editor
+            .arm_fill(&document.session, ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, Lang::En)
+            .expect("the shelf fill arms inside the open frame");
+        (pointer, higher)
+    };
+    (harness, pointer, higher)
+}
+
+#[test]
+fn the_evenly_fill_spreads_its_boards_and_one_click_writes_them_all() {
+    // U128, X135: the row is live — as soon as the pointer names a void its boards are spread through
+    // it, with the count riding beside the hand — and one click lays them as one batch: one revision,
+    // one undo entry, and the boards are the ones the ghosts drew.
+    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.settle();
+    let single = {
+        let document = harness.app.tabs.active();
+        let row = document.fill_gizmo.row().expect("the pointer spread the row with no click");
+        row.plan.clone().expect("the row is a model answer")
+    };
+    assert_eq!(single.count, 1, "a hand in the calm near half keeps the row at one board");
+    assert!(single.start > 0.0 && (single.low - single.high).abs() <= 1.0, "the one board splits the void");
+    // The hand has to travel past the first board before the count moves.
+    harness.hover(higher);
+    harness.settle();
+    {
+        let document = harness.app.tabs.active();
+        assert_eq!(harness.revision(), before, "the ghosts write nothing");
+        let row = document.fill_gizmo.row().expect("the pointer spread the row with no click");
+        let plan = row.plan.clone().expect("the row is a model answer");
+        assert!(plan.count > 1, "a hand past the first board grows the row: {}", plan.count);
+        assert!(
+            plan.low <= plan.high,
+            "the row keeps its air and lets the far one take the leftover: {} and {}",
+            plan.low,
+            plan.high
+        );
+        assert!(plan.low.fract() == 0.0 && plan.high.fract() == 0.0, "every distance is whole millimetres");
+        // The count is not a distance, so it rides beside the hand instead of on a run.
+        let plate = document.count_plate_rect().expect("the row's count drew beside the hand");
+        assert!(screen().contains_rect(plate), "the count is on screen: {plate:?}");
+        assert!(
+            plate.center().x > higher.x && plate.center().y > higher.y,
+            "the count sits below and right of the hand: {plate:?} against {higher:?}"
+        );
+        assert!(
+            plate.center().distance(higher) < 80.0,
+            "the count stays within a glance of the hand: {plate:?} against {higher:?}"
+        );
+        let shown = texts_inside(&harness, plate);
+        assert!(
+            shown.iter().any(|text| text == &plan.count.to_string()),
+            "the plate shows the row's count: {shown:?} against {}",
+            plan.count
+        );
+        // The pitch between two neighbours is drawn as a quiet run of its own: no field owns it, so
+        // it reads without a plate and its number sits on the line (X135).
+        let (from, to, text) = document.pitch_dimension().expect("the row drew its pitch");
+        assert_eq!(text, format!("{}", plan.gap.round() as i64), "the pitch run reads the gap in whole millimetres");
+        assert!(from.distance(to) > 1.0, "the run has a length on screen: {from:?} to {to:?}");
+    }
+    let boards = {
+        let document = harness.app.tabs.active();
+        document.fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count).expect("a row")
+    };
+    harness.click(higher, egui::PointerButton::Primary);
+    harness.settle();
+    assert!(harness.revision() > before, "one click writes the row");
+    let document = harness.app.tabs.active_mut();
+    let shelves = document
+        .session
+        .project()
+        .query(&model::NodeQuery::any())
+        .into_iter()
+        .filter(|id| document.session.project().panel(*id).is_some())
+        .count();
+    assert_eq!(shelves, boards, "the click wrote the boards the ghosts drew");
+    document.session.undo().expect("one undo step");
+    assert_eq!(
+        document.session.project().query(&model::NodeQuery::any()).len(),
+        1,
+        "one undo takes the whole row back"
+    );
+}
+
+#[test]
+fn both_ends_of_a_row_stay_alive_whichever_was_typed_first() {
+    // X135: the owner pinned the near air at 80 mm, tabbed to the far field, pinned that at 80 mm too
+    // and found the near field dead. A row is not one rigid part: its two ends are two independent
+    // numbers of the same gesture, so whichever was typed last, the other still moves the row.
+    let (mut harness, _lower, higher) = evenly_harness("frame-fill-row-ends");
+    harness.hover(higher);
+    harness.settle();
+    let ctx = harness.context();
+    let type_gap = |harness: &mut Harness, param: ui::ToolParam, value: f64| {
+        harness.app.tabs.active_mut().apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome { edits: vec![ui::ToolEdit { param, value }], ..ui::ToolOutcome::default() },
+        );
+        harness.settle();
+        harness.app.tabs.active().gap_rows().filter(|rows| rows.len() == 2).map(|rows| [rows[0].value, rows[1].value])
+    };
+    let near = type_gap(&mut harness, ui::ToolParam::LowGap, 80.0).expect("two rows");
+    assert_eq!(near[0], 80.0, "the near air is the number that was typed: {near:?}");
+    // Tab to the far field, as the owner did, and type the same number there.
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    harness.settle();
+    let far = type_gap(&mut harness, ui::ToolParam::HighGap, 80.0).expect("two rows");
+    assert_eq!(far[1], 80.0, "the far air is the second number: {far:?}");
+    // The near field is still live: a new number there moves the row again.
+    let again = type_gap(&mut harness, ui::ToolParam::LowGap, 120.0).expect("two rows");
+    assert_eq!(again[0], 120.0, "the near field still acts after the far one was typed: {again:?}");
+    // And a zero in a field gives that end back to the model, which spreads the row out again.
+    let released = type_gap(&mut harness, ui::ToolParam::LowGap, 0.0).expect("two rows");
+    assert_ne!(released[0], 120.0, "a zero releases the pinned end: {released:?}");
+}
+
+#[test]
+fn a_typed_count_spreads_the_live_row() {
+    // U128: the count is the row's third number. It stands beside the hand as a reading and is typed
+    // in the inspector's row, where the words are, so both surfaces show one number and neither
+    // writes until the click.
+    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row-count");
+    harness.hover(pointer);
+    harness.settle();
+    let before = harness.revision();
+    assert!(harness.app.tabs.active().count_plate_rect().is_some(), "the count drew beside the hand");
+    let ctx = harness.context();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome {
+                edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value: 4.0 }],
+                ..ui::ToolOutcome::default()
+            },
+        );
+    }
+    harness.settle();
+    let (count, boards, air) = {
+        let document = harness.app.tabs.active();
+        let row = document.fill_gizmo.row().expect("the row is still live");
+        let plan = row.plan.as_ref().expect("the row is a model answer");
+        (row.count, plan.count, (plan.low, plan.high))
+    };
+    assert_eq!(count, Some(4), "the field kept the typed count");
+    assert_eq!(boards, 4, "the row spread four boards");
+    // Whole millimetres, one pitch, and the leftover of the division in the far air (X135).
+    assert!(air.0.fract() == 0.0 && air.1.fract() == 0.0, "both airs are whole millimetres: {air:?}");
+    assert!(air.1 >= air.0 && air.1 - air.0 < 4.0, "the far air takes the leftover: {air:?}");
+    assert_eq!(harness.revision(), before, "a typed count writes nothing until the click");
+}
+
+#[test]
+fn the_hand_names_the_count_and_a_zero_gives_it_back() {
+    // U128: the count follows the hand — one board at the middle of the void and every board that
+    // fits at its wall — and a twitch of the mouse moves nothing. A typed number wins, and a typed
+    // zero hands the count back to the hand, the rule every field of this editor keeps.
+    let (mut harness, middle, _higher) = evenly_harness("frame-fill-row-hand");
+    let (product, near_wall, mid) = {
+        let document = harness.app.tabs.active();
+        let project = document.session.project();
+        let product = document.session.active_product().expect("the frame is open");
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let rect = document.scene_rect().expect("the scene has a rectangle");
+        let camera = document.camera();
+        let mid = placement.transform_point(geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.5));
+        let wall = placement.transform_point(geom::DVec3::new(size.x * 0.5, size.y * 0.5, size.z * 0.95));
+        let at = |point| gizmo_math::screen_point(camera, rect, point).expect("the void is on screen");
+        (product, at(wall), at(mid))
+    };
+    let _ = (product, middle);
+    let count_at = |harness: &mut Harness, at: egui::Pos2| {
+        harness.hover(at);
+        harness.settle();
+        harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.count)
+    };
+    let at_middle = count_at(&mut harness, mid).expect("the middle of the void spreads a row");
+    let at_wall = count_at(&mut harness, near_wall).expect("the wall spreads a row");
+    assert!(at_wall > at_middle, "the hand asks for more towards the wall: {at_middle} then {at_wall}");
+
+    // A move of a few points moves nothing: the count in force stays until the hand crosses a step.
+    let steady = harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|p| p.count);
+    let nudge = count_at(&mut harness, near_wall + egui::vec2(0.0, 2.0));
+    assert_eq!(nudge, steady, "a twitch of the mouse leaves the count alone");
+
+    // A typed number wins, and a zero gives the hand back.
+    let ctx = harness.context();
+    let type_count = |harness: &mut Harness, value: f64| {
+        harness.app.tabs.active_mut().apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome {
+                edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value }],
+                ..ui::ToolOutcome::default()
+            },
+        );
+        harness.settle();
+        harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.count)
+    };
+    assert_eq!(type_count(&mut harness, 4.0), Some(4), "a typed count is the row's number");
+    assert_eq!(type_count(&mut harness, 0.0), None, "a zero gives the count back to the hand");
+    let back = harness.app.tabs.active().fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|p| p.count);
+    assert_eq!(back, steady, "and the row is the hand's number again");
+}
+
+#[test]
+fn an_escape_leaves_the_live_row_and_writes_nothing() {
+    // U128: a row that was never clicked into being has no draft to drop. Escape leaves the tool, and
+    // the ghosts it drew wrote nothing — no node, no revision, no undo entry.
+    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row-escape");
+    let before = harness.revision();
+    harness.hover(pointer);
+    harness.settle();
+    assert!(harness.app.tabs.active().fill_gizmo.row().is_some(), "the pointer spread a live row");
+    // The low gap's field owns the keyboard while the pointer is near it, and the first Escape is the
+    // field's: it hands the number back to the pointer (ADR 0103). The second is the tool's.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    harness.settle();
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    harness.settle();
+
+    let document = harness.app.tabs.active();
+    assert!(document.editor.fill_arm().is_none(), "Escape leaves the tool");
+    assert_eq!(harness.revision(), before, "a cancelled row writes no revision");
+    let product = document.session.active_product().expect("the frame is still open");
+    assert!(
+        document.session.project().container(product).expect("the frame").children().is_empty(),
+        "a cancelled row leaves no node"
+    );
+}
+
 #[test]
 fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     // An empty scene: the sample session's loose parts stand inside a frame created at the
@@ -3637,8 +4013,10 @@ fn a_typed_distance_places_the_fill_exactly_and_the_click_creates_it() {
     // maker types into the number the gesture is driving.
     harness.run(vec![egui::Event::PointerMoved(pointer)]);
     harness.settle();
-    let card = harness.app.tabs.active().tool_card_rect().expect("the fill's card drew beside the pointer");
-    assert!(screen().contains_rect(card), "the card is on screen: {card:?}");
+    let plates = harness.app.tabs.active().distance_plate_rects();
+    let low = plates[0].expect("the low gap's field drew in the middle of its run");
+    assert!(screen().contains_rect(low), "the field is on screen: {low:?}");
+    assert!(!texts_at(&harness, low.center()).is_empty(), "the field shows the number it holds");
     harness.run(vec![egui::Event::Text("120".to_owned())]);
     harness.press(egui::Key::Enter, egui::Modifiers::NONE);
 
@@ -3813,6 +4191,21 @@ fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
 }
 
 /// Every text the last frame drew inside `rect`.
+/// The words drawn within one plate's own reach of `at`, in points.
+///
+/// A plate is a frame around one number, and the frame's rectangle is laid out a frame after the
+/// field it holds, so a test reads the words where the number is drawn and not where the frame was
+/// reported (U128).
+fn texts_at(harness: &Harness, at: egui::Pos2) -> Vec<String> {
+    const REACH: f32 = 60.0;
+    harness
+        .drawn_rects
+        .iter()
+        .filter(|(rect, _)| rect.center().distance(at) <= REACH)
+        .map(|(_, text)| text.clone())
+        .collect()
+}
+
 fn texts_inside(harness: &Harness, rect: egui::Rect) -> Vec<String> {
     harness.drawn_rects.iter().filter(|(at, _)| rect.contains_rect(*at)).map(|(_, text)| text.clone()).collect()
 }
@@ -3863,7 +4256,7 @@ fn a_frame_shows_its_height_in_the_card_and_the_inspector_and_they_never_disagre
 }
 
 #[test]
-fn a_fill_shows_its_two_gaps_in_the_card_and_the_inspector_and_they_never_disagree() {
+fn a_fill_shows_its_two_gaps_on_their_arrows_and_the_inspector_never_disagrees() {
     let mut harness =
         Harness::with_session("frame-tool-card-fill", crate::scene_build::empty_session().expect("empty"));
     harness.settle();
@@ -3893,11 +4286,24 @@ fn a_fill_shows_its_two_gaps_in_the_card_and_the_inspector_and_they_never_disagr
     harness.hover(pointer);
     let chrome = harness.settle();
     let document = harness.app.tabs.active();
-    let card = document.tool_card_rect().expect("the fill's card drew beside the pointer");
-    let in_card = texts_inside(&harness, card);
-    assert!(in_card.iter().any(|text| text == "Low gap"), "the card names both gaps: {in_card:?}");
-    assert!(in_card.iter().any(|text| text == "High gap"), "the card names both gaps: {in_card:?}");
-    assert_the_card_and_the_inspector_agree(&harness, &chrome);
+    // U128: no card at the pointer — each gap is one number in the middle of the arrow that
+    // measures it, and the arrow itself says which gap it is.
+    assert!(document.tool_card_rect().is_none(), "the fill draws no card");
+    let plates = document.distance_plate_rects();
+    for (index, plate) in plates.iter().enumerate() {
+        let plate = plate.unwrap_or_else(|| panic!("gap {index} drew its field"));
+        assert!(screen().contains_rect(plate), "the field is on screen: {plate:?}");
+    }
+    // The two numbers the inspector writes are the two the scene draws: one source of truth, two
+    // surfaces (ADR 0103, U128).
+    let inspector = chrome.panels.right.expect("the inspector is on");
+    let in_inspector = texts_inside(&harness, inspector);
+    let scene = texts_inside(&harness, screen());
+    for word in ["Low gap", "High gap"] {
+        let at = in_inspector.iter().position(|text| text == word).unwrap_or_else(|| panic!("{word} is listed"));
+        let value = in_inspector.get(at + 1).unwrap_or_else(|| panic!("{word} shows a number"));
+        assert!(scene.contains(value), "the scene draws {value:?} where the inspector writes it: {scene:?}");
+    }
 }
 
 /// A scene holding one extruded body: a 600 x 400 mm rectangle pulled 18 mm, and its id.
@@ -4160,19 +4566,10 @@ fn the_niche_is_a_tool_the_ribbon_arms_and_the_fill_reads() {
         gizmo_math::screen_point(document.camera(), rect, centre).expect("the frame is on screen")
     };
 
-    // The cell lives on the Furniture tab, and a fresh workspace opens the Sketch tab.
-    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
-        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
-    }
-    harness.settle();
-    let cell = harness
-        .faces
-        .iter()
-        .find(|(name, _)| name.starts_with(Message::ToolVoid.text(Lang::En)))
-        .map(|(_, rect)| rect.center())
-        .expect("the niche cell is on the strip");
-    harness.click(cell, egui::PointerButton::Primary);
-    assert!(harness.app.tabs.active().editor.void_armed(), "the cell arms the niche tool");
+    // The ribbon has no niche cell any more (U123): the empty space is an atom, armed by its key and
+    // by the open product's own context menu.
+    harness.press(egui::Key::V, egui::Modifiers::NONE);
+    assert!(harness.app.tabs.active().editor.void_armed(), "the niche key arms the tool");
     assert_eq!(harness.revision(), revision, "arming it writes nothing");
 
     harness.hover(pointer);
@@ -6051,8 +6448,7 @@ fn the_fill_ghost_passes_the_board_it_meets_and_holds_at_the_frame_envelope() {
                 product,
                 "Shelf".to_owned(),
                 nominal,
-                None,
-                Vec::new(),
+                ui::PanelShape::default(),
                 placement,
                 Some(ClassCode::HORIZONTAL_PANEL),
             )
@@ -8339,4 +8735,132 @@ fn a_view_the_person_framed_is_left_alone_until_frame_all_asks_again() {
     assert_ne!(clicked, turned, "the cluster's Frame all reframed the view");
     let centre = scene_centre(&harness);
     assert!((clicked.target() - centre).length() < 1.0, "on the scene's centre: {clicked:?}");
+}
+
+#[test]
+fn the_by_points_cell_takes_its_clicks_from_the_face_under_the_pointer() {
+    // U126: the points are the snap resolver's own, so the first click may stand on a face, an edge
+    // or a corner and no work plane is chosen before it. Three clicks on one face give a board whose
+    // plane that face is, which is what the contour cell cannot do.
+    let mut harness = Harness::with_session("points-face", body_and_ball_session());
+    sketch_in_mode(&mut harness, model::SnapMode::Space);
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.cancel_drawing();
+        document.editor.start_points(ui::PanelPoints::Three);
+    }
+    harness.settle();
+    let project = harness.app.tabs.active().session.project();
+    let boxed =
+        project.object(Id::new(2).expect("the box id")).expect("the box").geometry().as_constructive().expect("a body");
+    let [x, y] = boxed.contour().expect("a ring").bounds_micrometres().0.map(|value| value as f64 / 1000.0);
+    // Three places on the body's top face: the first edge and the width the third fixes.
+    let spots = [(x, y, 300.0), (x + 150.0, y, 300.0), (x, y + 120.0, 300.0)];
+    for spot in spots {
+        let at = gizmo_math::screen_point(harness.camera(), harness.scene(), geom::DVec3::from(spot))
+            .expect("the spot is on screen");
+        harness.run(vec![egui::Event::PointerMoved(at)]);
+        let document = harness.app.tabs.active();
+        let point = document.points_gizmo.hover_point().expect("the pointer names a place");
+        assert!(
+            (point[2].millimetres_f64() - 300.0).abs() < 0.01,
+            "the point is on the face, not on the view plane: {point:?}"
+        );
+        assert!(
+            document.points_gizmo.snap_kind().is_some_and(|kind| kind != model::SnapKind::Grid),
+            "a face is a place of the scene, not the plane's grid"
+        );
+        let marker = document.points_gizmo.hover_screen().expect("the marker draws where the click lands");
+        assert!((marker - at).length() < 0.5, "the marker stands on the point: {marker:?} against {at:?}");
+        harness.click(at, egui::PointerButton::Primary);
+        harness.settle();
+    }
+    // The third click finished the rectangle and asked for the commit; the commit is refused only
+    // because this scene has no open frame to receive a part, and a refusal keeps the draft so the
+    // maker can open one instead of drawing the board again.
+    let document = harness.app.tabs.active();
+    let draft = document.editor.points().expect("a refused commit keeps the points");
+    assert_eq!(draft.points().len(), 3, "three clicks fixed the rectangle");
+    assert!(draft.is_complete(), "and the rectangle is finished");
+    assert_eq!(
+        document.last_error.as_deref(),
+        Some(Message::CreationNeedsProduct.text(Lang::En)),
+        "a part is offered inside the open piece alone"
+    );
+}
+
+#[test]
+fn the_by_points_card_offers_the_class_and_the_rings_finish_and_commits_one_board() {
+    // U126: the class is chosen on the card before the first click, the ring's finish appears once
+    // the ring holds enough points, and one finish is one `panel.create`.
+    let mut harness = Harness::new("points-card");
+    harness.settle();
+    let draft = ui::product_card::ProductDraft {
+        envelope: Envelope::new(testkit::millimetres(900), testkit::millimetres(600), testkit::millimetres(720))
+            .expect("a valid box"),
+        class: ClassCode::GENERAL_PRODUCT,
+    };
+    harness.app.tabs.active_mut().create_product(draft, Lang::En).expect("create the frame");
+    let product = harness.app.tabs.active().session.active_product().expect("the frame is open");
+    let before = harness.revision();
+    let mm = testkit::millimetres;
+    // The cell lives on the Furniture tab and its first method is the three-point board.
+    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
+        harness.app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    harness.settle();
+    let hint = Message::ToolMethodName
+        .with(Lang::En, [Message::ToolPanelPoints.text(Lang::En), Message::PanelPointsThree.text(Lang::En)]);
+    let cell = harness.face(&hint).expect("the by-points cell is on the strip");
+    harness.click(cell, egui::PointerButton::Primary);
+    let document = harness.app.tabs.active();
+    assert_eq!(
+        document.editor.points().map(ui::PointsDraft::method),
+        Some(ui::PanelPoints::Three),
+        "the cell arms the three-point method"
+    );
+    assert_eq!(document.session.project().revision(), before, "arming writes nothing");
+    harness.app.tabs.active_mut().editor.cancel_points();
+    let ctx = harness.context();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.editor.start_points(ui::PanelPoints::Ring);
+        let view = document.card_view(Lang::En).expect("the ring's card");
+        assert_eq!(view.choices.len(), 1, "the class row");
+        assert_eq!(
+            view.choices[0].options,
+            vec![Message::PanelPointsFromPlane, Message::ToolPost, Message::ToolShelf, Message::ToolWall],
+            "the plane's role first, then the three roles by name"
+        );
+        assert_eq!(view.commit, ui::ToolCommit::Gesture, "no finish before the ring can be closed");
+        for corner in [(0, 0, 0), (600, 0, 0), (0, 400, 0)] {
+            document.editor.points_push([mm(corner.0), mm(corner.1), mm(corner.2)]).expect("a corner");
+        }
+        let view = document.card_view(Lang::En).expect("the ring's card");
+        assert!(
+            matches!(view.commit, ui::ToolCommit::Pair { apply: Message::FinishEnter, .. }),
+            "three points are enough for the finish"
+        );
+        // The class row is a menu key: a press chooses a role instead of the plane's own answer.
+        document.apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome { pick: Some(ui::ToolPick { row: 0, option: 3 }), ..Default::default() },
+        );
+        assert_eq!(document.editor.points().and_then(ui::PointsDraft::class), Some(ClassCode::BACK_PANEL));
+        document.commit_points(Lang::En).expect("the finish cuts the board");
+    }
+    let document = harness.app.tabs.active();
+    assert!(document.editor.points().is_none(), "the commit ends the tool");
+    assert_eq!(harness.revision().get(), before.get() + 1, "the board is one command");
+    let board = *document.editor.selected_nodes().first().expect("the board is selected");
+    assert_eq!(document.session.project().parent_of(board), Some(product), "it lands in the open frame");
+    let panel = document.session.project().panel(board).expect("a panel");
+    assert!(panel.is_contour(), "the ring is the outline");
+    assert_eq!(panel.outline_contour().expect("ring").segments().count(), 3, "three points enclose a triangle");
+    assert_eq!(
+        document.session.project().class(board),
+        Some(ClassCode::BACK_PANEL),
+        "the card's class is the one the board carries"
+    );
+    assert!(document.session.can_undo(), "and one undo entry");
 }

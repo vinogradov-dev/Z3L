@@ -13,7 +13,7 @@ use crate::contour_edit::ContourTarget;
 use crate::contour_grips::ContourGrip;
 use crate::draw::{DEFAULT_POLYGON_SIDES, DrawDraftError, DrawIntent, DrawTool};
 use crate::mesh_edit::MeshElement;
-use crate::node_actions::NodeAction;
+use crate::node_actions::{FillPick, NodeAction};
 use crate::scene_tree::Pick;
 use crate::toolbars::{ToolAction, spec};
 use engine::{PanelCreate, PrimitiveKind, Session};
@@ -87,8 +87,7 @@ fn plain_panel(editor: &mut Editor, session: &mut Session, parent: Id) -> Result
         parent,
         "Panel".to_owned(),
         PanelCreate::default_nominal_size().map_err(|error| error.to_string())?,
-        None,
-        Vec::new(),
+        PanelShape::default(),
         Placement::IDENTITY,
         None,
     )
@@ -559,6 +558,68 @@ fn a_panel_draft_refuses_an_open_ring_and_cuts_the_board_on_close() {
     session.undo().expect("one undo removes the board");
     assert!(session.project().panel(drawn.object).is_none());
     assert!(session.project().container(product).is_some(), "the one undo entry took the board alone");
+}
+
+/// A work plane tipped `degrees` away from the horizontal about `Y`, which is how a board drawn
+/// on a leaned face reaches the commit.
+fn leaned_plane(degrees: f64) -> Placement {
+    Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_y(degrees.to_radians())).expect("a unit rotation")
+}
+
+/// The frontal plane: tipped 90 degrees about `X`, so its normal is the parent's `Y` axis.
+fn frontal_plane() -> Placement {
+    Placement::new(DVec3::ZERO, geom::DQuat::from_rotation_x(std::f64::consts::FRAC_PI_2)).expect("a unit rotation")
+}
+
+/// Draws a 700 × 500 board on `plane` and answers the panel it cut.
+fn commit_board_on(session: &mut Session, editor: &mut Editor, plane: Placement) -> Id {
+    let mm = |value: i64| Length::from_millimetres(value).expect("a whole millimetre");
+    editor.start_panel_drawing();
+    editor.drawing_point([mm(0), mm(0)]).expect("first corner");
+    editor.drawing_point([mm(700), mm(0)]).expect("second corner");
+    editor.drawing_point([mm(700), mm(500)]).expect("third corner");
+    let drawn = editor.close_and_commit_drawing(session, plane, text::Lang::En).expect("the close cuts the board");
+    drawn.object
+}
+
+#[test]
+fn a_board_drawn_on_a_plane_is_born_with_the_role_that_plane_implies() {
+    // ADR 0238: the ring has no niche to name a class, so the plane under it does — the work
+    // plane's own board is a shelf, a ring on a leaned face is a post once it passes 45 degrees,
+    // and the frontal plane is a wall.
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
+    let mut editor = Editor::new();
+    editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
+    let roles = [
+        (Placement::IDENTITY, model::ClassCode::HORIZONTAL_PANEL, "a board on the work plane is a shelf"),
+        (leaned_plane(60.0), model::ClassCode::VERTICAL_PANEL, "a board on a 60 degree face is a post"),
+        (frontal_plane(), model::ClassCode::BACK_PANEL, "a board on the frontal plane is a wall"),
+    ];
+    for (plane, expected, why) in roles {
+        let board = commit_board_on(&mut session, &mut editor, plane);
+        assert_eq!(session.project().class(board), Some(expected), "{why}");
+    }
+    let panel = commit_board_on(&mut session, &mut editor, Placement::IDENTITY);
+    assert_eq!(session.project().class(panel), Some(model::ClassCode::HORIZONTAL_PANEL));
+    // The role is a node property like any other, so the picker overrides it through
+    // `node.property.set` in one undo entry — the unclassified row is the picker's own first row,
+    // and it needs no host rule to be assigned here (a furniture class would name its host first).
+    let revision = session.project().revision();
+    let params = serde_json::to_value(engine::node_cmds::NodePropertySet {
+        node: panel,
+        key: model::SYSTEM_CLASS.to_owned(),
+        value: model::PropertyValue::class(model::ClassCode::UNCLASSIFIED),
+    })
+    .expect("class parameters");
+    session.dispatch(engine::node_cmds::NODE_PROPERTY_SET_ID, &params).expect("clear the class");
+    assert_eq!(session.project().class(panel), Some(model::ClassCode::UNCLASSIFIED));
+    assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one undo entry");
+    session.undo().expect("undo the assignment");
+    assert_eq!(
+        session.project().class(panel),
+        Some(model::ClassCode::HORIZONTAL_PANEL),
+        "the role the plane implied comes back with the one undo entry"
+    );
 }
 
 /// The project with its revision counter at the end of its range, so the next command is refused.
@@ -2092,6 +2153,27 @@ fn fill_session() -> (Session, Id) {
 }
 
 #[test]
+fn the_overlay_key_belongs_to_the_wall_and_never_rides_on_a_shelf() {
+    // X135: the owner chose a wall, pressed «накладная», then chose a shelf — and the click refused,
+    // because the shelf carried a stance only a wall can take. The key is the wall's, so walking to
+    // another class drops it instead of carrying it.
+    let (session, _product) = fill_session();
+    let mut editor = Editor::new();
+    editor.arm_fill(&session, ClassCode::BACK_PANEL, FillMode::Fit, crate::Lang::En).expect("a wall fills a void");
+    editor.apply_fill_pick(&session, FillPick::Mount(true), crate::Lang::En).expect("the wall goes over the frame");
+    assert!(editor.panel_build().overlay, "a wall takes the overlay key");
+    // Choosing a shelf keeps the class it was asked for and drops the key.
+    editor
+        .apply_fill_pick(&session, FillPick::Class(ClassCode::HORIZONTAL_PANEL), crate::Lang::En)
+        .expect("a shelf fills a void");
+    assert_eq!(editor.panel_build().class, ClassCode::HORIZONTAL_PANEL, "the shelf is what the menu chose");
+    assert!(!editor.panel_build().overlay, "a shelf has no face over the frame, so the key goes");
+    // And any surface that sets the build goes through the same rule.
+    editor.set_panel_build(PanelBuild { class: ClassCode::VERTICAL_PANEL, overlay: true, ..PanelBuild::default() });
+    assert!(!editor.panel_build().overlay, "the key is dropped whichever surface set the build");
+}
+
+#[test]
 fn the_empty_space_tool_arms_only_a_class_whose_trait_fills_a_void() {
     let (session, _product) = fill_session();
     let mut editor = Editor::new();
@@ -2162,7 +2244,7 @@ fn arming_the_empty_space_tool_leaves_the_other_pointer_modes() {
 fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
     // U99, ADR 0118: the niche is an atom with its own arm. Arming it leaves a running draft, the
     // fill and its own measurement behind; dropping it writes nothing because it never wrote.
-    let (mut session, _product) = fill_session();
+    let (session, _product) = fill_session();
     let mut editor = Editor::new();
     editor.start_drawing(DrawTool::Line);
     editor.arm_void();
@@ -2172,16 +2254,9 @@ fn the_niche_is_armed_and_dropped_like_a_pointer_mode() {
     assert!(!editor.void_armed(), "a fill replaces the niche tool");
     assert!(editor.fill_arm().is_some());
     editor.toggle_void();
-    assert!(editor.void_armed() && editor.fill_arm().is_none(), "the niche cell toggles the tool");
+    assert!(editor.void_armed() && editor.fill_arm().is_none(), "the product's own entry toggles the tool");
     editor.toggle_void();
     assert!(!editor.void_armed(), "a second press drops it");
-
-    // The key and the cell land in the same place: the editor's own toggle.
-    let mut editor = Editor::new();
-    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell arms");
-    assert!(editor.void_armed());
-    editor.apply_ribbon_actions(&mut session, vec![ToolAction::Void], crate::Lang::En).expect("the cell drops");
-    assert!(!editor.void_armed());
 }
 
 #[test]
@@ -2349,8 +2424,7 @@ fn a_fill_creates_a_classed_panel_of_exactly_the_ghost_size() {
             product,
             "Shelf".to_owned(),
             size,
-            None,
-            Vec::new(),
+            PanelShape::default(),
             placement,
             Some(ClassCode::HORIZONTAL_PANEL),
         )
@@ -2885,4 +2959,159 @@ fn the_extrude_cell_arms_the_area_pull_on_a_drawing() {
     editor.arm_void();
     assert_eq!(editor.area_pull(), None);
     assert!(editor.area().region().is_none());
+}
+
+/// A world point in whole millimetres, the way the snap resolver hands a click to the by-points tool.
+fn world(x: i64, y: i64, z: i64) -> [Length; 3] {
+    [x, y, z].map(|value| Length::from_millimetres(value).expect("a whole millimetre"))
+}
+
+/// An open product with a catalogue material, which is where every part drawn by points lands.
+fn points_session() -> (Session, Editor, Id) {
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
+    let mut editor = Editor::new();
+    editor.create_product(&mut session, product_draft(), crate::Lang::En).expect("create the frame");
+    let product = session.active_product().expect("the frame is open");
+    (session, editor, product)
+}
+
+#[test]
+fn the_three_point_cell_cuts_a_standard_board_and_one_undo_takes_it_back() {
+    // U126: three points are an edge and a width, so the fourth corner is computed and the board is
+    // a standard rectangle panel — the one way this program makes one out of a plane it was given.
+    let (mut session, mut editor, product) = points_session();
+    editor.start_points(crate::PanelPoints::Three);
+    editor.points_push(world(0, 0, 0)).expect("the first point");
+    editor.points_push(world(600, 0, 0)).expect("the edge");
+    let revision = session.project().revision();
+    editor.points_push(world(0, 400, 0)).expect("the width");
+    assert!(editor.points().is_some_and(crate::PointsDraft::is_complete), "the third click finishes the board");
+    let board = editor.commit_points(&mut session, crate::Lang::En).expect("the board commits");
+    assert!(editor.points().is_none(), "the commit ends the tool");
+    assert_eq!(session.project().revision(), revision.checked_next().expect("revision"));
+    assert_eq!(session.project().parent_of(board), Some(product), "the board lands in the open product");
+
+    let panel = session.project().panel(board).expect("a panel");
+    assert!(!panel.is_contour(), "the board is a standard rectangle panel, not a contour");
+    let size = panel.nominal_size();
+    assert_eq!(size.length(), millimetres(600));
+    assert_eq!(size.width(), millimetres(400));
+    assert_eq!(session.project().class(board), Some(ClassCode::HORIZONTAL_PANEL), "a board on the floor is a shelf");
+    // The fourth corner was never clicked: the plane and the two sides compute it.
+    let frame = session.project().world_placement(board).expect("a world frame");
+    let fourth = frame.transform_point(DVec3::new(600.0, 400.0, 0.0));
+    assert!(fourth.abs_diff_eq(DVec3::new(600.0, 400.0, 0.0), 1.0e-6), "the computed corner: {fourth:?}");
+
+    session.undo().expect("one undo removes the board");
+    assert!(session.project().panel(board).is_none());
+    assert!(session.project().container(product).is_some(), "the one undo entry took the board alone");
+}
+
+#[test]
+fn the_ring_cell_takes_n_points_and_only_its_finish_commits() {
+    // U126: the first three points fix the plane, every later point is projected onto it, and a
+    // count above four reaches the document through the finish alone.
+    let (mut session, mut editor, _product) = points_session();
+    editor.start_points(crate::PanelPoints::Ring);
+    // The fourth corner is clicked on a face 250 mm above the floor: the ring is measured where the
+    // point projects, which is what makes a ring drawn across several faces flat.
+    let corners = [world(0, 0, 0), world(600, 0, 0), world(800, 300, 0), world(300, 600, 250), world(-200, 300, 0)];
+    for (index, corner) in corners.iter().enumerate() {
+        editor.points_push(*corner).expect("a corner of the ring");
+        assert!(
+            !editor.points().is_some_and(crate::PointsDraft::is_complete),
+            "point {index}: a ring never closes itself"
+        );
+    }
+    assert_eq!(editor.points().expect("a draft").points().len(), 5);
+    let board = editor.commit_points(&mut session, crate::Lang::En).expect("the finish cuts the board");
+    let panel = session.project().panel(board).expect("a panel");
+    assert!(panel.is_contour(), "the ring is the outline");
+    assert_eq!(panel.outline_contour().expect("ring").segments().count(), 5, "n points make n sides");
+    assert_eq!(session.project().class(board), Some(ClassCode::HORIZONTAL_PANEL), "a ring on the floor is a shelf");
+}
+
+#[test]
+fn the_plane_names_the_role_and_the_makers_choice_overrides_it() {
+    // ADR 0238 and U126: a board standing on its edge at 60 degrees is a post without being asked,
+    // and the card's class row is the only thing that overrides the plane.
+    let (mut session, mut editor, _product) = points_session();
+    for (override_class, expected, why) in [
+        (None, ClassCode::VERTICAL_PANEL, "a board on a leaned side is a post"),
+        (Some(ClassCode::BACK_PANEL), ClassCode::BACK_PANEL, "the menu key wins"),
+    ] {
+        editor.start_points(crate::PanelPoints::Three);
+        editor.points_push(world(0, 0, 0)).expect("the first point");
+        editor.points_push(world(0, 600, 0)).expect("the edge along Y");
+        editor.points_push(world(-18, 0, 400)).expect("a point on the leaned face");
+        editor.set_points_class(override_class);
+        let board = editor.commit_points(&mut session, crate::Lang::En).expect("the board commits");
+        assert_eq!(session.project().class(board), Some(expected), "{why}");
+    }
+}
+
+#[test]
+fn an_unfinished_or_collinear_board_is_refused_and_writes_nothing() {
+    let (mut session, mut editor, _product) = points_session();
+    let revision = session.project().revision();
+    editor.start_points(crate::PanelPoints::Three);
+    editor.points_push(world(0, 0, 0)).expect("the first point");
+    editor.points_push(world(600, 0, 0)).expect("the edge");
+    let refusal = editor.commit_points(&mut session, crate::Lang::En).expect_err("two points are no board");
+    assert!(refusal.contains(text::Message::PanelPointsNeedThree.text(crate::Lang::En)), "got {refusal}");
+    let refusal = editor.points_push(world(300, 0, 0)).expect_err("the third point is on the edge's own line");
+    assert_eq!(refusal.message(), text::Message::PanelPointsCollinear);
+    assert_eq!(editor.points().expect("a draft").refusal(), Some(text::Message::PanelPointsCollinear));
+    assert_eq!(session.project().revision(), revision, "a refusal writes nothing");
+}
+
+#[test]
+fn escape_drops_the_points_and_leaves_no_node_and_no_revision() {
+    let (mut session, mut editor, _product) = points_session();
+    let revision = session.project().revision();
+    let before = session.project().root().children().len();
+    editor.start_points(crate::PanelPoints::Ring);
+    for corner in [world(0, 0, 0), world(600, 0, 0), world(600, 400, 0)] {
+        editor.points_push(corner).expect("a corner");
+    }
+    editor.cancel_points();
+    assert!(editor.points().is_none(), "the tool ends");
+    assert_eq!(session.project().revision(), revision, "no revision");
+    assert_eq!(session.project().root().children().len(), before, "no node");
+    // The product's creation is still the newest entry: the dropped points added none.
+    session.undo().expect("the product's creation is on top of the stack");
+    assert!(session.active_product().is_none(), "the undo took the frame, so the points added no entry");
+}
+
+#[test]
+fn the_by_points_cell_arms_its_two_methods_and_a_second_press_drops_the_tool() {
+    let (mut session, mut editor, _product) = points_session();
+    editor
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::DrawPanelPoints { method: crate::PanelPoints::Ring }],
+            crate::Lang::En,
+        )
+        .expect("the cell arms the ring");
+    assert_eq!(editor.points().map(crate::PointsDraft::method), Some(crate::PanelPoints::Ring));
+    editor
+        .apply_ribbon_actions(
+            &mut session,
+            vec![ToolAction::DrawPanelPoints { method: crate::PanelPoints::Ring }],
+            crate::Lang::En,
+        )
+        .expect("a second press drops the mode");
+    assert!(editor.points().is_none(), "the mode owns the pointer until it is pressed again");
+    // The other method is its own row and replaces the running tool instead of adding to it.
+    editor
+        .apply_ribbon_actions(
+            &mut session,
+            vec![
+                ToolAction::DrawPanelPoints { method: crate::PanelPoints::Ring },
+                ToolAction::DrawPanelPoints { method: crate::PanelPoints::Three },
+            ],
+            crate::Lang::En,
+        )
+        .expect("the methods swap");
+    assert_eq!(editor.points().map(crate::PointsDraft::method), Some(crate::PanelPoints::Three));
 }

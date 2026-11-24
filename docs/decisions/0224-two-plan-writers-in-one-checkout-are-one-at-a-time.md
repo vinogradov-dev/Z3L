@@ -24,7 +24,7 @@ process, so the only lock that reaches two shells is a file, not a mutex.
 ## Decision
 
 - **The lock is taken at the verb's entrance and released when the verb ends.** Every verb that
-  writes the plan — `task add|start|set|step|note|close|reopen|take|defer|drop|phase`, `state` and
+  writes the plan — `task add|start|set|step|note|close|reopen|take|defer|unstart|drop|phase`, `state` and
   `file` — acquires `plan/.lock` before it reads a plan file and holds it until the bytes have
   landed or the verb has refused. `create_new` is the test-and-set, so no writer ever sees a
   half-taken lock.

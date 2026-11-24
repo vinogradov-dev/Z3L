@@ -93,6 +93,12 @@ pub enum ToolAction {
     DrawProductFrameContour,
     /// Arms the free-outline tool, whose closed ring becomes one panel cut to it.
     DrawPanelContour,
+    /// Arms the by-points tool: the first three clicks fix the plane, and the method says what the
+    /// figure becomes.
+    DrawPanelPoints {
+        /// Which of the two by-points tools takes the clicks.
+        method: crate::panel_points::PanelPoints,
+    },
     /// Arms the empty-space tool with the class whose `fill` trait picks the axis pair.
     Fill {
         /// The class a post or a shelf fills the void with.
@@ -147,9 +153,6 @@ pub enum ToolAction {
     ToggleShadows,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
     Measure,
-    /// Arms the niche tool, or disarms it when it already is: the pointer names the empty space
-    /// inside the open product and the document is never touched (ADR 0118).
-    Void,
     /// Arms one contour boolean over the selection, or drops it when it is already armed (G3).
     ContourBoolean(ContourOp),
     /// Arms one body boolean over the selected body, or drops it when it is already armed (W1).
@@ -196,6 +199,8 @@ pub enum ToolActivity {
     /// The draft is the same; only what its close becomes differs, so the pressed cell is the contour
     /// cell and not the sketch tool whose glyph the draft borrows (ADR 0114).
     PanelContour,
+    /// The by-points tool is collecting points, with one of its two methods (U126).
+    PanelPoints(crate::panel_points::PanelPoints),
     /// A primitive is waiting for its work-plane click.
     Primitive(PrimitiveKind),
     /// A rectangle method is drawing a product frame's reserved box.
@@ -216,8 +221,6 @@ pub enum ToolActivity {
     },
     /// The ruler is armed and owns the next click.
     Measure,
-    /// The niche tool is armed and names the empty space under the pointer.
-    Void,
     /// The area pull is armed: the pointer names an area of the selected drawing, and a click pulls
     /// it into a body of its own (G4).
     AreaPull,
@@ -237,27 +240,29 @@ pub fn tool_activity(
     frame: bool,
     fill: Option<(ClassCode, FillMode)>,
     measure: bool,
-    niche: bool,
     pull: bool,
     boolean: Option<(crate::editor::BooleanOperand, ContourOp)>,
+    points: Option<crate::panel_points::PanelPoints>,
 ) -> Option<ToolActivity> {
-    let drawing = match (drawing, frame, fill, measure, niche) {
-        (Some((tool, DrawIntent::Path)), _, _, _, _) => Some(ToolActivity::Draw(tool)),
-        (Some((tool, DrawIntent::Body)), _, _, _, _) => Some(ToolActivity::Body(tool)),
-        (Some((_, DrawIntent::Panel)), _, _, _, _) => Some(ToolActivity::PanelContour),
-        (Some((tool, DrawIntent::ProductBox)), _, _, _, _) => Some(ToolActivity::ProductBox(tool)),
-        (Some((_, DrawIntent::Product)), _, _, _, _) => Some(ToolActivity::ProductContour),
+    let drawing = match (drawing, frame, fill, measure) {
+        (Some((tool, DrawIntent::Path)), _, _, _) => Some(ToolActivity::Draw(tool)),
+        (Some((tool, DrawIntent::Body)), _, _, _) => Some(ToolActivity::Body(tool)),
+        (Some((_, DrawIntent::Panel)), _, _, _) => Some(ToolActivity::PanelContour),
+        (Some((tool, DrawIntent::ProductBox)), _, _, _) => Some(ToolActivity::ProductBox(tool)),
+        (Some((_, DrawIntent::Product)), _, _, _) => Some(ToolActivity::ProductContour),
         // A primitive's placement is a draft like any other, so the pressed cell is the sphere's.
-        (Some((_, DrawIntent::Primitive(kind))), _, _, _, _) => Some(ToolActivity::Primitive(kind)),
-        (None, true, _, _, _) => Some(ToolActivity::ProductFrame),
-        (None, false, Some((class, mode)), _, _) => Some(ToolActivity::Fill { class, mode }),
-        (None, false, None, true, _) => Some(ToolActivity::Measure),
-        (None, false, None, false, true) => Some(ToolActivity::Void),
-        (None, false, None, false, false) => None,
+        (Some((_, DrawIntent::Primitive(kind))), _, _, _) => Some(ToolActivity::Primitive(kind)),
+        (None, true, _, _) => Some(ToolActivity::ProductFrame),
+        (None, false, Some((class, mode)), _) => Some(ToolActivity::Fill { class, mode }),
+        (None, false, None, true) => Some(ToolActivity::Measure),
+        (None, false, None, false) => None,
     };
     // A boolean is a mode of its own that owns the picks, so it never shares the pressed cell with
     // a running draft or a fill (G3). The two operand kinds are two cells on two tabs, and the kind
     // decides which one draws pressed (W1).
+    // The by-points tool is a mode of its own over the pointer, and the cell is one, so the method
+    // decides which row draws pressed (U126).
+    let drawing = drawing.or(points.map(ToolActivity::PanelPoints));
     drawing.or(pull.then_some(ToolActivity::AreaPull)).or(boolean.map(|(kind, op)| match kind {
         crate::editor::BooleanOperand::Rings => ToolActivity::ContourBoolean(op),
         crate::editor::BooleanOperand::Bodies => ToolActivity::BodyBoolean(op),
@@ -273,17 +278,17 @@ fn is_armed(activity: Option<ToolActivity>, kind: ToolKind) -> bool {
         (Some(ToolActivity::Draw(armed)), ToolKind::Draw(tool)) => armed == tool,
         (Some(ToolActivity::Body(armed)), ToolKind::Body(tool)) => armed == tool,
         (Some(ToolActivity::PanelContour), ToolKind::PanelContour) => true,
+        (Some(ToolActivity::PanelPoints(armed)), ToolKind::PanelPoints(method)) => armed == method,
         (Some(ToolActivity::Primitive(armed)), ToolKind::Primitive { kind, .. }) => armed == kind,
         (Some(ToolActivity::ProductBox(armed)), ToolKind::ProductBox(tool)) => armed == tool,
         // The frame cell runs the card as its primary method, so the drawn method's row carries the
         // pressed state and the cell shows it through the list (U74).
         (Some(ToolActivity::ProductFrame), ToolKind::ProductBox(_)) => true,
         (Some(ToolActivity::ProductContour), ToolKind::ProductContour) => true,
-        (Some(ToolActivity::Fill { class: armed, mode: armed_mode }), ToolKind::Fill { class, mode }) => {
-            armed == class && armed_mode == mode
-        }
+        // One cell fills every void, so an armed fill presses it whatever class or build it took
+        // (U123): the card and the part's own menu say which one it is.
+        (Some(ToolActivity::Fill { .. }), ToolKind::Fill) => true,
         (Some(ToolActivity::Measure), ToolKind::Measure) => true,
-        (Some(ToolActivity::Void), ToolKind::Void) => true,
         // The pull owns the pointer and the Extrude cell's second method is the one that armed it
         // (G4).
         (Some(ToolActivity::AreaPull), ToolKind::AreaPull) => true,
@@ -435,6 +440,8 @@ pub struct RibbonContext {
     pub shadows: bool,
     /// A running draft: its tool, how many points it has, and whether it is closed.
     pub draft: Option<(DrawTool, usize, bool)>,
+    /// What the next click of the Panel cell makes: the class and the build the card holds (U123).
+    pub build: crate::editor::PanelBuild,
 }
 
 /// Draws the ribbon: one row of tabs and, while it is open, the groups of the active tab.
@@ -754,7 +761,7 @@ struct MainFace {
 fn main_face(tool: &'static ToolSpec, rows: &[list::Row], index: usize) -> Option<MainFace> {
     let row = rows.get(index)?;
     let icon = match row.method.run {
-        Some(ToolKind::Fill { .. }) => tool.icon?,
+        Some(ToolKind::Fill) => tool.icon?,
         _ => row.method.icon.or(tool.icon)?,
     };
     Some(MainFace { icon, hint: row.hint.clone(), enabled: row.enabled, armed: row.armed, action: row.action })
@@ -772,7 +779,7 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 None => method.label.text(lang).to_owned(),
                 // A method that cannot run here says what is missing.
                 Some(ready) if !ready.enabled => ready.hint.clone(),
-                // A fill's own hint names the tool and then the method — «Post: Largest rectangle» —
+                // A fill's own hint names the tool and then the method — «Post: Rectangle» —
                 // because the two fills are two cells whose methods would otherwise read the same.
                 // A body cell's method says what it builds — «Box: draw its base on the work plane»
                 // — because «From corner» alone would name the sketch tool it borrows (ADR 0138).
@@ -782,7 +789,13 @@ fn method_rows(tool: &'static ToolSpec, state: &Toolbars, context: RibbonContext
                 Some(ready)
                     if matches!(
                         method.run,
-                        Some(ToolKind::Fill { .. } | ToolKind::Body(_) | ToolKind::Extrude | ToolKind::AreaPull)
+                        Some(
+                            ToolKind::Fill
+                                | ToolKind::Body(_)
+                                | ToolKind::Extrude
+                                | ToolKind::AreaPull
+                                | ToolKind::PanelPoints(_)
+                        )
                     ) =>
                 {
                     ready.hint.clone()
@@ -887,6 +900,7 @@ mod tests {
             snap_mode: model::SnapMode::default(),
             shadows: true,
             draft: None,
+            build: crate::editor::PanelBuild::default(),
         }
     }
 
@@ -1034,12 +1048,10 @@ mod tests {
             (
                 "furniture",
                 &[
-                    "Niche  (V)",
+                    "Panel by points: Three points",
                     "Panel from contour: click the outline, then close the ring",
-                    "Post: Largest rectangle",
+                    "Panel: Rectangle",
                     "Product frame",
-                    "Shelf: Largest rectangle",
-                    "Wall: Largest rectangle",
                 ],
             ),
             ("scene", &["Assembly", "Camera", "Light"]),
@@ -1277,17 +1289,16 @@ mod tests {
         let frame_box = DrawIntent::ProductBox;
         let sphere = DrawIntent::Primitive(PrimitiveKind::Sphere);
         let cases = [
-            (None, false, None, false, false, None),
-            (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
+            (None, false, None, false, None),
+            (Some((DrawTool::Line, path)), false, None, false, Some(ToolActivity::Draw(DrawTool::Line))),
             (
                 Some((DrawTool::Rectangle, DrawIntent::Body)),
                 false,
                 None,
                 false,
-                false,
                 Some(ToolActivity::Body(DrawTool::Rectangle)),
             ),
-            (Some((DrawTool::Polyline, panel)), false, None, false, false, Some(ToolActivity::PanelContour)),
+            (Some((DrawTool::Polyline, panel)), false, None, false, Some(ToolActivity::PanelContour)),
             // A frame's base is a draft of its own: the rectangle presses the drawn box's row and the
             // free outline the contour's (N19, ADR 0101, ADR 0159).
             (
@@ -1295,38 +1306,34 @@ mod tests {
                 false,
                 None,
                 false,
-                false,
                 Some(ToolActivity::ProductBox(DrawTool::Rectangle)),
             ),
-            (Some((DrawTool::Polyline, frame)), false, None, false, false, Some(ToolActivity::ProductContour)),
+            (Some((DrawTool::Polyline, frame)), false, None, false, Some(ToolActivity::ProductContour)),
             // A sphere is a draft too: the round it draws presses the sphere's own cell.
             (
                 Some((DrawTool::Sphere, sphere)),
                 false,
                 None,
                 false,
-                false,
                 Some(ToolActivity::Primitive(PrimitiveKind::Sphere)),
             ),
-            (None, true, None, false, false, Some(ToolActivity::ProductFrame)),
+            (None, true, None, false, Some(ToolActivity::ProductFrame)),
             (
                 None,
                 false,
                 Some((post, FillMode::Fit)),
                 false,
-                false,
                 Some(ToolActivity::Fill { class: post, mode: FillMode::Fit }),
             ),
-            (None, false, None, true, false, Some(ToolActivity::Measure)),
-            (None, false, None, false, true, Some(ToolActivity::Void)),
-            (Some((DrawTool::Arc, path)), false, None, false, true, Some(ToolActivity::Draw(DrawTool::Arc))),
-            (None, false, None, false, false, Some(ToolActivity::ContourBoolean(ContourOp::Union))),
-            (None, false, None, false, false, Some(ToolActivity::BodyBoolean(ContourOp::Subtract))),
+            (None, false, None, true, Some(ToolActivity::Measure)),
+            (Some((DrawTool::Arc, path)), false, None, false, Some(ToolActivity::Draw(DrawTool::Arc))),
+            (None, false, None, false, Some(ToolActivity::ContourBoolean(ContourOp::Union))),
+            (None, false, None, false, Some(ToolActivity::BodyBoolean(ContourOp::Subtract))),
             // A boolean owns the picks, so a running draft outranks it: two pressed cells for one
             // pointer would lie about which tool the next click serves.
-            (Some((DrawTool::Line, path)), false, None, false, false, Some(ToolActivity::Draw(DrawTool::Line))),
+            (Some((DrawTool::Line, path)), false, None, false, Some(ToolActivity::Draw(DrawTool::Line))),
         ];
-        for (drawing, frame, fill, measure, niche, expected) in cases {
+        for (drawing, frame, fill, measure, expected) in cases {
             // A case whose expected activity is a boolean arms one; every other case leaves it off.
             let boolean = match expected {
                 Some(ToolActivity::ContourBoolean(op)) => Some((crate::editor::BooleanOperand::Rings, op)),
@@ -1334,18 +1341,18 @@ mod tests {
                 _ => None,
             };
             assert_eq!(
-                tool_activity(drawing, frame, fill, measure, niche, false, boolean),
+                tool_activity(drawing, frame, fill, measure, false, boolean, None),
                 expected,
-                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} niche={niche} boolean={boolean:?}"
+                "drawing={drawing:?} frame={frame} fill={fill:?} measure={measure} boolean={boolean:?}"
             );
         }
     }
 
     #[test]
     fn an_armed_area_pull_is_the_pressed_extrude_cell() {
-        let activity = tool_activity(None, false, None, false, false, true, None);
+        let activity = tool_activity(None, false, None, false, true, None, None);
         assert_eq!(activity, Some(ToolActivity::AreaPull));
-        assert_eq!(tool_activity(None, false, None, false, false, false, None), None, "no pull, no armed cell");
+        assert_eq!(tool_activity(None, false, None, false, false, None, None), None, "no pull, no armed cell");
     }
 
     #[test]
@@ -1389,9 +1396,6 @@ mod tests {
             (Some(ToolActivity::Measure), ToolKind::Measure, true),
             (Some(ToolActivity::Measure), ToolKind::FrameAll, false),
             (Some(ToolActivity::Draw(DrawTool::Line)), ToolKind::Measure, false),
-            (Some(ToolActivity::Void), ToolKind::Void, true),
-            (Some(ToolActivity::Void), ToolKind::Measure, false),
-            (Some(ToolActivity::Measure), ToolKind::Void, false),
         ];
         for (activity, kind, expected) in cases {
             assert_eq!(is_armed(activity, kind), expected, "activity={activity:?} kind={kind:?}");
@@ -1659,36 +1663,42 @@ mod tests {
     }
 
     #[test]
-    fn the_empty_space_tool_arms_a_fill_class_only_inside_an_open_product() {
+    fn the_panel_cell_arms_the_build_the_card_holds_only_inside_an_open_product() {
+        // One cell, whatever the card says the part becomes (U123): the class and the build are the
+        // card's, so the same cell arms a post, a shelf or a wall without being redrawn.
+        let panel = tool("furniture.panels.panel");
+        let kind = panel.primary().expect("a live tool");
         let state = Toolbars::new();
         let closed = RibbonContext { product_open: false, ..full_context() };
-        for tool_id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
-            let tool = tool(tool_id);
-            let kind = tool.primary().expect("a live tool");
-            let cell = ready(kind, tool, &state, closed, Lang::En);
-            assert!(!cell.enabled, "{tool_id} cannot fill a void with no product open");
-            assert!(
-                !cell.hint.contains(Message::FillNeedsProduct.text(Lang::En)),
-                "the hint names the tool: {}",
-                cell.hint
-            );
-            assert!(cell.hint.contains(tool.label.text(Lang::En)), "the dim cell names itself: {}", cell.hint);
-            assert_eq!(cell.action, None);
+        let cell = ready(kind, panel, &state, closed, Lang::En);
+        assert!(!cell.enabled, "a void needs an open product");
+        assert!(
+            !cell.hint.contains(Message::FillNeedsProduct.text(Lang::En)),
+            "the hint names the tool: {}",
+            cell.hint
+        );
+        assert!(cell.hint.contains(panel.label.text(Lang::En)), "the dim cell names itself: {}", cell.hint);
+        assert_eq!(cell.action, None);
+
+        for (class, mode) in [
+            (ClassCode::VERTICAL_PANEL, FillMode::Fit),
+            (ClassCode::HORIZONTAL_PANEL, FillMode::Shape),
+            (ClassCode::BACK_PANEL, FillMode::Fit),
+        ] {
+            let context = RibbonContext {
+                build: crate::editor::PanelBuild {
+                    class,
+                    mode,
+                    overlay: false,
+                    spread: crate::editor::FillSpread::One,
+                },
+                ..full_context()
+            };
+            let cell = ready(kind, panel, &state, context, Lang::En);
+            assert!(cell.enabled, "an open piece offers its niche");
+            assert_eq!(cell.action, Some(ToolAction::Fill { class, mode }), "the card's build is what the click arms");
         }
-
-        let post = tool("furniture.panels.post");
-        let cell = ready(post.primary().expect("a live tool"), post, &state, full_context(), Lang::En);
-        assert!(cell.enabled, "an open piece offers its niche");
-        assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }));
-
-        let shelf = tool("furniture.panels.shelf");
-        let cell = ready(shelf.primary().expect("a live tool"), shelf, &state, full_context(), Lang::En);
-        assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }));
-
-        let wall = tool("furniture.panels.wall");
-        let cell = ready(wall.primary().expect("a live tool"), wall, &state, full_context(), Lang::En);
-        assert_eq!(cell.action, Some(ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }));
-        assert_eq!(wall.icon, Some(icons::scene::WALL), "the wall draws its own board");
+        assert_eq!(panel.icon, Some(icons::scene::BOARD), "the cell draws the plain board");
     }
 
     #[test]
@@ -2023,56 +2033,73 @@ mod tests {
     }
 
     #[test]
-    fn the_fill_cell_runs_the_mode_the_workspace_pinned() {
-        // Two behaviours, one cell: the pin is the choice between fitting the void and taking its
-        // whole shape, and nothing else stores it (N10).
-        let post = tool("furniture.panels.post");
+    fn the_panel_cell_names_the_method_the_card_built() {
+        // One cell, one live method — fill the niche the pointer is in — and the card says what the
+        // part becomes. The build is no longer a method list: two builds were never two tools, and a
+        // class is what a maker reads on the card and on the part (U123).
+        let panel = tool("furniture.panels.panel");
         let mut state = Toolbars::new();
         state.set_tab(tab("furniture"));
-        let methods = post.methods().collect::<Vec<_>>();
-        assert_eq!(methods.len(), 2, "one cell, two methods");
-        assert_eq!(
-            methods.iter().map(|method| method.run).collect::<Vec<_>>(),
-            vec![
-                Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }),
-                Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
-            ],
-            "the cell's own method fits, its second takes the shape"
-        );
-        assert_eq!(post.id, methods[0].id);
-        assert_eq!(post.variants[0].id, methods[1].id, "a method keeps its namespaced id");
+        let methods = panel.methods().collect::<Vec<_>>();
+        assert_eq!(methods.len(), 2, "the cell offers filling a void and drawing a board");
+        assert_eq!(methods[0].id, "furniture.panels.panel", "the tool's own method keeps its id");
+        assert_eq!(methods[0].run, Some(ToolKind::Fill), "the first row fills the niche under the pointer");
+        assert_eq!(methods[1].id, "furniture.panels.panel.rectangle", "a method keeps its namespaced id");
+        assert_eq!(methods[1].label.text(Lang::En), "Rectangle", "the drawn board is the second row");
+        assert!(methods[1].run.is_none(), "the drawing intent that cuts a rectangle board is not in the tree yet");
 
-        let (actions, labels) = click_cell(&mut state, post, main_point());
+        let (actions, labels) = click_cell(&mut state, panel, main_point());
         assert_eq!(
             actions,
             vec![ToolAction::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }],
-            "an unpinned cell fits the void"
+            "an untouched card is a post fitted to the void"
         );
         assert!(
-            labels.iter().any(|label| label == "Post: Largest rectangle"),
-            "the hint names the tool and the mode: {labels:?}"
+            labels.iter().any(|label| label == "Panel: Rectangle"),
+            "the hint names the cell and the build the card holds: {labels:?}"
         );
-
-        state.pin(post, methods[1]);
-        let (actions, labels) = click_cell(&mut state, post, main_point());
-        assert_eq!(
-            actions,
-            vec![ToolAction::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }],
-            "the pinned method runs, and the click still arms nothing by itself"
-        );
-        assert!(labels.iter().any(|label| label == "Post: Niche shape"), "the face follows the pin: {labels:?}");
     }
 
     #[test]
-    fn the_fill_methods_read_as_two_builds_of_one_panel() {
-        // The Shape row used to be a blank line named like a second panel. It now carries its own
-        // glyph beside the fit row, and the list is one flat list of the two builds (ADR 0110, U84).
-        for id in ["furniture.panels.post", "furniture.panels.shelf", "furniture.panels.wall"] {
-            let tool = tool(id);
-            let methods = tool.methods().collect::<Vec<_>>();
-            assert_eq!(methods.len(), 2, "{id} has one cell with two builds");
-            assert!(methods[1].icon.is_some_and(Icon::is_drawn), "{id}'s shape row has artwork");
+    fn the_panels_group_is_three_cells_and_nothing_else() {
+        // The owner's group (U123): the panel, the contour board and the by-points board. The post,
+        // shelf, wall and niche cells and the three `.shape` rows retire, and a workspace that pinned
+        // one of them loads as no pin.
+        let group = spec::tabs()
+            .iter()
+            .flat_map(|tab| tab.groups)
+            .find(|group| group.id == "furniture.panels")
+            .expect("the panels group");
+        assert_eq!(
+            group.tools.iter().map(|tool| tool.id).collect::<Vec<_>>(),
+            ["furniture.panels.panel", "furniture.panels.contour", "furniture.panels.points"],
+            "three cells, in that order"
+        );
+        for retired in [
+            "furniture.panels.post",
+            "furniture.panels.shelf",
+            "furniture.panels.wall",
+            "furniture.panels.void",
+            "furniture.panels.post.shape",
+            "furniture.panels.shelf.shape",
+            "furniture.panels.wall.shape",
+        ] {
+            assert!(
+                spec::tabs()
+                    .iter()
+                    .flat_map(|tab| tab.groups)
+                    .flat_map(|group| group.tools)
+                    .all(|tool| tool.id != retired && tool.variants.iter().all(|variant| variant.id != retired)),
+                "`{retired}` is not a tool or a method of the map"
+            );
+            assert!(spec::words(retired).is_none(), "and it names no method in the settings");
         }
+        let pinned = std::collections::BTreeMap::from([(
+            "furniture.panels.panel".to_owned(),
+            "furniture.panels.post".to_owned(),
+        )]);
+        let panel = tool("furniture.panels.panel");
+        assert_eq!(panel.pinned_index(&pinned), 0, "a pin naming a retired cell is no pin");
     }
 
     #[test]
@@ -2107,87 +2134,44 @@ mod tests {
     }
 
     #[test]
-    fn the_wall_cell_runs_the_two_builds_of_the_back_panel() {
-        // N28: the wall is the third fill pair, so its cell runs the same two builds over the class
-        // that carries `WidthAndHeight` — and asks nothing about overlay or inset (ADR 0200).
-        let wall = tool("furniture.panels.wall");
-        assert_eq!(wall.label.text(Lang::Ru), "Стенка", "the workshop's word for the board");
-        assert!(wall.icon.is_some_and(Icon::is_drawn), "the cell carries artwork");
-        let methods = wall.methods().collect::<Vec<_>>();
-        assert_eq!(
-            methods.iter().map(|method| method.run).collect::<Vec<_>>(),
-            vec![
-                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
-                Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
-            ],
-            "one cell, the fit and the shape of the same class"
-        );
+    fn the_open_panel_list_draws_both_methods() {
+        let panel = tool("furniture.panels.panel");
         let mut state = Toolbars::new();
         state.set_tab(tab("furniture"));
-        let (actions, labels) = click_cell(&mut state, wall, main_point());
-        assert_eq!(actions, vec![ToolAction::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }]);
-        assert!(labels.iter().any(|label| label == "Wall: Largest rectangle"), "the hint names the tool: {labels:?}");
-        assert!(
-            !labels.iter().any(|label| label.contains("Overlay") || label.contains("Inset")),
-            "the tool asks nothing about mounting: {labels:?}"
-        );
-    }
-
-    #[test]
-    fn the_open_fill_list_draws_both_rows() {
-        let post = tool("furniture.panels.post");
-        let mut state = Toolbars::new();
-        state.set_tab(tab("furniture"));
-        assert!(state.open_list(post));
+        assert!(state.open_list(panel));
         let (texts, _, _) = draw_frames(&mut state, full_context(), 3);
-        assert!(texts.iter().any(|text| text == "Largest rectangle"), "the fit row is drawn: {texts:?}");
-        assert!(texts.iter().any(|text| text == "Niche shape"), "the shape row is drawn: {texts:?}");
+        assert!(texts.iter().any(|text| text == "Fill in the niche"), "the live row is drawn: {texts:?}");
+        assert!(texts.iter().any(|text| text == "Rectangle"), "the drawn-board row is drawn: {texts:?}");
     }
 
     #[test]
-    fn the_fill_cell_shows_the_armed_mode_even_when_another_is_pinned() {
-        // Picking Shape from the list arms it; the cell must then show Shape pressed, instead of
-        // going on showing the pinned Fit and making the choice look like it did not take (ADR 0110).
-        let post = tool("furniture.panels.post");
-        let mut state = Toolbars::new();
-        state.set_tab(tab("furniture"));
-        let context = RibbonContext {
-            active: Some(ToolActivity::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
-            ..full_context()
-        };
-        let rows = method_rows(post, &state, context, Lang::En);
-        assert!(!rows[0].armed, "the pinned Fit is not what the viewport will build");
-        assert!(rows[1].armed, "the shape is armed");
-        let shown = rows.iter().position(|row| row.armed).unwrap_or(state.pinned_index(post));
-        let face = main_face(post, &rows, shown).expect("a face");
-        assert!(face.armed, "the cell draws pressed");
-        assert_eq!(face.icon, icons::scene::POST, "the cell keeps the panel kind's glyph");
-        assert_eq!(face.hint, "Post: Niche shape", "the face names the mode the click will use");
-        assert_eq!(
-            face.action,
-            Some(ToolAction::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
-            "a second click on the armed mode drops it"
-        );
-        assert_eq!(
-            state.pinned_index(post),
-            0,
-            "showing the armed mode does not silently change the workspace default"
-        );
-    }
-
-    #[test]
-    fn a_fill_face_keeps_the_tool_glyph_in_both_modes() {
-        let post = tool("furniture.panels.post");
-        let rows = method_rows(post, &Toolbars::new(), full_context(), Lang::En);
-        for index in 0..rows.len() {
-            let face = main_face(post, &rows, index).expect("a face");
-            assert_eq!(face.icon, icons::scene::POST, "row {index} draws the post, not a mode glyph");
+    fn the_panel_cell_draws_pressed_while_a_fill_is_armed_whatever_it_builds() {
+        // One cell serves every class, so the pressed state answers "a fill owns the next click",
+        // not "this exact class" (U123).
+        let panel = tool("furniture.panels.panel");
+        for class in [ClassCode::VERTICAL_PANEL, ClassCode::HORIZONTAL_PANEL, ClassCode::BACK_PANEL] {
+            let context = RibbonContext {
+                active: Some(ToolActivity::Fill { class, mode: FillMode::Shape }),
+                build: crate::editor::PanelBuild {
+                    class,
+                    mode: FillMode::Shape,
+                    overlay: false,
+                    spread: crate::editor::FillSpread::One,
+                },
+                ..full_context()
+            };
+            let rows = method_rows(panel, &Toolbars::new(), context, Lang::En);
+            let face = main_face(panel, &rows, 0).expect("a face");
+            assert!(face.armed, "{class:?}: the cell draws pressed");
+            assert_eq!(face.icon, icons::scene::BOARD, "the cell keeps the board's glyph");
+            assert_eq!(face.hint, "Panel: Niche shape", "the face names the build the click will use");
+            assert_eq!(face.action, Some(ToolAction::Fill { class, mode: FillMode::Shape }));
         }
     }
 
     #[test]
     fn a_disabled_fill_face_names_itself_and_its_missing_material_rather_than_the_product() {
-        let post = tool("furniture.panels.post");
+        let post = tool("furniture.panels.panel");
         let state = Toolbars::new();
         let closed = method_rows(post, &state, RibbonContext { product_open: false, ..full_context() }, Lang::En);
         let face = main_face(post, &closed, 0).expect("a face");

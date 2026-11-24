@@ -1,6 +1,6 @@
 # 0119. The armed tool shows its parameters at the pointer, and the inspector shows the same fields
 
-- Status: Accepted
+- Status: Accepted; its gap placement and its choice rows superseded by 0242
 - Date: 2026-11-14
 
 ## Context

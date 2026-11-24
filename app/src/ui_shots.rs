@@ -1300,13 +1300,16 @@ fn empty_product() -> (model::Project, model::Id) {
     (project, product)
 }
 
-/// Draws the empty-space tool's ghost into one picture, so its accent and callouts can be looked at.
+/// Draws the empty-space tool into two pictures, so its ghost and its menu can be looked at.
 ///
 /// The matrix above varies the window's look; this shot varies the tool. It arms the shelf fill
 /// inside an open product, moves the pointer onto the piece and renders the real frame offscreen, so
-/// the ghost's wireframe and its three sizes are checked as pixels and not only as shapes.
+/// the ghost's wireframe, its three sizes and the two gap arrows with their fields are checked as
+/// pixels and not only as shapes. A right click then opens the operation's own menu — the class, the
+/// build and the spread, each with its tick in a column left of the label (U128) — and the second
+/// picture is that frame.
 #[test]
-#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-ghost.png"]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-ghost.png and fill-menu.png"]
 fn the_empty_space_ghost_is_painted_offscreen() {
     let render_state = match render_state() {
         Ok(render_state) => render_state,
@@ -1378,10 +1381,150 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     let directory = testkit::ui_shots_dir().expect("the shots directory is created");
     let path = directory.join("fill-ghost.png");
     testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
-    app.tabs.active_mut().release_target();
     let picture = Picture { width: size[0], height: size[1], rgba };
     assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
     println!("the fill ghost is in {}", path.display());
+
+    // The operation's own menu opens on a right click, so the second picture is the same frame with
+    // the choices in front of it.
+    let button = |pressed| egui::Event::PointerButton {
+        pos: pointer,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for frame in 0..SETTLE_FRAMES {
+        let events = if frame == 0 { vec![button(true), button(false)] } else { Vec::new() };
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+    assert!(app.tabs.active().menu_rect().is_some(), "the right click opened the operation's menu");
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let menu = directory.join("fill-menu.png");
+    testkit::write_png(&menu, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", menu.display());
+    println!("the fill's menu is in {}", menu.display());
+}
+
+/// Draws the live row of an evenly fill, so its spread and its plates can be looked at.
+///
+/// «Равномерно» needs no anchoring click (U128): the pointer names a void and the boards are already
+/// spread through it. The shot presses the count's plate, types four and settles, so the picture is
+/// the row a maker would see while deciding — the arrows, the two numbers and the count beside the
+/// hand.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-row.png"]
+fn the_live_row_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("fill-row-workspace.json");
+    let (project, product) = empty_product();
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the application builds");
+    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
+        app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    let pointer = {
+        let document = app.tabs.active_mut();
+        document.editor.set_panel_build(ui::PanelBuild {
+            class: model::ClassCode::HORIZONTAL_PANEL,
+            spread: ui::FillSpread::Even,
+            ..ui::PanelBuild::default()
+        });
+        document
+            .editor
+            .arm_fill(&document.session, model::ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, text::Lang::En)
+            .expect("the shelf fill arms inside the open product");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let centre = placement.transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        crate::gizmo_math::screen_point(document.camera(), rect, centre).expect("the piece is on screen")
+    };
+
+    let mut jobs = Vec::new();
+    let run = |app: &mut App, events: Vec<egui::Event>, jobs: &mut Vec<egui::ClippedPrimitive>| {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        *jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    };
+    for frame in 0..SETTLE_FRAMES {
+        let events = if frame == 0 { vec![egui::Event::PointerMoved(pointer)] } else { Vec::new() };
+        run(&mut app, events, &mut jobs);
+    }
+    // The count is typed in the inspector's row; the shot writes it through the same path, so the
+    // picture is the row a maker reads while deciding — four boards with the same air at both ends.
+    app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome {
+            edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value: 4.0 }],
+            ..ui::ToolOutcome::default()
+        },
+    );
+    for _ in 0..SETTLE_FRAMES {
+        run(&mut app, Vec::new(), &mut jobs);
+    }
+    assert!(app.tabs.active().fill_gizmo.row().is_some(), "the pointer spread a live row");
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("fill-row.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the live row is in {}", path.display());
 }
 
 /// A scene whose tree is taller than a panel and whose inspector card is the longest one.

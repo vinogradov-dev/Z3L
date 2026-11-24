@@ -37,7 +37,7 @@ Answering the next step has its own procedure (§1.1); it never re-derives the s
 
 **Writing the plan is a command too.** The agent changes `plan/BACKLOG.md`, `plan/STATUS.md`,
 `plan/SESSION.md` and `plan/notes/<ID>.md` with `cargo xtask task add|start|set|step|note|close|
-reopen|take|defer|drop|phase` and `cargo xtask state set`, never with a text edit. The commands splice only the lines
+reopen|take|defer|unstart|drop|phase` and `cargo xtask state set`, never with a text edit. The commands splice only the lines
 they own, validate the result with the gate *before* writing, take `--dry-run`, and refuse instead
 of leaving a broken plan (ADR 0085). The owner may still edit a file by hand; the format is the
 same.
@@ -403,7 +403,9 @@ is working through, and `--section Bugs` files a defect; an entry filed under `#
 order with `cargo xtask task take <ID> [--at top|end]`, which leaves `STATE:` alone when `## Now`
 still has work and becomes the current task when it is empty; `cargo xtask task defer <ID>` moves an
 open entry the other way, out of the order and back under `## Next`, and points `STATE:` at the next
-head because the order always has one; `cargo xtask task reopen <ID> --next <text>` and
+head because the order always has one; `cargo xtask task unstart <ID>` ends a session and leaves the
+open entry where it stood, which is how a task that turns out to wait on another one makes room for
+its prerequisite in front of it; `cargo xtask task reopen <ID> --next <text>` and
 `cargo xtask state next --task <ID>` move the current task and the `## Next` paragraph together, and
 `cargo xtask state where` rewrites the prose that says what the tree is. Keep `now:`, `run:` and `resume:` current with `cargo xtask task step
 --now <text> --resume <text>` and `cargo xtask task set` after every meaningful step and every green gate run — a session that dies

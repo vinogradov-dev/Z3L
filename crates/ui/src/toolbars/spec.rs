@@ -17,11 +17,11 @@
 //! Every row is a constant, so the ribbon allocates nothing to read the map.
 
 use engine::{ContourOp, PrimitiveKind};
-use model::{ClassCode, FillMode};
 use text::Message;
 
 use crate::draw::DrawTool;
 use crate::icons::{self, Icon};
+use crate::panel_points::PanelPoints;
 
 /// What a click on a tool runs.
 ///
@@ -59,14 +59,17 @@ pub enum ToolKind {
     ProductContour,
     /// Arms the free-outline tool whose closed ring becomes one panel cut to it.
     PanelContour,
-    /// Arms the empty-space tool with `class`; its `fill` trait picks the size pair, and `mode`
-    /// says whether the part takes the largest rectangle that fits or the whole section.
-    Fill {
-        /// The class a post or a shelf fills the void with.
-        class: ClassCode,
-        /// How the part reads the section the walls leave.
-        mode: FillMode,
-    },
+    /// Arms the by-points tool: the first three clicks fix the plane and the method says what the
+    /// figure becomes — a standard rectangle on the third click, or a ring the maker finishes (U126).
+    PanelPoints(PanelPoints),
+    /// Arms the empty-space tool with the build the workspace holds: the class, whose `fill` trait
+    /// picks the size pair, and the mode, which says whether the part takes the largest rectangle
+    /// that fits or the whole section.
+    ///
+    /// The class and the mode are not the cell's (U123): one Panel cell serves every part a void
+    /// can be filled with, and what the next click makes is chosen on the part — in the tool card
+    /// before the click and in the node's context menu after it.
+    Fill,
     /// Creates an assembly at the scene root.
     Assembly,
     /// Draws a primitive's placement: the circle the shape is built around.
@@ -111,9 +114,6 @@ pub enum ToolKind {
     BodyBoolean(ContourOp),
     /// Arms the ruler: two clicks measure a length and write nothing (ADR 0118).
     Measure,
-    /// Arms the niche tool: the pointer names the empty space inside the open product and writes
-    /// nothing (ADR 0118).
-    Void,
 }
 
 /// One input method of a tool: what U67 draws as the tool's list.
@@ -157,35 +157,28 @@ impl Method {
     }
 }
 
-/// The post's second method: take the whole section instead of the largest fit.
+/// The Panel cell's second method: a plain board drawn on the work plane and sized in the card.
 ///
-/// A fill cell draws as one split cell rather than two cells a maker has to tell apart: the method
-/// list is the choice between fitting and taking the shape, and the pinned method is the one the
-/// cell runs (U74, ADR 0110). The rows are two builds of one panel, not two panels, and the shape
-/// row carries the niche-fit board — one corner cut, the opposite rounded — so the list offers a
-/// build a maker can see (U84, U117). The three fill cells share that glyph, because the build is
-/// one and the class is what differs.
-const FILL_POST_SHAPE: &[VariantSpec] = &[VariantSpec {
-    id: "furniture.panels.post.shape",
-    label: Message::FillMethodShape,
-    icon: Some(icons::scene::PANEL_SHAPE),
-    run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape }),
+/// The first method fills the niche the pointer is in, which asks for a void; this one draws a
+/// board where there is none. The row is planned: the drawing intent that cuts a rectangle panel is
+/// not in the tree yet, so the cell draws one method and no caret until it lands.
+const PANEL_RECTANGLE: &[VariantSpec] = &[VariantSpec {
+    id: "furniture.panels.panel.rectangle",
+    label: Message::PanelMethodRectangle,
+    icon: Some(icons::contour::RECTANGLE),
+    run: None,
 }];
 
-/// The shelf's second method: take the whole section instead of the largest fit.
-const FILL_SHELF_SHAPE: &[VariantSpec] = &[VariantSpec {
-    id: "furniture.panels.shelf.shape",
-    label: Message::FillMethodShape,
-    icon: Some(icons::scene::PANEL_SHAPE),
-    run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape }),
-}];
-
-/// The wall's second method: take the whole section instead of the largest fit.
-const FILL_WALL_SHAPE: &[VariantSpec] = &[VariantSpec {
-    id: "furniture.panels.wall.shape",
-    label: Message::FillMethodShape,
-    icon: Some(icons::scene::PANEL_SHAPE),
-    run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape }),
+/// The by-points cell's second method: as many points as the maker wants, finished by the card.
+///
+/// The first method is the cell's own — three points and the board is built — and this one keeps
+/// taking points until the maker says it is done, which is the only way a count above four ever
+/// reaches the document (U126, ADR 0239).
+const PANEL_POINTS_RING: &[VariantSpec] = &[VariantSpec {
+    id: "furniture.panels.points.ring",
+    label: Message::PanelPointsMany,
+    icon: Some(icons::contour::POLYLINE),
+    run: Some(ToolKind::PanelPoints(PanelPoints::Ring)),
 }];
 
 /// The Extrude cell's second method: pull one area of the drawing out as its own body.
@@ -950,41 +943,17 @@ const FURNITURE: [GroupSpec; 6] = [
         id: "furniture.panels",
         label: Message::GroupPanels,
         tools: &[
+            // One cell makes a panel, and what the panel becomes is chosen on the part (U123): a
+            // post, a shelf, a wall or the overlay wall are one gesture with a different class, and
+            // the largest fit or the niche's shape is a property of the part, not a second cell
+            // (ADR 0239, which supersedes ADR 0110).
             ToolSpec {
-                id: "furniture.panels.post",
-                label: Message::ToolPost,
-                icon: Some(icons::scene::POST),
-                run: Some(ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit }),
-                method: Some(Message::FillMethodFit),
-                variants: FILL_POST_SHAPE,
-            },
-            ToolSpec {
-                id: "furniture.panels.shelf",
-                label: Message::ToolShelf,
-                icon: Some(icons::scene::SHELF),
-                run: Some(ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit }),
-                method: Some(Message::FillMethodFit),
-                variants: FILL_SHELF_SHAPE,
-            },
-            // The wall is the board in the frontal plane: the back panel row's own fill pair, so
-            // the tool exists because the class carries `WidthAndHeight` (N28, ADR 0200).
-            ToolSpec {
-                id: "furniture.panels.wall",
-                label: Message::ToolWall,
-                icon: Some(icons::scene::WALL),
-                run: Some(ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit }),
-                method: Some(Message::FillMethodFit),
-                variants: FILL_WALL_SHAPE,
-            },
-            // The niche is the space the two cells above fill: it sits with them because a maker
-            // reads the gap and the part together, and it creates nothing (ADR 0118).
-            ToolSpec {
-                id: "furniture.panels.void",
-                label: Message::ToolVoid,
-                icon: Some(icons::scene::VOID),
-                run: Some(ToolKind::Void),
-                method: None,
-                variants: &[],
+                id: "furniture.panels.panel",
+                label: Message::ToolPanel,
+                icon: Some(icons::scene::BOARD),
+                run: Some(ToolKind::Fill),
+                method: Some(Message::PanelMethodFillNiche),
+                variants: PANEL_RECTANGLE,
             },
             // The panel is drawn, not typed: a board outside a niche has no section to fill, so its
             // outline comes from the pointer and the close cuts it (ADR 0114).
@@ -995,6 +964,18 @@ const FURNITURE: [GroupSpec; 6] = [
                 run: Some(ToolKind::PanelContour),
                 method: None,
                 variants: &[],
+            },
+            // A board named by points in space, with the first three fixing its plane: the three
+            // clicks that build a standard rectangle, and the ring the maker closes himself
+            // (U126). The plane is drawn by the clicks and not chosen before them, which is what
+            // neither the fill nor the contour cell can do.
+            ToolSpec {
+                id: "furniture.panels.points",
+                label: Message::ToolPanelPoints,
+                icon: Some(icons::scene::POINTS),
+                run: Some(ToolKind::PanelPoints(PanelPoints::Three)),
+                method: Some(Message::PanelPointsThree),
+                variants: PANEL_POINTS_RING,
             },
         ],
     },
@@ -1417,16 +1398,17 @@ mod tests {
                 "model.primitives.sphere",
             ]
         );
+        // Three live cells: the panel (which fills a niche and, from its own task, draws a board),
+        // the contour board, and the by-points board with both its methods (U123, U126).
         assert_eq!(
             live("furniture"),
             [
                 "furniture.panels.contour",
-                "furniture.panels.post",
-                "furniture.panels.shelf",
-                "furniture.panels.void",
-                "furniture.panels.wall",
+                "furniture.panels.panel",
+                "furniture.panels.points",
                 "furniture.product.frame",
-            ]
+            ],
+            "the post, shelf, wall and niche cells retired (U123)"
         );
         assert_eq!(live("scene"), ["scene.objects.assembly", "scene.objects.camera", "scene.objects.light"]);
         assert_eq!(
@@ -1660,13 +1642,9 @@ mod tests {
             ToolKind::ProductBox(DrawTool::Rectangle),
             ToolKind::ProductContour,
             ToolKind::PanelContour,
-            ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Fit },
-            ToolKind::Fill { class: ClassCode::VERTICAL_PANEL, mode: FillMode::Shape },
-            ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Fit },
-            ToolKind::Fill { class: ClassCode::HORIZONTAL_PANEL, mode: FillMode::Shape },
-            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Fit },
-            ToolKind::Fill { class: ClassCode::BACK_PANEL, mode: FillMode::Shape },
-            ToolKind::Void,
+            ToolKind::PanelPoints(PanelPoints::Three),
+            ToolKind::PanelPoints(PanelPoints::Ring),
+            ToolKind::Fill,
             ToolKind::Assembly,
             ToolKind::Camera,
             ToolKind::Light,
@@ -1750,7 +1728,8 @@ mod tests {
         // The planned groups draw nothing, so the Model tab is the four primitives, the extrusion and
         // the three body booleans (W1).
         assert_eq!(tab("model").expect("model").columns(), 8);
-        assert_eq!(tab("furniture").expect("furniture").columns(), 6);
+        // The Products group's one cell and the Panels group's three live ones (U123, U126).
+        assert_eq!(tab("furniture").expect("furniture").columns(), 4);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
         // The View tab's three cells beside the group are the projection pair and the shadow
         // switch: the Snaps group of twelve cells is the second row.

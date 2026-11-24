@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use model::Project;
-use project::SceneFile;
+use project::{SceneFile, SceneSettings};
 
 use crate::file_menu::PreservedSections;
 
@@ -22,20 +22,32 @@ pub(crate) struct SceneWriter {
     path: PathBuf,
     /// The top-level sections a newer build left in the file, given back on every write.
     extra: PreservedSections,
+    /// The factory's numbers the scene was built with, given back with it (ADR 0240).
+    settings: SceneSettings,
 }
 
 impl SceneWriter {
     /// A writer for `path` that gives `extra` back with the document it writes.
     pub(crate) fn new(path: impl Into<PathBuf>, extra: PreservedSections) -> Self {
-        Self { path: path.into(), extra }
+        Self { path: path.into(), extra, settings: SceneSettings::default() }
+    }
+
+    /// Carries the scene's own factory numbers, so a save gives them back unchanged.
+    pub(crate) fn with_settings(mut self, settings: SceneSettings) -> Self {
+        self.settings = settings;
+        self
     }
 
     /// Writes `project` to this writer's file, or the sentence that says why it could not.
     pub(crate) fn write(&self, project: &Project) -> Result<(), String> {
-        SceneFile::new(project.clone()).with_extra(self.extra.clone()).write(&self.path).map_err(|error| {
-            let file = self.path.display();
-            format!("the scene could not be written to {file}: {error}")
-        })
+        SceneFile::new(project.clone())
+            .with_extra(self.extra.clone())
+            .with_settings(self.settings)
+            .write(&self.path)
+            .map_err(|error| {
+                let file = self.path.display();
+                format!("the scene could not be written to {file}: {error}")
+            })
     }
 }
 

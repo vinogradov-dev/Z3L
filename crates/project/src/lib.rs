@@ -32,6 +32,7 @@ use model::Project;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use units::Length;
 
 /// The value of the envelope's `format` field.
 ///
@@ -51,6 +52,32 @@ pub const FORMAT_VERSION: u32 = 1;
 
 /// Largest scene file this build reads, so a hostile file cannot force an unbounded allocation.
 pub const MAX_SCENE_BYTES: u64 = 1 << 30;
+
+/// The lap an overlay front takes past the opening when a scene carries no number of its own.
+///
+/// Fourteen millimetres is the factory's number this build knows. A workshop's own numbers live in
+/// the standards file O2 lands, and until it does every scene written here carries this one;
+/// `plan/debt.md` records the flip from the constant to that file (ADR 0240).
+pub const DEFAULT_OVERLAY_LAP: Length = Length::from_micrometres(14_000);
+
+/// The factory's numbers a scene carries, so a reopened file builds the parts it built before.
+///
+/// These are the *project's* numbers and not the workspace's: the theme and the language belong to a
+/// person, a lap belongs to the piece of furniture, and a command that lays a front over the frame
+/// reads it from the scene it is writing (ADR 0240). A file that carries no section answers this
+/// build's defaults, which is the gap O2 closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneSettings {
+    /// The lap an overlay front takes past the opening, in micrometres.
+    pub overlay_lap: Length,
+}
+
+impl Default for SceneSettings {
+    fn default() -> Self {
+        Self { overlay_lap: DEFAULT_OVERLAY_LAP }
+    }
+}
 
 /// A scene file that cannot be read, parsed or written.
 #[derive(Debug, Error)]
@@ -115,10 +142,12 @@ pub enum SceneFileError {
     },
 }
 
-/// A loaded scene: the document plus any top-level sections this build does not understand.
+/// A loaded scene: the document, the factory's numbers and any top-level sections this build does
+/// not understand.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneFile {
     document: Project,
+    settings: SceneSettings,
     extra: BTreeMap<String, Value>,
 }
 
@@ -131,6 +160,9 @@ struct Envelope {
     /// The document as it stands in the file: read as a value first, so the schema is checked
     /// before a field of some older layout is reported as a broken one (ADR 0096).
     document: Value,
+    /// The factory's numbers, absent in a file written before they existed.
+    #[serde(default)]
+    settings: SceneSettings,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
 }
@@ -141,14 +173,24 @@ struct EnvelopeRef<'a> {
     format: &'static str,
     format_version: u32,
     document: &'a Project,
+    settings: &'a SceneSettings,
     #[serde(flatten)]
     extra: &'a BTreeMap<String, Value>,
 }
 
 impl SceneFile {
     /// Wraps a document that is about to be saved. No unknown sections are carried.
+    ///
+    /// The scene starts with this build's factory numbers, which is what a new piece of furniture
+    /// is built with; [`SceneFile::with_settings`] is how a reopened scene keeps its own.
     pub fn new(document: Project) -> Self {
-        Self { document, extra: BTreeMap::new() }
+        Self { document, settings: SceneSettings::default(), extra: BTreeMap::new() }
+    }
+
+    /// Carries the factory's numbers a scene was built with, so a save gives them back.
+    pub fn with_settings(mut self, settings: SceneSettings) -> Self {
+        self.settings = settings;
+        self
     }
 
     /// Carries top-level sections from a file that was loaded earlier, so a save of that scene
@@ -188,7 +230,11 @@ impl SceneFile {
                 supported: Project::CURRENT_SCHEMA_VERSION,
             });
         }
-        Ok(Self { document: Project::from_value(envelope.document)?, extra: envelope.extra })
+        Ok(Self {
+            document: Project::from_value(envelope.document)?,
+            settings: envelope.settings,
+            extra: envelope.extra,
+        })
     }
 
     /// Reads and parses a scene file from disk.
@@ -210,12 +256,20 @@ impl SceneFile {
     /// It is how a fixture or a tool writes the same envelope the editor writes: one format, one
     /// version, one set of preserved sections — empty here because this build authored all of it.
     pub const fn from_document(document: Project) -> Self {
-        Self { document, extra: BTreeMap::new() }
+        Self { document, settings: SceneSettings { overlay_lap: DEFAULT_OVERLAY_LAP }, extra: BTreeMap::new() }
     }
 
     /// The document carried by the file.
     pub const fn document(&self) -> &Project {
         &self.document
+    }
+
+    /// The factory's numbers the scene was built with.
+    ///
+    /// A file written before the section existed answers this build's defaults, so the number a
+    /// command reads is always one number and never an `Option` the caller has to guess about.
+    pub const fn settings(&self) -> SceneSettings {
+        self.settings
     }
 
     /// Consumes the scene and returns its document.
@@ -234,6 +288,7 @@ impl SceneFile {
             format: FORMAT,
             format_version: FORMAT_VERSION,
             document: &self.document,
+            settings: &self.settings,
             extra: &self.extra,
         };
         let mut text = serde_json::to_string_pretty(&envelope)?;

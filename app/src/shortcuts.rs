@@ -78,7 +78,7 @@ impl Shortcuts {
             "view.display.shadows" => self.shadows,
             "view.layout.maximize" => self.maximize,
             "sketch.measure.length" => self.measure,
-            "furniture.panels.void" => self.niche,
+            "probe.void" => self.niche,
             _ => ui::TransformMode::ALL.into_iter().any(|mode| mode.id() == id && self.mode == Some(mode)),
         }
     }
@@ -152,7 +152,7 @@ pub(crate) fn take_shortcuts(ctx: &egui::Context) -> Shortcuts {
         grid_snap: consume(input, "view.snaps.grid"),
         shadows: consume(input, "view.display.shadows"),
         measure: consume(input, "sketch.measure.length"),
-        niche: consume(input, "furniture.panels.void"),
+        niche: consume(input, "probe.void"),
         maximize: consume(input, "view.layout.maximize"),
         palette: consume(input, ui::inventory::PALETTE_OPEN),
         assistant: consume(input, ui::inventory::ASSISTANT_OPEN),

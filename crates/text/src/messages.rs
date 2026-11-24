@@ -171,6 +171,7 @@ messages! {
         "Ниша · укажите на пустое место  ·  Esc выходит"
     ],
     VoidSize = ["Niche {}", "Ниша {}"],
+    StatusRow = ["{} panels in the row", "В ряду {} панелей"],
     VoidOutside = [
         "Point at the empty space inside the open product",
         "Укажите на пустое место внутри открытого изделия"
@@ -867,6 +868,7 @@ messages! {
     // ── The tool card ───────────────────────────────────────────────────────
     ToolGapLow = ["Low gap", "Нижний зазор"],
     ToolGapHigh = ["High gap", "Верхний зазор"],
+    ToolCount = ["Count", "Количество"],
 
     // ── The render place ────────────────────────────────────────────────────
     Render = ["Render", "Рендер"],
@@ -989,8 +991,24 @@ messages! {
     PanelContourOpen = ["A panel is cut from a closed outline", "Панель вырезается по замкнутому контуру"],
     PanelContourUnusable = ["This outline is not a usable panel shape", "Этот контур не годится для панели"],
     ToolMethodName = ["{}: {}", "{}: {}"],
-    FillMethodFit = ["Largest rectangle", "Наибольший прямоугольник"],
+    FillMethodFit = ["Rectangle", "Прямоугольник"],
     FillMethodShape = ["Niche shape", "По форме ниши"],
+    FillSpreadEven = ["Evenly", "Равномерно"],
+    PanelMethodFillNiche = ["Fill in the niche", "Заполнить нишу"],
+    PanelMethodRectangle = ["Rectangle", "Прямоугольник"],
+    PanelPointsThree = ["Three points", "Три точки"],
+    PanelPointsMany = ["Any number of points", "Любое число точек"],
+    PanelPointsFromPlane = ["From the plane", "По плоскости"],
+    PanelPointsCollinear = [
+        "The first three points lie on one line, so they span no plane",
+        "Первые три точки лежат на одной прямой — плоскость не задана"
+    ],
+    PanelPointsDuplicate = ["That point is the one before it", "Эта точка совпадает с предыдущей"],
+    PanelPointsNeedThree = ["A board needs three points", "Для панели нужны три точки"],
+    PanelPointsComplete = ["This board is already built", "Эта панель уже построена"],
+    PanelPointsFull = ["A ring holds no more points", "Больше точек в контур не входит"],
+    PanelPointsUnusable = ["These points make no usable board", "Из этих точек панель не получится"],
+    CmdSetPanelBuild = ["Build the part another way", "Собрать деталь иначе"],
     GroupObjects = ["Objects", "Объекты"],
     GroupViews = ["Views", "Виды"],
     GroupMaterials = ["Materials", "Материалы"],
@@ -1010,6 +1028,7 @@ messages! {
     ToolShelf = ["Shelf", "Полка"],
     ToolWall = ["Wall", "Стенка"],
     ToolContourPanel = ["Panel from contour", "Панель по контуру"],
+    ToolPanelPoints = ["Panel by points", "Панель по точкам"],
     ToolAssembly = ["Assembly", "Сборка"],
     ToolGroupNode = ["Group", "Группа"],
     ToolCamera = ["Camera", "Камера"],
@@ -1634,6 +1653,18 @@ messages! {
     CmdRenamePanel = ["Rename panel", "Переименовать панель"],
     CmdResizePanel = ["Resize panel", "Изменить размер панели"],
     CmdSetPanelMaterial = ["Set panel material", "Задать материал панели"],
+    CmdSetPanelTrim = ["Set an end trim", "Задать подрезку торца"],
+    SectionEndTrims = ["End trims", "Подрезка торцов"],
+    EndTrimHint = [
+        "A positive number cuts the end in, a negative one lets the board out past the nominal rectangle.",
+        "Положительное число подрезает торец, отрицательное выпускает доску за номинальный габарит."
+    ],
+    FillMountInset = ["Inset", "Вкладная"],
+    FillMountOverlay = ["Overlay", "Накладная"],
+    PanelTrimNotARectangle = [
+        "Only a rectangular panel has four ends to trim.",
+        "Подрезать торцы можно только у прямоугольной панели."
+    ],
 }
 
 impl Message {

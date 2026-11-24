@@ -22,13 +22,15 @@
 
 use catalog::Directory;
 use geom::{Contact, DVec3};
-use model::{ClassCode, Fill, FillMode, FillRequest, Id, Level, Project, Sight};
+use model::{ClassCode, Fill, FillMode, FillMount, FillRequest, Id, Level, Project, Sight};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use text::{Lang, Message};
 
 use super::PanelCreate;
+#[cfg(test)]
+use super::panel::PanelBuildSet;
 use super::panel::create_panel;
 use crate::class_rules::allow_creation;
 use crate::commands::{CommandError, CommandOutcome, CommandSpec, Creation};
@@ -66,6 +68,12 @@ pub struct PanelFill {
     /// The part's name; absent, it is the class's own word, made unique among its siblings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// How the board sits against the frame: inside the opening, or laid over its face.
+    ///
+    /// A mounting is a creation key, not a stored form (ADR 0240): an overlay board is a board one
+    /// thickness in front of the void whose ends run past the opening by the lap the frame allows.
+    #[serde(default, skip_serializing_if = "FillMount::is_inset")]
+    pub mount: FillMount,
 }
 
 impl PanelFill {
@@ -116,7 +124,7 @@ fn fill_run(
     let niche = project
         .niche(point, Sight::none(), Some(contact))
         .map_err(|refusal| CommandError::NoNiche { message: crate::read::no_niche_sentence(params.at, refusal) })?;
-    let request = FillRequest::new(point, fill, params.mode, board.thickness, params.free);
+    let request = FillRequest::new(point, fill, params.mode, board.thickness, params.free).with_mount(params.mount);
     let plan = project
         .fill_plan_in(&niche, params.parent, request, Sight::none())
         .map_err(|refusal| CommandError::FillRefused { command: FILL_ID, refusal })?;
@@ -131,6 +139,7 @@ fn fill_run(
         class: Some(params.class),
         outline: Some(plan.outline),
         bevels: plan.bevels,
+        trims: plan.trims,
     };
     let id = create_panel(project, catalog, create)?;
     Ok(CommandOutcome::created(id))
@@ -171,11 +180,131 @@ mod tests {
 
     /// The request the tests ask with: the middle of the empty cabinet.
     fn request(product: Id, class: ClassCode, mode: FillMode) -> PanelFill {
-        PanelFill { parent: product, at: [300.0, 280.0, 360.0], class, mode, free: None, name: None }
+        PanelFill {
+            parent: product,
+            at: [300.0, 280.0, 360.0],
+            class,
+            mode,
+            free: None,
+            name: None,
+            mount: FillMount::Inset,
+        }
     }
 
     fn json_params<T: serde::Serialize>(value: &T) -> Value {
         serde_json::to_value(value).expect("the parameters serialize")
+    }
+
+    /// A case whose four members leave a 600 x 720 opening, and the point on it.
+    ///
+    /// Each member stands flush with the front plane and runs back through the case, so every edge of
+    /// the opening has a part behind it for a front to lap over (U124, ADR 0240).
+    fn framed() -> (Session, Id) {
+        use model::{ClassCode, Container, Envelope, PanelNominalSize, Placement};
+        let root = Container::new(Id::new(1).expect("an id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("an empty project");
+        let root = project.root().id();
+        let envelope = Envelope::new(millimetres(636), millimetres(560), millimetres(756)).expect("a box");
+        let product = project
+            .add_product(root, "Case", ClassCode::GENERAL_PRODUCT, envelope, Placement::IDENTITY)
+            .expect("a case");
+        let boxed = geom::DQuat::from_rotation_axes(geom::DVec3::Y, geom::DVec3::Z, geom::DVec3::X);
+        for (at, length, width) in [
+            (geom::DVec3::ZERO, 560.0, 756.0),
+            (geom::DVec3::new(618.0, 0.0, 0.0), 560.0, 756.0),
+            (geom::DVec3::new(18.0, 0.0, 0.0), 600.0, 18.0),
+            (geom::DVec3::new(18.0, 0.0, 738.0), 600.0, 18.0),
+        ] {
+            let placement = Placement::new(at, boxed).expect("a member placement");
+            let size = PanelNominalSize::new(
+                units::Length::from_millimetres(length as i64).expect("a length"),
+                units::Length::from_millimetres(width as i64).expect("a width"),
+            )
+            .expect("a member size");
+            let _ = project.add_panel(product, "Member", size, None, millimetres(18), placement);
+        }
+        let mut session = Session::with_directory(project, sample_catalog());
+        assert!(session.open_product(product), "the fixture opens its case");
+        (session, product)
+    }
+
+    #[test]
+    fn an_overlay_click_writes_one_front_with_the_laps_the_frame_allowed() {
+        // The mounting is a creation key (ADR 0240): one `panel.fill` with `overlay` makes the front
+        // the ghost drew — 628 x 748 over a 600 x 720 opening — and the four trims ride in the same
+        // undo entry.
+        let (mut session, product) = framed();
+        let mut params = request(product, ClassCode::BACK_PANEL, FillMode::Fit);
+        params.at = [318.0, 280.0, 378.0];
+        params.mount = FillMount::Overlay { laps: [millimetres(14); 4] };
+        let id =
+            session.dispatch(FILL_ID, &json_params(&params)).expect("the front lands").created_id().expect("an id");
+        let panel = session.project().panel(id).expect("a panel");
+        // The frame is the opening and the board is what the laps make of it (ADR 0240), so the
+        // position is controlled by the opening's corner and the material runs past it.
+        assert_eq!(
+            panel.nominal_size(),
+            PanelNominalSize::new(millimetres(720), millimetres(600)).expect("a size"),
+            "the frame is the opening"
+        );
+        assert_eq!(panel.trims().as_array(), [millimetres(-14); 4], "each end carries its lap");
+        let geometry = session
+            .panel_geometry(id)
+            .or_else(|_| panel.geometry_with_fallbacks().map_err(|error| error.to_string()))
+            .expect("the front resolves");
+        assert_eq!(geometry.core_length(), millimetres(748), "the board is the opening plus a lap at each end");
+        assert_eq!(geometry.core_width(), millimetres(628), "and across too");
+        // Its inner face is the plane the void opens onto, so the whole body stands in front of it.
+        let placement = session.project().world_placement(id).expect("a placement");
+        let inner = placement.transform_point(geom::DVec3::new(360.0, 300.0, 18.0));
+        assert!(inner.y.abs() < 1.0e-9, "the inner face lies on the opening's plane: {inner:?}");
+        // One part, one undo entry.
+        session.undo().expect("one undo step");
+        assert_eq!(session.project().panel(id), None, "the whole part comes back");
+        assert!(!session.can_undo(), "the fill was one entry");
+    }
+
+    #[test]
+    fn a_part_rewrites_its_build_in_the_void_it_fills() {
+        // The one row a board's own menu carries (U123): a shelf fitted as the largest rectangle is
+        // re-cut as the niche's shape in the same void, one undo entry, and its class never moves.
+        let (mut session, product) = session();
+        let id = session
+            .dispatch(FILL_ID, &json_params(&request(product, ClassCode::HORIZONTAL_PANEL, FillMode::Fit)))
+            .expect("the shelf fills the void")
+            .created_id()
+            .expect("a panel id");
+        let fitted = session.project().panel(id).expect("a panel").nominal_size();
+        let revision = session.project().revision();
+
+        session
+            .dispatch(
+                crate::panel_cmds::BUILD_SET_ID,
+                &json_params(&PanelBuildSet { panel: id, mode: FillMode::Shape }),
+            )
+            .expect("the build changes");
+        let shaped = session.project().panel(id).expect("the panel is still there");
+        assert_eq!(session.project().class(id), Some(ClassCode::HORIZONTAL_PANEL), "the role stays");
+        assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one revision");
+        assert_eq!(shaped.nominal_size(), fitted, "a straight void answers the same rectangle either way");
+
+        session.undo().expect("one undo step");
+        assert_eq!(
+            session.project().panel(id).expect("the panel came back").nominal_size(),
+            fitted,
+            "one entry takes the whole change back"
+        );
+        // The fill itself is the entry behind it: two undos take the whole story back, so the build
+        // change was exactly one entry.
+        session.undo().expect("the fill");
+        assert!(session.project().panel(id).is_none(), "one more undo takes the part");
+
+        // A node that is not a panel is refused, and nothing moves.
+        let refusal = session.dispatch(
+            crate::panel_cmds::BUILD_SET_ID,
+            &json_params(&PanelBuildSet { panel: product, mode: FillMode::Shape }),
+        );
+        assert!(refusal.is_err(), "a product has no build to rewrite");
     }
 
     #[test]
@@ -244,6 +373,72 @@ mod tests {
         let one = session.project().node(id).expect("a node").name().to_owned();
         let two = session.project().node(second).expect("a node").name().to_owned();
         assert_ne!(one, two, "two shelves of one piece are told apart: {one} / {two}");
+    }
+
+    #[test]
+    fn an_overlay_front_keeps_its_laps_when_the_build_changes() {
+        // The build row must not turn a front into a board inside the opening: the part is planned
+        // again as the overlay it is, measured from its own inner face, so its size and its trims
+        // survive the other build (ADR 0240).
+        let (mut session, product) = framed();
+        let mut params = request(product, ClassCode::BACK_PANEL, FillMode::Fit);
+        params.at = [318.0, 280.0, 378.0];
+        params.mount = FillMount::Overlay { laps: [millimetres(14); 4] };
+        let id =
+            session.dispatch(FILL_ID, &json_params(&params)).expect("the front lands").created_id().expect("an id");
+        let before = session.project().panel(id).expect("a panel").nominal_size();
+        let revision = session.project().revision();
+        session
+            .dispatch(
+                crate::panel_cmds::BUILD_SET_ID,
+                &json_params(&PanelBuildSet { panel: id, mode: FillMode::Shape }),
+            )
+            .expect("the build changes");
+        let panel = session.project().panel(id).expect("the panel is still there");
+        assert_eq!(panel.nominal_size(), before, "a front is the opening either way");
+        assert_eq!(panel.trims().as_array(), [millimetres(-14); 4], "and it keeps the laps it took");
+        assert_eq!(session.project().revision(), revision.checked_next().expect("revision"), "one revision");
+        // The front still stands one thickness in front of the opening's plane.
+        let placement = session.project().world_placement(id).expect("a placement");
+        let inner = placement.transform_point(geom::DVec3::new(360.0, 300.0, 18.0));
+        assert!(inner.y.abs() < 1.0e-6, "the inner face stays on the opening: {inner:?}");
+    }
+
+    #[test]
+    fn a_trimmed_board_inside_the_opening_stays_inside_it_when_the_build_changes() {
+        // Which board this is is read from where it stands, not from a form (ADR 0240): an inset
+        // board keeps its trims and its place through the other build, and only a front laid over
+        // the frame is planned again as the front it is.
+        let (mut session, product) = framed();
+        let mut params = request(product, ClassCode::BACK_PANEL, FillMode::Fit);
+        params.at = [318.0, 280.0, 378.0];
+        let id = session
+            .dispatch(FILL_ID, &json_params(&params))
+            .expect("the wall fills the void")
+            .created_id()
+            .expect("an id");
+        let trimmed = units::Length::from_millimetres(10).expect("a trim");
+        session
+            .dispatch(
+                crate::panel_cmds::TRIM_SET_ID,
+                &json_params(&crate::panel_cmds::PanelTrimSet {
+                    panel: id,
+                    edge: model::RectEdge::Right.id(),
+                    trim: trimmed,
+                }),
+            )
+            .expect("the end is cut in");
+        session
+            .dispatch(
+                crate::panel_cmds::BUILD_SET_ID,
+                &json_params(&PanelBuildSet { panel: id, mode: FillMode::Shape }),
+            )
+            .expect("the build changes");
+        let panel = session.project().panel(id).expect("the panel is still there");
+        let placed = panel.placement().translation();
+        assert!(placed.y > 0.0, "a board inside the opening is not laid over the frame: {placed:?}");
+        assert!(placed.y + 18.0 <= 560.0, "and its body still fits the void's depth: {placed:?}");
+        assert_eq!(panel.trims().get(model::RectEdge::Right.id()), trimmed, "and keeps the end it was trimmed at");
     }
 
     #[test]

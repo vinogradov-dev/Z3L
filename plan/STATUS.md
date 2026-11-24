@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=f70556f updated=2026-11-24
+STATE: milestone=M7 phase=T task=- state=idle base=101a0fe updated=2026-11-24
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -11,10 +11,9 @@ The assistant reaches a real model, and what leaves is what a person agreed to s
 `AssistantSettings.endpoint` and `model` make one OpenAI-compatible wire, one message posts a
 completion on a worker thread so no frame waits, and the answer's `command_batch` call is the batch
 the turn dispatches — its steps alone: the mode, the save and the product are not a model's to
-choose (J14, ADR 0189). A step's parameters are read whether the wire sends the object or JSON
-inside a string (J28), and anything else is refused with the field and shape to send (J16). A reply
-streams when the endpoint answers an event stream, and a piece replaces the answer in one line as
-the panel names the time and the step (J26). The key comes from `Z3L_AGENT_KEY` or `agent-key`
+choose (J14, ADR 0189). A step's parameters are read whether the wire sends the object or JSON in a
+string, and anything else is refused with the field and shape to send (J28, J16); a reply streams
+when the endpoint answers an event stream (J26). The key comes from `Z3L_AGENT_KEY` or `agent-key`
 (0600) and never enters a log line; the first message to an endpoint stops at the consent card. A
 workshop can hand the loop to a program instead: `AssistantSettings.agent` is one line, the process
 speaks ACP version one over its own stdio, and its one MCP server is `z3l mcp bridge` (J11, ADR
@@ -39,24 +38,23 @@ a panel's `nominal_size` is: two sides, the third from the material (J29).
 
 The command line and the tool server are two doors to one document: `z3l run` reads a recipe as JSON
 Lines and `command_batch` takes the same steps, and a step names what it creates with `as` (J4, J17,
-J18, ADRs 0198, 0212, 0214).
+J18, ADRs 0198, 0212, 0214). The guide is what a model reads before its first command:
+`engine::guide()` names the two worlds a request can belong to and the order of a build from
+scratch, and every command carries the family word it serves (J20, ADR 0215). The surface is the
+dictionary: every schema annotates its unit, and the list is a short row per command plus its schema
+(J15, J19, ADRs 0227, 0231).
 
-The guide is what a model reads before its first command: `engine::guide()` returns the two worlds a
-request can belong to and the order of a build from scratch, every command carries the family word
-it serves (J20, ADR 0215). The surface is the dictionary: every schema annotates its unit, and the
-list is a short row per command plus that command's schema (J15, J19, ADRs 0227, 0231).
-
-A drawing becomes bodies in one press, one per ring, in one revision (X100, ADR 0205). The final
-render is our own path tracer, and every drawable carries the `Surface` that `render.final` fills
-from the render's settings (Y2, ADR 0213).
-
-A batch is one operation in every number a caller reads: one undo entry, one revision and one
-`entries` in the answer, because the copy the steps ran on is installed with the revision the batch
-started from plus one (X128, ADR 0234).
+A drawing becomes bodies in one press, one per ring, in one revision (X100, ADR 0205), and the final
+render is our own path tracer whose drawables carry the `Surface` (`render.final` fills from the
+render's settings, Y2, ADR 0213). A wall cell lays its board over the frame or inside the opening,
+the front carries its four end trims as the workshop's own signed numbers, and one click is one
+`panel.create` (U124, ADR 0240). A batch is one operation in every number a caller reads: one undo
+entry, one revision and one `entries`, because the copy the steps ran on installs with the revision
+it started from plus one (X128, ADR 0234).
 
 ## Next
 
-Nothing is scheduled: 20 open tasks wait in `## Next`.
+Nothing is scheduled: 15 open tasks wait in `## Next`.
 
 ## Index
 

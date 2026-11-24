@@ -241,6 +241,11 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0235](0235-a-provider-is-data-and-the-endpoint-lists-the-model.md) | A provider is data: presets fill the address, and the endpoint lists the model | Accepted; amends 0189; the anthropic wire is debt |
 | [0236](0236-a-view-no-distance-shows-is-fitted-not-clamped.md) | A view no distance can show is fitted, not clamped | Accepted; amends 0049 |
 | [0237](0237-the-wheel-step-follows-the-scene.md) | The wheel's step follows the scene the view is in | Accepted |
+| [0238](0238-a-panels-role-is-the-plane-it-lies-in.md) | A panel's role is the plane it lies in | Accepted; refines 0034, 0099 |
+| [0239](0239-the-cell-is-the-object-and-the-build-is-the-parts.md) | The cell is the object, and what it becomes is a property of the part | Accepted; supersedes 0110 |
+| [0240](0240-a-lap-is-the-boards-own-number.md) | A lap is the board's own number, and the mounting is the act that lays it | Accepted |
+| [0241](0241-a-board-is-drawn-by-points-in-space.md) | A board is drawn by points in space, and the first three fix its plane | Accepted |
+| [0242](0242-a-gaps-field-stands-on-its-arrow-and-a-tools-choices-are-its-menu.md) | A gap's field stands on its arrow, and an armed tool's choices are its own menu | Accepted; supersedes 0119's placement for a measured gap and its choice rows; extends 0161 |
 
 ## Format
 

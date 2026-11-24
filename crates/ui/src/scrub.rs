@@ -42,6 +42,13 @@ pub(crate) const FIELD_WIDTH: f32 = 76.0;
 /// The height every inspector field draws at.
 pub(crate) const FIELD_HEIGHT: f32 = 22.0;
 
+/// The width a plate in the scene draws its field at.
+///
+/// A plate is one number in the middle of the run it measures, and an inspector column's width would
+/// leave a bar of empty box around three digits and pin them to its right edge. The plate hugs its
+/// number instead: wide enough for four digits and no wider (U128).
+pub(crate) const PLATE_FIELD_WIDTH: f32 = 40.0;
+
 /// The corner radius of the field box.
 const FIELD_RADIUS: u8 = 4;
 
@@ -160,6 +167,7 @@ pub(crate) struct Scrub<'a, N: Numeric> {
     parse: Parse,
     fresh: Option<EditScope>,
     focus: bool,
+    width: f32,
 }
 
 impl<'a, N: Numeric> Scrub<'a, N> {
@@ -175,6 +183,7 @@ impl<'a, N: Numeric> Scrub<'a, N> {
             parse: parse_number,
             fresh: None,
             focus: false,
+            width: FIELD_WIDTH,
         }
     }
 
@@ -232,12 +241,19 @@ impl<'a, N: Numeric> Scrub<'a, N> {
         self
     }
 
+    /// The width the field's box draws at: the inspector's column by default, a plate's own width in
+    /// the scene.
+    pub(crate) fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
     /// Draws the field and reports whether this frame's number belongs in the document.
     pub(crate) fn show(self, ui: &mut Ui) -> FieldOutcome {
-        let Self { value, speed, range, unit, decimals, policy, parse, fresh, focus } = self;
+        let Self { value, speed, range, unit, decimals, policy, parse, fresh, focus, width } = self;
         // The space is reserved without a widget: an allocation with `Sense::hover` would tell egui
         // this id cannot take the focus, and egui would drop the focus it had just given it.
-        let (id, rect) = ui.allocate_space(vec2(FIELD_WIDTH, FIELD_HEIGHT));
+        let (id, rect) = ui.allocate_space(vec2(width, FIELD_HEIGHT));
         ui.memory_mut(|memory| memory.interested_in_focus(id, ui.layer_id()));
         if focus {
             ui.memory_mut(|memory| memory.request_focus(id));

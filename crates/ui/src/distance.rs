@@ -82,7 +82,7 @@ impl Side {
         match param {
             ToolParam::LowGap => Some(Self::Low),
             ToolParam::HighGap => Some(Self::High),
-            ToolParam::Height | ToolParam::TopRadius => None,
+            ToolParam::Height | ToolParam::TopRadius | ToolParam::Count => None,
         }
     }
 }
@@ -127,6 +127,12 @@ pub struct Distances {
     locks: [bool; 2],
     /// The field that owns the keyboard, if any.
     active: Option<Side>,
+    /// Whether the two faces are two ends of one row rather than two faces of one part.
+    ///
+    /// A rigid part keeps its extent, so pinning one face moves the other with it; the ends of a row
+    /// are two independent distances of the same gesture, and the row's own count decides what lies
+    /// between them (X135).
+    ends: bool,
 }
 
 impl Distances {
@@ -141,7 +147,24 @@ impl Distances {
         {
             return None;
         }
-        Some(Self { wall_low, wall_high, low, high, pins: [None; 2], locks: [false; 2], active: None })
+        Some(Self { wall_low, wall_high, low, high, pins: [None; 2], locks: [false; 2], active: None, ends: false })
+    }
+
+    /// The two airs of a row of boards, whose low and high faces are two ends rather than one part.
+    ///
+    /// The same measurement and the same fields, read the other way: a pin on one end leaves the
+    /// other end where the row put it, so a maker who typed a near air and then a far one still has
+    /// both fields in hand (X135).
+    pub fn row_ends(wall_low: Option<f64>, wall_high: Option<f64>, low: f64, high: f64) -> Option<Self> {
+        Self::new(wall_low, wall_high, low, high).map(|mut ends| {
+            ends.ends = true;
+            ends
+        })
+    }
+
+    /// Whether this measurement is two ends of a row.
+    pub const fn is_row(&self) -> bool {
+        self.ends
     }
 
     /// Reads a new measurement while keeping the pins and locks the maker set.
@@ -162,6 +185,15 @@ impl Distances {
         }
         self.wall_low = wall_low;
         self.wall_high = wall_high;
+        if self.ends {
+            // A row: each end is where its own pin put it, or where the row planned it. Neither
+            // end may be dragged along by the other, because the count between them is the row's.
+            self.wall_low = wall_low;
+            self.wall_high = wall_high;
+            self.low = self.pins[Side::Low.index()].unwrap_or(low);
+            self.high = self.pins[Side::High.index()].unwrap_or(high);
+            return;
+        }
         // A pinned face is where the typed number put it, and the opposite face follows the
         // extent it had: the pointer may not stretch a part whose other face the maker pinned.
         let extent = self.high - self.low;
@@ -303,6 +335,23 @@ impl Distances {
             self.locks[side.index()] = false;
             return Ok(());
         }
+        if self.ends {
+            // A row's end is not measured from the other end: it is its own air, and the count
+            // between the two ends is the model's business (X135).
+            let (wall, face) = match side {
+                Side::Low => (self.wall_low, self.wall_low.map(|wall| wall + value)),
+                Side::High => (self.wall_high, self.wall_high.map(|wall| wall - value)),
+            };
+            let Some(face) = face.filter(|_| wall.is_some()) else {
+                return Err(DistanceRefusal::NoNeighbour);
+            };
+            match side {
+                Side::Low => self.low = face,
+                Side::High => self.high = face,
+            }
+            self.pins[side.index()] = Some(face);
+            return Ok(());
+        }
         if self.locks[side.opposite().index()] {
             // The field is a span from the locked face: taking it would change the extent.
             return Err(DistanceRefusal::WouldResize);
@@ -377,6 +426,24 @@ impl Distances {
         }
     }
 
+    /// The near face the maker pinned or locked with the low field, if that is where the number went.
+    ///
+    /// A row is not one rigid part (U125): the near face a typed distance fixes and the far gap it
+    /// fixes are two different numbers of the same gesture, so the row reads them apart instead of
+    /// taking [`Distances::pinned_low`], which holds a part together.
+    pub fn pinned_start(&self) -> Option<f64> {
+        (self.pins[Side::Low.index()].is_some() || self.locks[Side::Low.index()]).then_some(self.low)
+    }
+
+    /// The distance the maker fixed from the far face to the far wall, when the high field owns it.
+    ///
+    /// This is the leftover of a row: the plate's second number, which a typed value pins so the
+    /// boards keep their pitch and the rest of the void stays free past the last one (U125).
+    pub fn pinned_gap(&self) -> Option<f64> {
+        let wall = self.wall_high?;
+        (self.pins[Side::High.index()].is_some() || self.locks[Side::High.index()]).then_some(wall - self.high)
+    }
+
     /// Abandons every pin and lock: the pointer owns the part again.
     pub fn cancel(&mut self) {
         self.pins = [None; 2];
@@ -442,6 +509,12 @@ pub struct DistanceOutcome {
     pub changed: bool,
     /// Escape returned the direction to the pointer; the shell must not also end the tool.
     pub cancel: bool,
+    /// How many boards a row gesture holds, when the tool offers its count field (U125).
+    ///
+    /// The count is the row's third field and not a gap, so it travels beside the measurement
+    /// instead of entering it: the shared field still commits it, and the shell clamps it to what
+    /// the void holds.
+    pub count: Option<usize>,
 }
 
 /// The overlay's per-frame state that is not the measurement: the field that asked for the
@@ -473,6 +546,14 @@ impl DistanceFields {
         self.focused_id = None;
     }
 
+    /// Whether one of the overlay's fields holds the keyboard right now.
+    ///
+    /// The shell asks before it lets Escape reach the tool: a focused field owns that key first,
+    /// whether the field measures a gap or the count of a row (U125).
+    pub fn owns_the_keyboard(&self, ctx: &egui::Context) -> bool {
+        self.focused_id.is_some_and(|id| ctx.memory(|memory| memory.has_focus(id)))
+    }
+
     /// Hides the overlay and gives the keyboard focus back to the window.
     ///
     /// A field that vanishes while focused would leave `text_edit_focused` true, and every shortcut
@@ -498,6 +579,7 @@ impl DistanceFields {
         &mut self,
         ui: &mut Ui,
         state: &mut Distances,
+        extra: Option<ToolRow>,
         placements: &[FieldPlacement],
         viewport: Rect,
         anchor: Pos2,
@@ -505,7 +587,14 @@ impl DistanceFields {
         opacity: u32,
     ) -> DistanceOutcome {
         let (request, escape, enter) = self.begin(ui, state, placements);
-        let mut view = ToolView { title, rows: state.rows(), toggle: None, commit: ToolCommit::Gesture, note: None };
+        let mut rows = state.rows();
+        if let Some(row) = extra {
+            // A row gesture's count is one more number on the same card, drawn and committed by the
+            // shared field, so the third field of U125 costs no second plate.
+            rows.push(row);
+        }
+        let mut view =
+            ToolView { title, choices: Vec::new(), rows, toggle: None, commit: ToolCommit::Gesture, note: None };
         let (reported, rect) =
             crate::tool_card::show(ui, viewport, anchor, &mut view, request.map(Side::param), opacity);
         let mut outcome = self.end(ui, state, reported, escape, enter);
@@ -515,11 +604,15 @@ impl DistanceFields {
 
     /// Draws one gap's field where the gap is, and reads the keyboard for the active one.
     ///
-    /// This is the carried piece's layout (N26, ADR 0161): the shell measured the arrow that runs
-    /// from the piece's face to the surface that stops it, and each measured side receives a plate
-    /// of its own in the middle of that run. The plate takes no pointer — a press anywhere in the
-    /// work area is the click that puts the piece down (X66) — so this layout asks for no chrome
-    /// rectangle; its fields take the keyboard exactly as the card's rows do.
+    /// This is the carried piece's layout (N26, ADR 0161) and the fill's (U128): the shell measured
+    /// the arrow that runs from the part's face to the surface that stops it, and each measured side
+    /// receives a plate of its own in the middle of that run. The plate takes no pointer — a press in
+    /// the work area is the click that makes or puts down the part (X66) — so this layout asks for no
+    /// chrome rectangle; its fields take the keyboard exactly as the card's rows do.
+    ///
+    /// A plate carries the number alone: no label word, because the arrow says what is measured, and
+    /// no unit, because a dimension is read in the program's own units and the inspector is where the
+    /// unit is written (the owner, 2026-11-24).
     pub fn show_in_scene(
         &mut self,
         ui: &mut Ui,
@@ -530,6 +623,11 @@ impl DistanceFields {
     ) -> DistanceOutcome {
         let (request, escape, enter) = self.begin(ui, state, placements);
         let mut rows = state.rows();
+        // A dimension in the scene is a number and nothing else (U128): the unit stays in the
+        // inspector, where the same value is written out beside its word.
+        for row in &mut rows {
+            row.unit = "";
+        }
         let mut reported = ToolOutcome::default();
         let mut outcome = DistanceOutcome::default();
         for placement in placements {
@@ -538,7 +636,8 @@ impl DistanceFields {
             };
             let id = Id::unique(("distance_plate", placement.side.index()));
             let focus = request == Some(placement.side);
-            let (plate, rect) = crate::tool_card::plate(ui, viewport, placement.position, id, row, focus, opacity);
+            let (plate, rect) =
+                crate::tool_card::plate(ui, viewport, placement.position, id, row, focus, false, opacity);
             outcome.plates[placement.side.index()] = Some(rect);
             reported.edits.extend(plate.edits);
             reported.lock = reported.lock.or(plate.lock);
@@ -603,11 +702,29 @@ impl DistanceFields {
         escape: bool,
         enter: bool,
     ) -> DistanceOutcome {
-        let mut outcome = DistanceOutcome { changed: self.apply(state, &reported), ..DistanceOutcome::default() };
-        if let Some(side) = reported.focused.and_then(Side::of_param) {
-            state.activate(Some(side));
-            self.suspended = false;
-            self.focused_id = ui.memory(|memory| memory.focused());
+        let count = reported
+            .edits
+            .iter()
+            .find(|edit| edit.param == ToolParam::Count)
+            .map(|edit| edit.value.round().clamp(0.0, 9_999.0) as usize);
+        let mut outcome =
+            DistanceOutcome { changed: self.apply(state, &reported), count, ..DistanceOutcome::default() };
+        match reported.focused {
+            Some(param) => {
+                if let Some(side) = Side::of_param(param) {
+                    state.activate(Some(side));
+                }
+                // A row that is not a gap — a row gesture's count (U125) — owns the keyboard the
+                // same way: the field is drawn by the shared card and its Escape gives the keyboard
+                // back, so the id is kept for both.
+                self.suspended = false;
+                self.focused_id = ui.memory(|memory| memory.focused());
+            }
+            None => {
+                if ui.memory(|memory| memory.focused()).is_none() {
+                    self.focused_id = None;
+                }
+            }
         }
         if escape && state.is_active() {
             // The field keeps egui's focus on Escape; surrender it here so the key reaches the
@@ -621,6 +738,14 @@ impl DistanceFields {
             self.suspended = true;
             outcome.cancel = true;
             outcome.changed = true;
+        } else if escape && let Some(id) = self.focused_id.filter(|id| ui.ctx().memory(|memory| memory.has_focus(*id)))
+        {
+            // A field that holds the keyboard but measures no direction — a row gesture's count
+            // (U125) — takes Escape the same way: it gives the keyboard back, and the tool's own
+            // Escape is the next press (ADR 0103).
+            ui.ctx().memory_mut(|memory| memory.surrender_focus(id));
+            self.focused_id = None;
+            outcome.cancel = true;
         } else if enter && let Some(side) = state.active() {
             match state.lock(side) {
                 Ok(()) => {
@@ -643,6 +768,12 @@ impl DistanceFields {
             self.error = Some(message);
         }
         for edit in &reported.edits {
+            // A count is not a gap: it enters no measurement, and the shell reads it from the
+            // outcome. It still re-plans the ghosts, which is what `changed` says.
+            if edit.param == ToolParam::Count {
+                changed = true;
+                continue;
+            }
             let Some(side) = Side::of_param(edit.param) else {
                 continue;
             };
@@ -858,7 +989,8 @@ mod tests {
         let mut locked = false;
         for _ in 0..2 {
             let output = context.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |ui| {
-                last = Some(fields.show(ui, &mut state, &placements, viewport, Pos2::new(400.0, 300.0), None, 92));
+                last =
+                    Some(fields.show(ui, &mut state, None, &placements, viewport, Pos2::new(400.0, 300.0), None, 92));
             });
             if let Some(outcome) = &last {
                 locked = contains_image(&output.shapes, outcome.rect);
@@ -926,6 +1058,59 @@ mod tests {
         assert!(entered.is_some_and(|outcome| outcome.changed), "the typed number reached the measurement");
         assert_eq!(state.value(Side::Low), Some(250.0), "the low gap is where it was typed");
         assert_eq!(state.high(), 268.0, "and the part keeps its extent");
+    }
+
+    #[test]
+    fn a_row_gestures_count_travels_beside_the_gaps_and_pins_nothing() {
+        // U125: the count of a row is the third field of the same card. It re-plans the ghosts when
+        // it is typed, it measures no gap, and the two distances keep their own faces.
+        let context = egui::Context::default();
+        crate::set_language(&context, crate::Lang::En);
+        let mut state = distances();
+        let placements = [
+            FieldPlacement { side: Side::Low, position: Pos2::new(200.0, 300.0) },
+            FieldPlacement { side: Side::High, position: Pos2::new(520.0, 300.0) },
+        ];
+        let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let count = ToolRow {
+            param: ToolParam::Count,
+            label: Some(FieldLabel::Word(Message::ToolCount)),
+            value: 3.0,
+            unit: "",
+            range: 1.0..=9_999.0,
+            decimals: 0,
+            locked: false,
+            disabled: false,
+            centre: false,
+        };
+        let mut fields = DistanceFields::default();
+        let mut boundary = None;
+        for _ in 0..2 {
+            let output = context.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |ui| {
+                boundary = Some(fields.show(
+                    ui,
+                    &mut state,
+                    Some(count.clone()),
+                    &placements,
+                    viewport,
+                    Pos2::new(400.0, 300.0),
+                    None,
+                    92,
+                ));
+            });
+            output.drop_without_applying_deltas();
+        }
+        let outcome = boundary.expect("two frames drew the card");
+        assert!(outcome.rect.is_some(), "the count draws on the same card as the two gaps");
+        assert!(outcome.count.is_none(), "nothing was typed yet");
+
+        // A typed count is a change the shell re-plans from, and it pins no gap.
+        let reported =
+            ToolOutcome { edits: vec![crate::ToolEdit { param: ToolParam::Count, value: 4.0 }], ..Default::default() };
+        assert!(fields.apply(&mut state, &reported), "the count re-plans the ghosts");
+        assert_eq!(state.pinned_low(), None, "and pins no face");
+        assert_eq!(state.pinned_start(), None, "no near face was fixed");
+        assert_eq!(state.pinned_gap(), None, "and no far gap");
     }
 
     /// One frame of the in-scene layout, for a test that types into the gap it drew.

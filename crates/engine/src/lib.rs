@@ -69,10 +69,12 @@ pub use panel_cmds::{
     PanelCornerClear, PanelCornerSet, PanelCreate, PanelEdgeBandingClear, PanelEdgeBandingSet, PanelFill,
     PanelMachiningAdd, PanelMachiningMove, PanelMachiningRemove, PanelMachiningUpdate, PanelMaterialSet,
     PanelOutlineSet, PanelOutlineToContour, PanelRename, PanelResize, PanelRingBandingClear, PanelRingBandingSet,
+    PanelTrimSet,
 };
+pub use panel_cmds::{TRIM_SET_ID, TRIM_SET_LABEL};
 pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};
 pub use read::{Query, QueryError};
 pub use resolve::{SelectionCache, Stamp, anchor_of, choice_of, resolve_slot};
 pub use scene_cmds::{CameraCreate, CameraProjectionSet, LightCreate, LightParamsSet, SceneActiveCameraSet};
-pub use session::{AgentMode, EditScope, OpenProductError, Session};
+pub use session::{AgentMode, EditScope, FillRowCreate, MAX_FILL_ROW, OpenProductError, Session};

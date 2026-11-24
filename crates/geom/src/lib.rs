@@ -27,7 +27,7 @@ pub use contact::{
     Shared, Solid, overlap,
 };
 pub use contour::{Contour, ContourError, DEFAULT_TANGENT_TOLERANCE};
-pub use glam::{DMat4, DQuat, DVec2, DVec3, DVec4, EulerRot};
+pub use glam::{DMat3, DMat4, DQuat, DVec2, DVec3, DVec4, EulerRot};
 pub use rect::{Rect, RectError, connected_count, regions_from_rects, subtract_rects, total_area, union_rects};
 pub use ring::{Region, RegionError, RegionSamples};
 pub use segment::{Arc, Line, MAX_ARC_EXTENSION, Segment, SegmentEnd, point_on_circle};

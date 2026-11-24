@@ -49,11 +49,13 @@ mod model_list;
 mod open_frame;
 /// The on-screen display: the diagnostic block in the free corner (U106).
 mod osd;
+mod points_gizmo;
 mod preview;
 mod render_place;
 mod rotate_gizmo;
 mod scene_build;
 mod scene_gizmo;
+mod scene_snap;
 mod scene_writer;
 mod settings_store;
 mod shortcuts;

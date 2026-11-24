@@ -250,6 +250,7 @@ static COMMANDS: &[CommandSpec] = &[
     panel_cmds::FILL,
     panel_cmds::CONTOUR_CREATE,
     panel_cmds::OUTLINE_SET,
+    panel_cmds::BUILD_SET,
     panel_cmds::OUTLINE_CONTOUR,
     node_cmds::ASSEMBLY_CREATE,
     product_cmds::PRODUCT_CREATE,
@@ -257,6 +258,7 @@ static COMMANDS: &[CommandSpec] = &[
     panel_cmds::RENAME,
     node_cmds::NODE_RENAME,
     panel_cmds::RESIZE,
+    panel_cmds::TRIM_SET,
     panel_cmds::MATERIAL_SET,
     panel_cmds::EDGE_BANDING_SET,
     panel_cmds::EDGE_BANDING_CLEAR,
@@ -666,7 +668,13 @@ mod tests {
         // A typed create names the maker's word instead of a quaternion (X117).
         let typed = registry.get("panel.create.standard").expect("panel.create.standard is registered");
         assert_eq!(typed.label().text(Lang::En), "Create standard panel");
-        assert_eq!(registry.specs().len(), 67);
+        // A part's build is rewritten by one command, and no class travels with it (U123).
+        let build = registry.get("panel.build.set").expect("panel.build.set is registered");
+        assert_eq!(build.label().text(Lang::En), "Build the part another way");
+        // An end trim is its own command: the number belongs to the end, not to a delta (U124).
+        let trim = registry.get("panel.trim.set").expect("panel.trim.set is registered");
+        assert_eq!(trim.label().text(Lang::En), "Set an end trim");
+        assert_eq!(registry.specs().len(), 69);
     }
 
     #[test]
