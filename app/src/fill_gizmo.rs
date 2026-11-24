@@ -178,47 +178,66 @@ impl FillGizmo {
         self.row = None;
     }
 
-    /// The row the evenly fill is laying, if the first click already anchored one.
+    /// The row the evenly fill would lay right now, if the pointer names a void.
     pub(crate) fn row(&self) -> Option<&RowState> {
         self.row.as_ref()
     }
 
-    /// Anchors the ghost the click named and starts the row along `direction`.
+    /// Keeps the row on the board the pointer measured, spread along `direction`.
     ///
-    /// The click writes nothing: the anchor is a plan the hand spreads, and the second click is what
-    /// makes the boards (U125). A default span of the whole void shows the row the maker would get
-    /// before the hand moves.
-    pub(crate) fn begin_row(&mut self, direction: DVec3, axis: usize) -> bool {
+    /// The row needs no click of its own (the owner, 2026-11-24): while «Равномерно» is on, the
+    /// boards are already spread through the void under the pointer and one click writes them. The
+    /// count a field holds survives a new measurement, because it is the gesture's number and not
+    /// the space's.
+    pub(crate) fn follow_row(&mut self, axis: usize, direction: DVec3) -> bool {
         let Some(anchor) = self.ghost.clone() else {
-            return false;
+            return self.row.take().is_some();
         };
-        let asked = FillRowAsk { start: anchor.free_low, span: None, count: None, gap: None };
-        let plan = model::fill_row(&anchor.niche, anchor.size_mm.z, axis, asked);
-        self.refusal = None;
-        self.row = Some(RowState { anchor, direction, plan, count: None });
-        true
+        let count = self.row.as_ref().and_then(|row| row.count);
+        let plan = model::fill_row(
+            &anchor.niche,
+            anchor.size_mm.z,
+            axis,
+            FillRowAsk { start: anchor.free_low, span: None, count, gap: None },
+        );
+        let changed = self.row.as_ref().is_none_or(|row| row.plan != plan || row.anchor != anchor);
+        self.row = Some(RowState { anchor, direction, plan, count });
+        // The row is spread before any number is typed: the same air at the ends and between.
+        self.plan_row(axis, None, None, count) || changed
     }
 
-    /// Re-plans the anchored row from the hand's span and the plate's numbers.
+    /// Re-plans the row from the numbers a plate holds.
     ///
-    /// `span` is how far the hand travelled from the anchor, `start` the near face a typed field
-    /// pinned, `gap` the far distance it fixed and `count` the number it asked for. A number the
-    /// model cannot honour leaves the row's refusal on the state, which the plate and the ghost
-    /// show; nothing is written and the anchor stays where the click put it.
-    pub(crate) fn plan_row(
-        &mut self,
-        axis: usize,
-        span: Option<f64>,
-        start: Option<f64>,
-        gap: Option<f64>,
-        count: Option<usize>,
-    ) -> bool {
+    /// `start` is the near face a typed field pinned, `gap` the far distance it fixed and `count`
+    /// the number it asked for. While neither distance is typed the row is spread evenly through the
+    /// whole void — the same air at the near wall, between the boards and the far wall — which is
+    /// what a maker reading the gesture expects to see. A number the model cannot honour leaves the
+    /// row's refusal on the state, which the plates show; nothing is written.
+    pub(crate) fn plan_row(&mut self, axis: usize, start: Option<f64>, gap: Option<f64>, count: Option<usize>) -> bool {
         let Some(row) = self.row.as_mut() else {
             return false;
         };
         row.count = count;
-        let asked = FillRowAsk { start: start.unwrap_or(row.anchor.free_low), span, count, gap };
-        let plan = model::fill_row(&row.anchor.niche, row.anchor.size_mm.z, axis, asked);
+        let niche = &row.anchor.niche;
+        let thickness = row.anchor.size_mm.z;
+        let wall_low = niche.local_min[axis];
+        let room = niche.size[axis];
+        let asked = match (start, gap) {
+            // A typed near face owns the row: the boards follow it and the far end keeps whatever is
+            // left, or the far gap the other field fixed.
+            (Some(start), gap) => FillRowAsk { start, span: None, count, gap },
+            // A row spread through the whole void: the free length is shared between the boards and
+            // the two ends alike, so the air at the near wall is the air between the boards.
+            (None, None) => {
+                let fits = if room < thickness { 1 } else { (room / thickness).floor().max(1.0) as usize };
+                let boards = count.unwrap_or(fits).clamp(1, fits);
+                let air = ((room - boards as f64 * thickness) / (boards as f64 + 1.0)).max(0.0);
+                FillRowAsk { start: wall_low + air, span: None, count: Some(boards), gap: Some(air) }
+            }
+            // Only the far end is fixed: the near wall starts the row and the model shares the rest.
+            (None, Some(gap)) => FillRowAsk { start: wall_low, span: None, count, gap: Some(gap) },
+        };
+        let plan = model::fill_row(niche, thickness, axis, asked);
         let changed = plan != row.plan;
         row.plan = plan;
         changed
@@ -605,10 +624,10 @@ mod tests {
     }
 
     #[test]
-    fn a_click_anchors_the_row_and_the_hand_and_a_typed_count_grow_it() {
-        // U125: the anchor is the board the click named; the hand names the span from it, a typed
-        // count takes the whole void clamped to the boards that fit, and a typed far gap keeps its
-        // own distance while the neighbours share the rest.
+    fn the_evenly_fill_spreads_its_boards_through_the_void_without_a_click() {
+        // U128: the row is live. As soon as the pointer names a void the boards are spread from the
+        // near wall to the far one with the same air at both ends, a typed count claims the void, and
+        // a typed far gap keeps its own distance while the neighbours share the rest.
         let (project, product) = piece();
         let point = DVec3::new(300.0, 280.0, 200.0);
         let niche = niche_at(&project, point);
@@ -616,42 +635,40 @@ mod tests {
             fill: Fill::WidthAndDepth,
             mode: FillMode::Fit,
             mount: FillMount::Inset,
-            thickness: millimetres(16),
+            thickness: millimetres(17),
             free: None,
         };
         let mut gizmo = FillGizmo::default();
         gizmo.hover(&project, product, point, &niche, ask, Sight::none());
-        assert!(gizmo.begin_row(DVec3::Z, 2), "the click anchors the ghost it saw");
-        let anchor = gizmo.row().expect("a row").anchor.clone();
-        let room = 720.0 - anchor.free_low;
-        assert_eq!(
-            gizmo.row().and_then(|row| row.plan.clone().ok()).map(|plan| plan.count),
-            Some((room / 16.0) as usize)
-        );
-
-        // A hand a fifth of the way up the void holds the boards that fit in that span.
-        assert!(gizmo.plan_row(2, Some(200.0), None, None, None));
+        assert!(gizmo.follow_row(2, DVec3::Z), "the pointer's board anchors the row with no click");
+        let room = 720.0_f64;
+        let thickness = 17.0_f64;
+        let fits = (room / thickness) as usize;
         let plan = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
-        assert_eq!(plan.count, (200.0f64 / 16.0) as usize);
-        assert!(plan.end <= 720.0 + 1.0e-6, "no board crosses the case's ceiling");
+        assert_eq!(plan.count, fits, "the row takes every board that fits");
+        let air = (room - fits as f64 * thickness) / (fits as f64 + 1.0);
+        assert!(air > 0.0);
+        assert!((plan.low - air).abs() < 1.0e-6, "the near air is a share: {} against {air}", plan.low);
+        assert!((plan.high - air).abs() < 1.0e-6, "the far air is the same share: {} against {air}", plan.high);
+        assert!((plan.gap - air).abs() < 1.0e-6, "and the boards stand as far apart as the ends are");
 
-        // A typed count claims the whole void, clamped to what fits without crossing.
-        gizmo.plan_row(2, Some(200.0), None, None, Some(10_000));
+        // A typed count claims the void, clamped to what fits without crossing.
+        gizmo.plan_row(2, None, None, Some(10_000));
         let typed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
-        assert_eq!(typed.count, (room / 16.0) as usize);
+        assert_eq!(typed.count, fits);
         assert_eq!(gizmo.row().and_then(|row| row.count), Some(10_000), "the field keeps what was typed");
 
         // A typed far gap is honoured, and the neighbours divide what is left.
-        gizmo.plan_row(2, None, None, Some(40.0), Some(4));
+        gizmo.plan_row(2, None, Some(40.0), Some(4));
         let fixed = gizmo.row().and_then(|row| row.plan.clone().ok()).expect("a row of shelves");
         assert_eq!(fixed.count, 4);
         assert!((fixed.high - 40.0).abs() < 1.0e-6, "the typed gap is the distance the row leaves: {}", fixed.high);
-        let shared = (room - 4.0 * 16.0 - 40.0) / 3.0;
+        let shared = (room - 4.0 * thickness - 40.0) / 3.0;
         assert!((fixed.gap - shared).abs() < 1.0e-6, "the neighbours share the rest equally: {}", fixed.gap);
 
-        // Escape drops the row and leaves the tool's ghost where it was.
-        assert!(gizmo.cancel_row());
-        assert!(gizmo.row().is_none() && gizmo.ghost().is_some(), "the tool keeps its ghost");
+        // A pointer that names no void drops the row and leaves the tool armed.
+        gizmo.refuse(None);
+        assert!(gizmo.row().is_none(), "no void, no row");
     }
 
     #[test]

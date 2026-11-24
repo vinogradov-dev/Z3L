@@ -49,6 +49,11 @@ operation's context menu.**
   point at their walls, carried or held: the held drag's card is gone with the fill's.
 - **A step of the row is read, not typed.** The pitch between two boards is a thin coaxial run in the
   dim ink with no field at all: it is derived from the two outer numbers and the count.
+- **The row is live.** «Равномерно» needs no anchoring click (the owner, 2026-11-24): as soon as the
+  pointer names a void the boards are already spread through it — the free length is shared between
+  the boards and the two ends alike, so the air at the near wall is the air between the boards — and
+  one click writes them as one batch. The count plate says how many that is and takes a typed number;
+  a typed far gap keeps its own distance and the neighbours share the rest.
 - **The operation's menu.** A right press while the fill is armed opens the popup with the fill's own
   rows and no row of the node: the three classes (the tool's words — post, shelf, wall — not the class
   registry's), the two builds, the «Равномерно» switch and, for a wall alone, the mounting. The tree's

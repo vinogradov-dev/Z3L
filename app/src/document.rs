@@ -426,12 +426,26 @@ pub(crate) struct Document {
     distance_plates: [Option<egui::Rect>; 2],
     /// Where the count of a row drew last frame.
     count_plate_rect: Option<egui::Rect>,
+    /// Where the count of a row stands while the gesture lasts.
+    ///
+    /// A plate that followed the hand could never be pressed: the press would move the hand, the
+    /// plate would follow it, and the click would land where the plate was — the maker's own
+    /// complaint about a panel that runs away from the cursor, in a smaller shape (U128). It opens
+    /// beside the hand and stands there until the gesture ends.
+    count_plate_wanted: Option<egui::Pos2>,
     /// The point the tool card hangs from, kept for as long as the card is up.
     ///
     /// A card that followed the pointer could never be reached, because the hand that chases it is
     /// what moves it: the card opens where the hand was and stays there until the tool ends, so its
     /// fields and its two buttons are within reach (ADR 0119, U115).
     tool_card_anchor: Option<egui::Pos2>,
+    /// The dimension runs this frame measured, in screen points, with whether the hand is on one.
+    ///
+    /// `update_fill` and `show_move_distances` measure before the frame's picture is drawn, and the
+    /// viewport is an `egui` image painted after them: a run drawn at measuring time is covered by
+    /// the model it measures. The runs are kept here and painted in the same late pass as the ghost
+    /// (U128).
+    dimensions: Vec<Dimension>,
     /// The context menu a right click opened over the scene, and what it is about (U92).
     ///
     /// It is view state of this document: the menu closes when the pointer picks outside it, when
@@ -605,7 +619,9 @@ impl Document {
             osd: osd::Meter::default(),
             tool_card_rect: None,
             distance_plates: [None; 2],
+            dimensions: Vec::new(),
             count_plate_rect: None,
+            count_plate_wanted: None,
             tool_card_anchor: None,
             context_menu: ui::ViewportMenu::default(),
             scene_rect: None,
@@ -1988,16 +2004,13 @@ impl Document {
     /// `faces` are the part's two faces in the world with their coordinate along the axis, and
     /// `walls` are the two walls the same way; a side with no face draws nothing.
     fn gap_fields(
-        &self,
-        ui: &egui::Ui,
+        &mut self,
         rect: egui::Rect,
         pointer: Option<egui::Pos2>,
         axis_world: geom::DVec3,
         walls: [f64; 2],
         faces: [(geom::DVec3, f64); 2],
     ) -> Vec<FieldPlacement> {
-        let painter = ui.painter().with_clip_rect(rect);
-        let ink = ui::theme::helper(ui);
         let mut placements = Vec::new();
         for (index, side) in Side::ALL.into_iter().enumerate() {
             let (Some((face, face_scalar)), Some(wall)) = (faces.get(index).copied(), walls.get(index).copied()) else {
@@ -2015,7 +2028,7 @@ impl Document {
             // The gap under the hand is the one lit, as the move measures it: a pointer elsewhere
             // leaves the run dim, so two numbers never shout over the model (N26).
             let lit = pointer.is_some_and(|pointer| distance_to_run(pointer, face_screen, wall_screen) <= GAP_REACH);
-            paint_dimension(&painter, face_screen, wall_screen, if lit { ink } else { ink.gamma_multiply(GAP_DIM) });
+            self.dimensions.push(Dimension { from: face_screen, to: wall_screen, lit });
             placements.push(FieldPlacement { side, position: middle_screen });
         }
         placements
@@ -2062,12 +2075,10 @@ impl Document {
             self.reset_fill(ui.ctx());
             return;
         };
-        // An anchored evenly fill has its board: the hand now names the row's span and the plate its
-        // count, so the frame is the row's own (U125).
-        if self.editor.panel_build().spread.is_even() && self.fill_gizmo.row().is_some() {
-            self.update_row(ui, rect, arm, pointer, opacity);
-            return;
-        }
+        // An evenly fill draws the row itself: the pointer's own board is the row's shape, and its
+        // two numbers and its count are the plates (U125, U128). It is entered below, once the
+        // ghost the row repeats has been measured.
+        let even = self.editor.panel_build().spread.is_even();
         // The point under the pointer names the cell. A pointer that names none — the hand left the
         // piece, or rests on this tool's card where it covers the envelope's silhouette — keeps the
         // cell the tool already holds, so the ghost stays on the screen at the envelope instead of
@@ -2096,11 +2107,17 @@ impl Document {
                 // A number typed into a field pins the free place; the hand carries it otherwise.
                 // A pointer that names no cell holds the ghost: the plan then reads the point's own
                 // place, and the cell the tool still holds is the one that keeps it on the screen.
-                let free = match self.distances.as_ref().and_then(Distances::pinned_low) {
-                    Some(pinned) => Some(pinned),
-                    None if named.is_some() => self.fill_place(product, niche, axis, pointer, rect),
-                    // The pointer names no cell, so the ghost holds the place the tool already has.
-                    None => self.fill_carriage.map(|carried| carried.place),
+                let free = if even {
+                    // The row's first board stands on the near face its own numbers name, so the
+                    // ghost the row repeats is the first board of the row (U128).
+                    self.fill_gizmo.row().and_then(|row| row.plan.as_ref().ok()).map(|plan| plan.start)
+                } else {
+                    match self.distances.as_ref().and_then(Distances::pinned_low) {
+                        Some(pinned) => Some(pinned),
+                        None if named.is_some() => self.fill_place(product, niche, axis, pointer, rect),
+                        // The pointer names no cell, so the ghost holds the place the tool has.
+                        None => self.fill_carriage.map(|carried| carried.place),
+                    }
                 };
                 let ask = FillAsk { fill: arm.fill, mode: arm.mode, mount: self.fill_mount(), thickness, free };
                 self.fill_gizmo.hover(self.session.project(), product, point, niche, ask, self.editor.flags().sight())
@@ -2113,6 +2130,10 @@ impl Document {
         };
         if measured || planned {
             ui.ctx().request_repaint();
+        }
+        if even {
+            self.update_row(ui, rect, arm, pointer, opacity);
+            return;
         }
         let Some(ghost) = self.fill_gizmo.ghost().cloned() else {
             self.distances = None;
@@ -2149,7 +2170,6 @@ impl Document {
         };
         let axis_world = parent_world.transform_vector(unit);
         let placements = self.gap_fields(
-            ui,
             rect,
             Some(pointer),
             axis_world,
@@ -2185,49 +2205,49 @@ impl Document {
         self.distances = Some(distances);
     }
 
-    /// Draws the row the evenly fill is laying and reads its plate (U125).
+    /// Draws the row the evenly fill would lay, and reads its two numbers and its count (U125, U128).
     ///
-    /// The anchor is the first click's board; the hand names the span from it and the plate holds the
-    /// row's three numbers — the two distances to the walls and the count — so the ghosts and the
-    /// numbers are one model answer. Nothing here writes: the second click is what makes the boards.
+    /// The row needs no click of its own: the boards are spread through the void the pointer names,
+    /// from the near wall to the far one with the same air at both ends, and one click writes them.
+    /// The plates hold the row's three numbers — the two distances to the walls and the count — so
+    /// the ghosts and the numbers are one model answer. Nothing here writes.
     fn update_row(&mut self, ui: &mut egui::Ui, rect: egui::Rect, arm: ui::FillArm, pointer: egui::Pos2, opacity: u32) {
         let axis = model::free_axis(arm.fill);
         let Some(product) = self.session.active_product() else {
             return;
         };
-        let Some(anchor) = self.fill_gizmo.row().map(|row| row.anchor.clone()) else {
+        let Some(direction) = self.fill_row_direction(arm) else {
             return;
         };
+        self.fill_gizmo.follow_row(axis, direction);
         let Some(parent_world) = self.session.project().world_placement(product) else {
             return;
         };
         let unit = axis_unit(axis);
         let axis_world = parent_world.transform_vector(unit);
-        let low_wall = anchor.niche.local_min[axis];
-        let high_wall = anchor.niche.local_max()[axis];
-        // The hand names the row's span from the anchor; a pointer that names no place holds the
-        // row where the tool already has it.
-        let hand = self.fill_place(product, &anchor.niche, axis, pointer, rect);
-        let span = hand.map(|place| (place - anchor.free_low).max(0.0));
-        // The plate's own numbers: the near face a typed field pinned and the far distance it fixed.
+        // The plates' own numbers: the near face a typed field pinned, the far distance it fixed and
+        // the count the third plate holds.
         let (pinned_start, pinned_gap) =
             self.distances.as_ref().map_or((None, None), |measured| (measured.pinned_start(), measured.pinned_gap()));
         let count = self.fill_gizmo.row().and_then(|row| row.count);
-        if self.fill_gizmo.plan_row(axis, span, pinned_start, pinned_gap, count) {
+        if self.fill_gizmo.plan_row(axis, pinned_start, pinned_gap, count) {
             ui.ctx().request_repaint();
         }
         let Some(row) = self.fill_gizmo.row() else {
             return;
         };
-        let (low_face, high_face, faces) = match &row.plan {
+        let (anchor, direction, plan) = (row.anchor.clone(), row.direction, row.plan.clone());
+        let low_wall = anchor.niche.local_min[axis];
+        let high_wall = anchor.niche.local_max()[axis];
+        let (low_face, high_face, faces) = match &plan {
             Ok(plan) => {
                 // The row's high end is the last board's far face: the anchor's far face one pitch
                 // per board further along the axis the row runs on.
-                let Some(low_point) = row.anchor.low_face() else {
+                let Some(low_point) = anchor.low_face() else {
                     return;
                 };
                 let Some(high_point) =
-                    row.anchor.high_face().map(|face| face + row.direction * ((plan.count - 1) as f64 * plan.pitch))
+                    anchor.high_face().map(|face| face + direction * ((plan.count - 1) as f64 * plan.pitch))
                 else {
                     return;
                 };
@@ -2238,7 +2258,7 @@ impl Document {
                 let Some(distances) = self.distances.as_ref() else {
                     return;
                 };
-                let (Some(low_point), Some(high_point)) = (row.anchor.low_face(), row.anchor.high_face()) else {
+                let (Some(low_point), Some(high_point)) = (anchor.low_face(), anchor.high_face()) else {
                     return;
                 };
                 (distances.low(), distances.high(), [(low_point, distances.low()), (high_point, distances.high())])
@@ -2254,33 +2274,19 @@ impl Document {
                 None => return,
             },
         };
-        let placements = self.gap_fields(ui, rect, Some(pointer), axis_world, [low_wall, high_wall], faces);
+        let placements = self.gap_fields(rect, Some(pointer), axis_world, [low_wall, high_wall], faces);
         let outcome = self.distance_fields.show_in_scene(ui, &mut distances, &placements, rect, opacity);
         self.tool_card_rect = None;
         self.distance_plates = outcome.plates;
         // The count rides beside the hand and on no run: it says how many boards the row holds, and
         // a number that is not a distance does not sit on a dimension (U128).
-        let mut count_row = ui::ToolRow {
-            param: ui::ToolParam::Count,
-            label: Some(ui::FieldLabel::Symbol("×")),
-            value: count.unwrap_or(row.plan.as_ref().map_or(1, |plan| plan.count)) as f64,
-            unit: "",
-            range: 1.0..=9_999.0,
-            decimals: 0,
-            locked: false,
-            disabled: false,
-            centre: false,
-        };
-        let (drawn, count_rect) = ui::tool_card::plate(
-            ui,
-            rect,
-            pointer + COUNT_PLATE_OFFSET,
-            egui::Id::unique("row_count"),
-            &mut count_row,
-            false,
-            true,
-            opacity,
-        );
+        let mut count_row = Self::count_row(count, plan.as_ref().ok().map(|plan| plan.count));
+        // The count stands beside the hand where the gesture opened and stays there — a plate that
+        // followed the hand could never be reached — and it is a reading, not a press target: the
+        // number is typed in the inspector's row, where the words are (U128).
+        let at = *self.count_plate_wanted.get_or_insert(pointer + COUNT_PLATE_OFFSET);
+        let (drawn, count_rect) =
+            ui::tool_card::plate(ui, rect, at, egui::Id::unique("row_count"), &mut count_row, false, false, opacity);
         self.count_plate_rect = Some(count_rect);
         if let Some(message) = self.distance_fields.error() {
             self.last_error = Some(message.text(ui::language(ui.ctx())).to_owned());
@@ -2291,7 +2297,7 @@ impl Document {
             let typed = edit.value.round().clamp(0.0, 9_999.0) as usize;
             let count = (typed > 0).then_some(typed);
             let (start, gap) = (distances.pinned_start(), distances.pinned_gap());
-            self.fill_gizmo.plan_row(axis, span, start, gap, count);
+            self.fill_gizmo.plan_row(axis, start, gap, count);
             ui.ctx().request_repaint();
         }
         if outcome.changed {
@@ -2303,7 +2309,7 @@ impl Document {
                 None => count,
             };
             let (start, gap) = (distances.pinned_start(), distances.pinned_gap());
-            self.fill_gizmo.plan_row(axis, span, start, gap, count);
+            self.fill_gizmo.plan_row(axis, start, gap, count);
             ui.ctx().request_repaint();
         }
         self.distances = Some(distances);
@@ -2361,6 +2367,7 @@ impl Document {
             return Err("The row was not laid.".to_owned());
         }
         self.fill_gizmo.cancel_row();
+        self.count_plate_wanted = None;
         Ok(())
     }
 
@@ -2368,6 +2375,9 @@ impl Document {
     fn reset_fill(&mut self, ctx: &egui::Context) {
         self.fill_gizmo.reset();
         self.fill_carriage = None;
+        self.count_plate_wanted = None;
+        self.distance_plates = [None; 2];
+        self.count_plate_rect = None;
         self.distance_fields.dismiss(ctx);
         self.distances = None;
         self.tool_card_rect = None;
@@ -2565,11 +2575,14 @@ impl Document {
     }
 
     /// Whether this frame's press landed on the tool card rather than on the scene.
-    fn distance_covers(&self, response: &egui::Response) -> bool {
-        let Some(pointer) = response.interact_pointer_pos() else {
+    fn distance_covers(&self, pointer: Option<egui::Pos2>) -> bool {
+        let Some(pointer) = pointer else {
             return false;
         };
         self.tool_card_rect.is_some_and(|card| card.contains(pointer))
+            // A count's plate stands beside the hand and on nothing, so a press on it is a press on
+            // the number and not the click that lays the row (U128).
+            || self.count_plate_rect.is_some_and(|plate| plate.contains(pointer))
     }
 
     /// The world distance a typed move distance has fixed, relative to the drag's start.
@@ -2638,11 +2651,9 @@ impl Document {
         let low_wall_point = measure.wall_low.map(|wall| measure.low_face + direction * (wall - measure.start_low));
         let high_wall_point =
             measure.wall_high.map(|wall| measure.high_face + direction * (wall - (measure.start_low + measure.extent)));
-        let painter = ui.painter().with_clip_rect(rect);
         // The hand is where the maker sees the pointer, and after a camera gesture it is the carry's
         // own square and not the system pointer (X69, ADR 0156).
         let pointer = hand.or_else(|| ui.input(|input| input.pointer.hover_pos()));
-        let ink = ui::theme::helper(ui);
         let mut placements = Vec::new();
         for (side, face, wall_point) in
             [(Side::Low, low_face, low_wall_point), (Side::High, high_face, high_wall_point)]
@@ -2663,9 +2674,9 @@ impl Document {
                 continue;
             };
             // The gap under the hand is the one lit; a pointer elsewhere in the room leaves the
-            // dimension thin and dim, so two numbers never shout over the model (N26).
+            // dimension dim, so two numbers never shout over the model (N26).
             let lit = pointer.is_some_and(|pointer| distance_to_run(pointer, face_screen, wall_screen) <= GAP_REACH);
-            paint_dimension(&painter, face_screen, wall_screen, if lit { ink } else { ink.gamma_multiply(GAP_DIM) });
+            self.dimensions.push(Dimension { from: face_screen, to: wall_screen, lit });
             placements.push(FieldPlacement { side, position: face_screen + (wall_screen - face_screen) * 0.5 });
         }
         // Both layouts of the move are the same one now (U128): the field sits in the middle of
@@ -2878,6 +2889,21 @@ impl Document {
         }
     }
 
+    /// The row of a fill's count: the number the maker typed, or what the row holds.
+    fn count_row(count: Option<usize>, planned: Option<usize>) -> ui::ToolRow {
+        ui::ToolRow {
+            param: ui::ToolParam::Count,
+            label: Some(ui::FieldLabel::Symbol("×")),
+            value: count.unwrap_or(planned.unwrap_or(1)) as f64,
+            unit: "",
+            range: 1.0..=9_999.0,
+            decimals: 0,
+            locked: false,
+            disabled: false,
+            centre: false,
+        }
+    }
+
     /// The class row of the by-points card: the plane's role first, then the three roles by name.
     fn points_class_row(draft: &ui::PointsDraft) -> ui::ToolChoice {
         let chosen = draft
@@ -2915,10 +2941,18 @@ impl Document {
             if self.fill_mount().is_overlay() {
                 return None;
             }
+            let mut rows = self.distances.as_ref()?.rows();
+            // A row's count is not a distance: it stands beside the hand in the scene and is mirrored
+            // here, where the words are, so a maker who prefers the panel types it there (U128).
+            if self.editor.panel_build().spread.is_even()
+                && let Some(row) = self.fill_gizmo.row()
+            {
+                rows.push(Self::count_row(row.count, row.plan.as_ref().ok().map(|plan| plan.count)));
+            }
             return Some(ToolView {
                 title: Some(Message::ToolPanel),
                 choices: Vec::new(),
-                rows: self.distances.as_ref()?.rows(),
+                rows,
                 toggle: None,
                 commit: ui::ToolCommit::Gesture,
                 note: None,
@@ -2959,6 +2993,22 @@ impl Document {
             ctx.request_repaint();
         }
         for edit in &reported.edits {
+            // A row's count is its own number: it spreads the boards without writing anything, and
+            // it is read by whichever surface the maker typed it into — the plate in the scene or
+            // the inspector's row (U128).
+            if edit.param == ToolParam::Count
+                && let Some(arm) = self.editor.fill_arm()
+            {
+                let typed = edit.value.round().clamp(0.0, 9_999.0) as usize;
+                let count = (typed > 0).then_some(typed);
+                let (start, gap) = self
+                    .distances
+                    .as_ref()
+                    .map_or((None, None), |measured| (measured.pinned_start(), measured.pinned_gap()));
+                self.fill_gizmo.plan_row(model::free_axis(arm.fill), start, gap, count);
+                ctx.request_repaint();
+                continue;
+            }
             let Some(next) = Length::from_millimetres(edit.value.round() as i64) else {
                 continue;
             };
@@ -3290,11 +3340,11 @@ impl Document {
         let content = chrome.content(area);
         self.scene_rect = Some(content);
         // The frame's card is redrawn below, in whichever mode owns the gesture; a frame that draws
-        // no card leaves the rectangle empty, so `Chrome` never keeps a stale one. The gap plates go
-        // with it, so a number that vanished stops swallowing the press that reaches its place.
+        // no card leaves the rectangle empty, so `Chrome` never keeps a stale one. The plates are not
+        // cleared here: a hand that reaches for a number has to be told it is over one, and a plate
+        // is drawn after the frame this test runs in. They leave with the tool, in `reset_fill`.
         self.tool_card_rect = None;
-        self.distance_plates = [None; 2];
-        self.count_plate_rect = None;
+        self.dimensions.clear();
 
         // The viewport is the whole central area; the layout divides the scene rectangle into
         // views. Every view has its own camera and every border is draggable. A press on a border
@@ -3670,26 +3720,15 @@ impl Document {
             if response.clicked_by(egui::PointerButton::Primary)
                 && !pointer_over_widget
                 && !pointer_on_chrome
-                && !self.distance_covers(&response)
+                && !self.distance_covers(ui.input(|input| input.pointer.interact_pos()))
             {
-                // One surface, three clicks: a single fill makes its board, the evenly fill's first
-                // click anchors the board the row repeats, and its second click lays the row as one
-                // batch (U125). The anchoring click writes nothing.
+                // One surface, one click: a single board or the whole row the ghosts already show
+                // (U125, U128). The row needs no anchoring click of its own.
                 let lang = ui::language(ui.ctx());
-                let even = self.editor.panel_build().spread.is_even();
-                let clicked = if !even {
-                    self.create_fill(lang)
-                } else if self.fill_gizmo.row().is_some() {
+                let clicked = if self.editor.panel_build().spread.is_even() {
                     self.commit_row(lang)
                 } else {
-                    match (self.editor.fill_arm(), self.editor.fill_arm().and_then(|arm| self.fill_row_direction(arm)))
-                    {
-                        (Some(arm), Some(direction)) => {
-                            self.fill_gizmo.begin_row(direction, model::free_axis(arm.fill));
-                            Ok(())
-                        }
-                        _ => Err(Message::FillNeedsProduct.text(lang).to_owned()),
-                    }
+                    self.create_fill(lang)
                 };
                 match clicked {
                     Ok(()) => {
@@ -4160,6 +4199,10 @@ impl Document {
                 self.paint_selection_outline(ui, *view_rect);
             }
         }
+        // The measured gaps are drawn here and not where they were measured: the viewport is an
+        // image painted above everything `update_fill` did, so a run drawn there would be covered by
+        // the model it measures (U128).
+        self.paint_dimensions(ui, rect);
         let paint_target = gizmo_math::Target {
             camera: self.scene.camera,
             project: self.session.project(),
@@ -4462,6 +4505,22 @@ impl Document {
         // instead of after the next rebuild (X119).
         self.fit_left_behind();
         self.scene.camera = crate::scene_build::scene_camera(self.session.project(), self.layout.active_camera());
+    }
+
+    /// Paints the dimension runs the frame measured, over the model they measure.
+    ///
+    /// One ink for every run — the guide's amber — and one width; the run under the hand is drawn
+    /// lit and the other recedes by one tone of the same ink (N26, U128).
+    fn paint_dimensions(&self, ui: &egui::Ui, rect: egui::Rect) {
+        if self.dimensions.is_empty() {
+            return;
+        }
+        let painter = ui.painter().with_clip_rect(rect);
+        let ink = ui::theme::helper(ui);
+        for dimension in &self.dimensions {
+            let run = if dimension.lit { ink } else { ink.gamma_multiply(GAP_DIM) };
+            paint_dimension(&painter, dimension.from, dimension.to, run);
+        }
     }
 
     /// Paints the accent frame of the active view and the borders between views.
@@ -4878,15 +4937,6 @@ impl Document {
                 // Escape leaves the ruler before it leaves a container level: the tool is the mode
                 // the next click uses, and the points it held are view state, so nothing is undone.
                 self.cancel_measure();
-            } else if self.fill_gizmo.row().is_some() {
-                // Escape drops the anchored row before it drops the tool: the row is a draft and
-                // wrote nothing, so one key takes the whole gesture back and the arm stays armed
-                // for the next one (U125).
-                self.fill_gizmo.cancel_row();
-                self.fill_carriage = None;
-                self.distance_fields.dismiss(ui.ctx());
-                self.distances = None;
-                self.tool_card_rect = None;
             } else if self.editor.fill_arm().is_some() {
                 // Escape leaves the empty-space tool before it leaves a container level: the tool is
                 // the mode the next click uses.
@@ -5159,6 +5209,18 @@ fn paint_capture(
         };
         painter.line_segment([from, to], stroke);
     }
+}
+
+/// One measured gap this frame: where its run starts and ends on screen, and whether the hand is on
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Dimension {
+    /// The point on the part's own plane, in screen points.
+    from: egui::Pos2,
+    /// The point on the mass that stops it, in screen points.
+    to: egui::Pos2,
+    /// Whether the pointer is near enough for the run to be drawn lit (N26).
+    lit: bool,
 }
 
 /// Draws one measured gap as a dimension: a wide run from the part's own plane to the mass that

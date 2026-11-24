@@ -1423,6 +1423,110 @@ fn the_empty_space_ghost_is_painted_offscreen() {
     println!("the fill's menu is in {}", menu.display());
 }
 
+/// Draws the live row of an evenly fill, so its spread and its plates can be looked at.
+///
+/// «Равномерно» needs no anchoring click (U128): the pointer names a void and the boards are already
+/// spread through it. The shot presses the count's plate, types four and settles, so the picture is
+/// the row a maker would see while deciding — the arrows, the two numbers and the count beside the
+/// hand.
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/fill-row.png"]
+fn the_live_row_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots").join("fill-row-workspace.json");
+    let (project, product) = empty_product();
+    let mut session = engine::Session::with_directory(project, testkit::sample_catalog());
+    assert!(session.open_product(product), "the fixture product opens");
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the application builds");
+    if let Some(tab) = ui::toolbars::spec::tab("furniture") {
+        app.tabs.active_mut().editor.set_ribbon_tab(tab);
+    }
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+
+    let pointer = {
+        let document = app.tabs.active_mut();
+        document.editor.set_panel_build(ui::PanelBuild {
+            class: model::ClassCode::HORIZONTAL_PANEL,
+            spread: ui::FillSpread::Even,
+            ..ui::PanelBuild::default()
+        });
+        document
+            .editor
+            .arm_fill(&document.session, model::ClassCode::HORIZONTAL_PANEL, model::FillMode::Fit, text::Lang::En)
+            .expect("the shelf fill arms inside the open product");
+        let project = document.session.project();
+        let envelope = project.container(product).and_then(|product| product.envelope()).expect("an envelope");
+        let size = geom::DVec3::new(
+            envelope.x().millimetres_f64(),
+            envelope.y().millimetres_f64(),
+            envelope.z().millimetres_f64(),
+        );
+        let placement = project.world_placement(product).expect("a frame");
+        let centre = placement.transform_point(size * 0.5);
+        let rect = document.scene_rect().expect("the settled frame gives the scene a rectangle");
+        crate::gizmo_math::screen_point(document.camera(), rect, centre).expect("the piece is on screen")
+    };
+
+    let mut jobs = Vec::new();
+    let run = |app: &mut App, events: Vec<egui::Event>, jobs: &mut Vec<egui::ClippedPrimitive>| {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| {
+            app.frame(ui);
+        });
+        let mut delta = std::mem::take(&mut output.textures_delta);
+        {
+            let mut renderer = render_state.renderer.write();
+            for (id, images) in &delta.set {
+                for image in images {
+                    renderer.update_texture(&render_state.device, &render_state.queue, *id, image);
+                }
+            }
+            for id in &delta.free {
+                renderer.free_texture(id);
+            }
+        }
+        delta.clear();
+        *jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+    };
+    for frame in 0..SETTLE_FRAMES {
+        let events = if frame == 0 { vec![egui::Event::PointerMoved(pointer)] } else { Vec::new() };
+        run(&mut app, events, &mut jobs);
+    }
+    // The count is typed in the inspector's row; the shot writes it through the same path, so the
+    // picture is the row a maker reads while deciding — four boards with the same air at both ends.
+    app.tabs.active_mut().apply_tool_outcome(
+        &ctx,
+        ui::ToolOutcome {
+            edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value: 4.0 }],
+            ..ui::ToolOutcome::default()
+        },
+    );
+    for _ in 0..SETTLE_FRAMES {
+        run(&mut app, Vec::new(), &mut jobs);
+    }
+    assert!(app.tabs.active().fill_gizmo.row().is_some(), "the pointer spread a live row");
+
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let path = directory.join("fill-row.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the live row is in {}", path.display());
+}
+
 /// A scene whose tree is taller than a panel and whose inspector card is the longest one.
 ///
 /// Forty components make the tree scroll to a last row (the demo scene holds six), and the last

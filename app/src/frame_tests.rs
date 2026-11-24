@@ -3741,23 +3741,27 @@ fn evenly_harness(name: &str) -> (Harness, egui::Pos2, egui::Pos2) {
 }
 
 #[test]
-fn an_evenly_fill_anchors_first_and_lays_the_row_in_one_undo_entry() {
-    // U125: the first click only anchors the board the row repeats, the hand names the span along the
-    // panel plane's normal, and the second click lays every board as one batch — one revision, one
-    // undo entry, and the boards are the ones the ghosts drew.
-    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row");
+fn the_evenly_fill_spreads_its_boards_and_one_click_writes_them_all() {
+    // U128: the row is live — as soon as the pointer names a void its boards are spread through it,
+    // with the count riding beside the hand — and one click lays them as one batch: one revision,
+    // one undo entry, and the boards are the ones the ghosts drew.
+    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row");
     let before = harness.revision();
     harness.hover(pointer);
-    harness.press_at(pointer, egui::PointerButton::Primary);
-    harness.release_at(pointer, egui::PointerButton::Primary);
     harness.settle();
-    assert_eq!(harness.revision(), before, "anchoring writes nothing");
-    {
+    let (plan, anchor) = {
         let document = harness.app.tabs.active();
-        let row = document.fill_gizmo.row().expect("the first click anchored the row");
-        let count = row.plan.as_ref().expect("the row is a model answer").count;
-        // U128: the count is not a distance, so it rides beside the hand instead of on a run, and it
-        // says how many boards the row holds.
+        assert_eq!(harness.revision(), before, "the ghosts write nothing");
+        let row = document.fill_gizmo.row().expect("the pointer spread the row with no click");
+        let plan = row.plan.clone().expect("the row is a model answer");
+        assert!(plan.count > 1, "the void holds more than one board");
+        assert!(
+            (plan.low - plan.high).abs() < 1.0e-6,
+            "the row keeps the same air at both ends: {} and {}",
+            plan.low,
+            plan.high
+        );
+        // The count is not a distance, so it rides beside the hand instead of on a run.
         let plate = document.count_plate_rect().expect("the row's count drew beside the hand");
         assert!(screen().contains_rect(plate), "the count is on screen: {plate:?}");
         assert!(
@@ -3769,29 +3773,17 @@ fn an_evenly_fill_anchors_first_and_lays_the_row_in_one_undo_entry() {
             "the count stays within a glance of the hand: {plate:?} against {pointer:?}"
         );
         let shown = texts_inside(&harness, plate);
-        assert!(shown.iter().any(|text| text == &count.to_string()), "the count shows {count}: {shown:?}");
-    }
-
-    harness.hover(higher);
-    harness.settle();
-    let (plan, anchor) = {
-        let document = harness.app.tabs.active();
-        let row = document.fill_gizmo.row().expect("the row is still anchored");
-        let plan = row.plan.clone().expect("the row is a model answer");
-        assert!(plan.count > 1, "the hand's span holds more than one board");
-        assert!(plan.end <= 720.0, "no board crosses the case's ceiling: {}", plan.end);
+        assert!(shown.iter().any(|text| text == &plan.count.to_string()), "the count shows: {shown:?}");
         (plan, row.anchor.clone())
     };
-    assert_eq!(harness.revision(), before, "the row's ghosts write nothing");
 
-    harness.press_at(higher, egui::PointerButton::Primary);
-    harness.release_at(higher, egui::PointerButton::Primary);
+    harness.press_at(pointer, egui::PointerButton::Primary);
+    harness.release_at(pointer, egui::PointerButton::Primary);
     harness.settle();
     let revision = harness.revision();
-    assert!(revision > before, "the second click writes the row once");
+    assert!(revision > before, "the click writes the row once");
     let (boards, product) = {
         let document = harness.app.tabs.active();
-        assert!(document.fill_gizmo.row().is_none(), "the row is written and gone");
         let product = document.session.active_product().expect("the frame stays open");
         let boards: Vec<_> = document
             .session
@@ -3828,36 +3820,63 @@ fn an_evenly_fill_anchors_first_and_lays_the_row_in_one_undo_entry() {
 }
 
 #[test]
-fn an_escape_drops_the_row_and_leaves_no_node_and_no_revision() {
-    // U125: a cancelled row writes nothing — no node, no revision, no undo entry — and leaves the
-    // tool armed for the next gesture.
-    let (mut harness, pointer, higher) = evenly_harness("frame-fill-row-escape");
+fn a_typed_count_spreads_the_live_row() {
+    // U128: the count is the row's third number. It stands beside the hand as a reading and is typed
+    // in the inspector's row, where the words are, so both surfaces show one number and neither
+    // writes until the click.
+    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row-count");
+    harness.hover(pointer);
+    harness.settle();
+    let before = harness.revision();
+    assert!(harness.app.tabs.active().count_plate_rect().is_some(), "the count drew beside the hand");
+    let ctx = harness.context();
+    {
+        let document = harness.app.tabs.active_mut();
+        document.apply_tool_outcome(
+            &ctx,
+            ui::ToolOutcome {
+                edits: vec![ui::ToolEdit { param: ui::ToolParam::Count, value: 4.0 }],
+                ..ui::ToolOutcome::default()
+            },
+        );
+    }
+    harness.settle();
+    let (count, boards, air) = {
+        let document = harness.app.tabs.active();
+        let row = document.fill_gizmo.row().expect("the row is still live");
+        let plan = row.plan.as_ref().expect("the row is a model answer");
+        (row.count, plan.count, (plan.low, plan.high))
+    };
+    assert_eq!(count, Some(4), "the field kept the typed count");
+    assert_eq!(boards, 4, "the row spread four boards");
+    assert!((air.0 - air.1).abs() < 1.0e-6, "the four boards keep the same air at both ends: {air:?}");
+    assert_eq!(harness.revision(), before, "a typed count writes nothing until the click");
+}
+
+#[test]
+fn an_escape_leaves_the_live_row_and_writes_nothing() {
+    // U128: a row that was never clicked into being has no draft to drop. Escape leaves the tool, and
+    // the ghosts it drew wrote nothing — no node, no revision, no undo entry.
+    let (mut harness, pointer, _higher) = evenly_harness("frame-fill-row-escape");
     let before = harness.revision();
     harness.hover(pointer);
-    harness.press_at(pointer, egui::PointerButton::Primary);
-    harness.release_at(pointer, egui::PointerButton::Primary);
     harness.settle();
-    harness.hover(higher);
-    harness.settle();
-    assert!(harness.app.tabs.active().fill_gizmo.row().is_some(), "the row is anchored and spread");
-
-    // The low gap's field takes the keyboard while the pointer is near it, and the first Escape is
-    // the field's: it hands the number back to the pointer (ADR 0103). The second is the row's.
+    assert!(harness.app.tabs.active().fill_gizmo.row().is_some(), "the pointer spread a live row");
+    // The low gap's field owns the keyboard while the pointer is near it, and the first Escape is the
+    // field's: it hands the number back to the pointer (ADR 0103). The second is the tool's.
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
     harness.settle();
     harness.press(egui::Key::Escape, egui::Modifiers::NONE);
     harness.settle();
 
     let document = harness.app.tabs.active();
-    assert!(document.fill_gizmo.row().is_none(), "Escape drops the row");
-    assert!(document.editor.fill_arm().is_some(), "and leaves the tool armed for the next one");
+    assert!(document.editor.fill_arm().is_none(), "Escape leaves the tool");
     assert_eq!(harness.revision(), before, "a cancelled row writes no revision");
     let product = document.session.active_product().expect("the frame is still open");
     assert!(
         document.session.project().container(product).expect("the frame").children().is_empty(),
         "a cancelled row leaves no node"
     );
-    assert_eq!(harness.app.tabs.active().session.project().revision(), before, "and no second write");
 }
 
 #[test]
