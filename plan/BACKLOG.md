@@ -45,30 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
-  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
-   a shop has no place where a material is edited once and referenced by its boards. A format a
-   session invents from scratch will not be the one a joiner uses, so it takes the commonly
-   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
-   of pictures beside it.
-  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
-   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
-   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
-   whole. The library is one portable file in the workshop's user settings beside the settings
-   file (library.json) with an atomic save and a readable refusal for every refusal, and a
-   textures folder beside it: a picture is an ordinary file at a relative path that a person
-   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
-   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
-   it hands it the directory's, and the crate is registered in xtask's layer map and in
-   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
-   nothing draws.
-  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
-   empty name, a decor with no size and a picture that is missing are refusals a person can
-   read, never a panic; a replaced picture changes the frame's decor without restarting the
-   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
-   is green.
-  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src`
-
 - `[ ]` **O16** a catalogue record refers to a library material instead of describing it
   Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
    colour, a texture reference, roughness, metallic. The owner's model is the other way round:
@@ -105,6 +81,40 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
   `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
+- `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
+  Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
+   chosen on the tool card): a number typed into one of the row's two end fields cannot be
+   followed by a Tab into the other end and a number there; Enter on an end fixes that end and
+   afterwards the number cannot be overwritten and Tab does not reach the other end; Escape
+   clears the lock, but Tab never gives the cursor back to a field. Reproduced headless over
+   `evenly_harness` (a shelf fill with `FillSpread::Even`, the pointer on the near plate): the
+   near air takes 80 mm and the far plate takes 120 mm after a Tab, so the plain path works;
+   Enter on the far plate then locks it and the row's two airs jump from 80/120 to 600/120
+   although a lock must not move the boards; the plate still owns the keyboard, and the Tab
+   after it leaves the low side active with no field owning the keyboard, so a number typed
+   then lands nowhere (twenty idle frames and the values do not move). Escape clears both locks
+   and re-spreads the row (351/351), and from there neither Tab nor a typed number changes
+   anything: the row keeps three plates on screen that cannot be typed into, and the plate
+   takes no pointer, so the maker has to leave the work area and come back. Expectation: Enter
+   locks the face where it stands and draws the glyph without moving the row; Tab always walks
+   to the other end and that field takes the numbers typed into it, locked or not; Escape gives
+   the part back to the pointer but the next Tab or pointer move hands the keyboard to the end
+   the pointer names, so the gesture never leaves a plate nobody can type into. Suspected
+   cause: the keyboard is `DistanceFields`' own state — `begin` consumes Tab and asks `Scrub`
+   for the focus, `end` writes `focused_id` from `ui.memory().focused()` and re-activates
+   whichever row reported `focused`, so a request made while the locked plate still holds
+   egui's focus is dropped and `focused_id` keeps the other plate's id; and Escape sets
+   `suspended`, which only `reset`/`dismiss` clear, so `begin` stops auto-activating a side and
+   `tab()` has no active side to walk from (crates/ui/src/distance.rs, 656-750). The lock
+   moving the row is `plan_row` fed by `pinned_start`/`pinned_gap` in `update_row`.
+  Done: Tests over `evenly_harness` in `app/src/frame_tests.rs`: a number typed into the near
+   plate, a Tab and a number typed into the far plate leave both airs at what was typed; Enter
+   on an end leaves the row's two airs where they stood, and a Tab after it still hands the
+   keyboard to the other end, where a typed number lands; Escape gives the part back, and a Tab
+   after it (and a second one) returns the keyboard to a plate and a typed number lands; the
+   whole sequence runs without the pointer leaving the work area; cargo xtask ci is green.
+  `files: crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs`
+
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -429,6 +439,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/catalog/src,docs/domain/nomenclature.md,app/src/scene_build.rs,crates/scene/src/lib.rs,plan/notes`
 
 ## Done
+
+- `[x]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
+  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
+   a shop has no place where a material is edited once and referenced by its boards. A format a
+   session invents from scratch will not be the one a joiner uses, so it takes the commonly
+   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
+   of pictures beside it.
+  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
+   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
+   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
+   whole. The library is one portable file in the workshop's user settings beside the settings
+   file (library.json) with an atomic save and a readable refusal for every refusal, and a
+   textures folder beside it: a picture is an ordinary file at a relative path that a person
+   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
+   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
+   it hands it the directory's, and the crate is registered in xtask's layer map and in
+   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
+   nothing draws.
+  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
+   empty name, a decor with no size and a picture that is missing are refusals a person can
+   read, never a panic; a replaced picture changes the frame's decor without restarting the
+   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
+   is green.
+  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src` — `c207d61`
 
 - `[x]` **X136** the row was too twitchy, its pitch stood at the far end, and the overlay key leaked to a shelf
   Why: The row of «Равномерно» was too sensitive to place a small count, its pitch run stood at
