@@ -79,6 +79,31 @@ impl Project {
         self.set_node_pivot(id, pivot)
     }
 
+    /// Assigns or clears the render material every surface of a node wears, bumping the revision.
+    ///
+    /// A panel and an object draw a surface, so each wears one material of the workshop's library
+    /// and the frame paints all of it with that material. A container, a camera and a light draw
+    /// nothing and are refused. `None` clears the assignment, and the frame keeps its placeholder
+    /// tone until one is named (Y7).
+    pub fn set_node_material(&mut self, id: Id, material: Option<MaterialRef>) -> Result<Revision, ProjectError> {
+        if id == self.root.id() {
+            return Err(ProjectError::RootImmutable { id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        match node {
+            Node::Panel(panel) => panel.set_render_material(material),
+            Node::Object(object) => object.set_render_material(material),
+            Node::Container(_) | Node::Camera(_) | Node::Light(_) => {
+                return Err(ProjectError::NodeHasNoMaterial { id });
+            }
+        }
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Checks that `nodes` can be wrapped in one new group.
     ///
     /// Grouping needs at least two distinct non-root nodes that share one parent container, and the
@@ -914,5 +939,37 @@ mod tests {
         assert_eq!(project.revision(), revision, "a refused pivot edit does not bump the revision");
         assert_eq!(project.pivot_local(panel), Some(PivotLocal::ZERO), "a panel's pivot stays at its base corner");
         assert_eq!(project.panel(panel).expect("panel").placement(), stored, "the refusal changes nothing");
+    }
+
+    #[test]
+    fn a_surface_node_takes_one_render_material_and_a_container_has_none_to_take() {
+        let object = crate::fixtures::sample_object(2);
+        let root = Container::new(Id::new(1).expect("root id"), "Root", Placement::IDENTITY, vec![object.into()]);
+        let mut project = Project::new(root).expect("a project around one object");
+        let object = Id::new(2).expect("object id");
+        let root = project.root().id();
+        let oak = MaterialRef::new(1).expect("a non-zero material");
+
+        assert_eq!(project.set_node_material(object, Some(oak)).expect("an object wears a material").get(), 1);
+        assert_eq!(project.object(object).expect("object").render_material(), Some(oak));
+        assert!(project.object(object).expect("object").geometry().as_mesh().is_some(), "the body is untouched");
+
+        let panel = Id::new(2).expect("panel id");
+        let mut project = sample_project();
+        assert_eq!(project.set_node_material(panel, Some(oak)).expect("a panel wears a material").get(), 1);
+        assert_eq!(project.panel(panel).expect("panel").render_material(), Some(oak));
+        assert_eq!(project.set_node_material(panel, None).expect("the assignment is cleared").get(), 2);
+        assert_eq!(project.panel(panel).expect("panel").render_material(), None, "a cleared panel keeps no material");
+
+        let drawer = Id::new(3).expect("drawer id");
+        let revision = project.revision();
+        assert_eq!(
+            project.set_node_material(drawer, Some(oak)),
+            Err(ProjectError::NodeHasNoMaterial { id: drawer }),
+            "a container draws no surface"
+        );
+        assert_eq!(project.set_node_material(root, Some(oak)), Err(ProjectError::RootImmutable { id: root }));
+        assert_eq!(project.revision(), revision, "a refused assignment bumps nothing");
+        assert_eq!(MaterialRef::new(0), None, "zero is not a material");
     }
 }

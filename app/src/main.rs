@@ -472,8 +472,14 @@ impl App {
             colors: theme::scene_colors(ctx.theme()),
             ..Shell::default()
         };
-        let document =
-            Document::new(render_state.as_ref(), &settings, &shell, plan_mode(session), PreservedSections::new())?;
+        let document = Document::new(
+            render_state.as_ref(),
+            &settings,
+            &shell,
+            plan_mode(session),
+            PreservedSections::new(),
+            settings_store.materials(),
+        )?;
         Ok(Self {
             tabs: Tabs::new(document),
             render_state,
@@ -734,17 +740,25 @@ impl App {
             return Ok(());
         }
         let catalog = self.tabs.active().session.directory_shared();
-        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog)?;
+        // A tab opened beside another one opens on the same shared snapshots: the directory the
+        // window holds and the materials every tab is drawn with (Y8, Y7).
+        let library = self.tabs.active().session.materials_shared();
+        let pictures = self.settings_store.materials();
+        let document =
+            Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog, library, pictures)?;
         self.tabs.add(document);
         Ok(())
     }
 
     /// Opens an empty *Untitled* scene in a new tab.
     fn new_tab(&mut self) -> Result<(), String> {
-        let session = empty_session_with(self.tabs.active().session.directory_shared())?;
+        let library = self.tabs.active().session.materials_shared();
+        let session = empty_session_with(self.tabs.active().session.directory_shared())?.with_materials(library);
         let settings = &self.settings;
         let shell = &self.shell;
-        let document = Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new())?;
+        let pictures = self.settings_store.materials();
+        let document =
+            Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new(), pictures)?;
         self.tabs.add(document);
         Ok(())
     }
@@ -850,13 +864,16 @@ impl App {
     /// Replaces the last tab with an empty *Untitled* scene.
     fn empty_tab(&mut self, id: TabId) {
         let directory = self.tabs.active().session.directory_shared();
+        let library = self.tabs.active().session.materials_shared();
+        let pictures = self.settings_store.materials();
         let built = empty_session_with(directory).and_then(|session| {
             Document::new(
                 self.render_state.as_ref(),
                 &self.settings,
                 &self.shell,
-                plan_mode(session),
+                plan_mode(session.with_materials(library)),
                 PreservedSections::new(),
+                pictures,
             )
         });
         match built {

@@ -6,7 +6,7 @@
 //! panel or ring and share the same non-zero rule.
 
 use std::fmt;
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -76,6 +76,38 @@ impl MachiningId {
 }
 
 impl fmt::Display for MachiningId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+/// A reference to one record of the render's material library.
+///
+/// Every surface of a geometry node wears a material of the workshop's library, the way a 3D
+/// program assigns one. The document names it by the number the library handed out, and the type
+/// lives here rather than in `materials`: a document may name any material the shop owns, and the
+/// render's own base stays free of the document (`AGENTS.md` §3, ADR 0244). The shell converts one
+/// into a `materials::MaterialId` where the two meet (Y7). Zero is not a material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct MaterialRef(NonZeroU32);
+
+impl MaterialRef {
+    /// Creates a reference from a non-zero number.
+    pub const fn new(value: u32) -> Option<Self> {
+        match NonZeroU32::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// The number the library handed out.
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for MaterialRef {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0)
     }
