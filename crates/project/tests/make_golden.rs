@@ -18,7 +18,7 @@ use std::fs;
 use model::{
     CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth, CutoutShape,
     EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightKind, LightNode,
-    Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
+    MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -106,6 +106,14 @@ fn scene() -> SceneFile {
         ],
     );
     let mut project = Project::new(root).expect("the scene is valid");
+    // The render material a surface wears is written beside the geometry and never a resolved
+    // colour, so a file names the record and a library edit reaches it (Y7).
+    project
+        .set_node_material(id(2), Some(MaterialRef::new(1).expect("a non-zero material")))
+        .expect("the shelf wears a material");
+    project
+        .set_node_material(id(5), Some(MaterialRef::new(2).expect("a non-zero material")))
+        .expect("the ball wears a material");
     project
         .set_edge_banding(
             id(2),

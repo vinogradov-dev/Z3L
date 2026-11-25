@@ -2,8 +2,8 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 32,
-    "revision": 10,
+    "schema_version": 33,
+    "revision": 12,
     "next_id": 14,
     "root": {
       "id": 1,
@@ -39,6 +39,7 @@
               "kind": "rect"
             },
             "material": null,
+            "render_material": 1,
             "last_known_thickness": 18000,
             "placement": {
               "translation": [
@@ -531,6 +532,7 @@
             ],
             "properties": {},
             "tool": false,
+            "render_material": 2,
             "geometry": {
               "kind": "primitive",
               "base": {

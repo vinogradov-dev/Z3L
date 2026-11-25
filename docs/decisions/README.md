@@ -268,3 +268,4 @@ What it buys, what it costs, and the condition under which it should be revisite
 The code and `AGENTS.md` stay the authority for rules; a record keeps the reason.
 | [0243](0243-a-surface-is-a-base-and-one-coat.md) | A surface is a base and one coat, and a finish is a number in percent | Accepted; extends 0213's `Surface`, and the record Y8 builds carries it |
 | [0244](0244-the-renders-materials-are-a-library-of-their-own.md) | The render's materials are a library of their own, and a catalogue record points into it | Accepted; extends 0243 with the record's home and shape |
+| [0245](0245-a-3d-object-wears-one-render-material.md) | A 3D object wears one render material, and the frame never reads the catalogue | Accepted; builds on 0244 and shapes Y7, O16 and O18 |

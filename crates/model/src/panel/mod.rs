@@ -43,8 +43,8 @@ use crate::panel::banding::{normalize_band_order, validate_corner_banding};
 use crate::panel::geometry::validate_dimension;
 use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, PanelTrims, validate_contour_features};
 use crate::{
-    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, PivotLocal,
-    Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
+    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, MaterialRef,
+    PivotLocal, Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
 };
 
 /// Where a panel's outline comes from: one source for the whole panel.
@@ -123,6 +123,10 @@ pub struct Panel {
     nominal_size: PanelNominalSize,
     outline: PanelOutline,
     material: Option<ItemId>,
+    /// The render material every surface of this panel wears, when the shop or the catalogue named
+    /// one. The frame paints the panel from it and never reads the catalogue (Y7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    render_material: Option<MaterialRef>,
     last_known_thickness: Length,
     placement: Placement,
     pivot_local: PivotLocal,
@@ -180,6 +184,7 @@ impl Panel {
             bevels: Vec::new(),
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
+            render_material: None,
         })
     }
 
@@ -215,6 +220,7 @@ impl Panel {
             bevels: Vec::new(),
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
+            render_material: None,
         })
     }
 
@@ -297,6 +303,14 @@ impl Panel {
         self.material
     }
 
+    /// The render material every surface of the panel wears, when one is assigned.
+    ///
+    /// It is one material for the whole board — both faces, the edges and anything cut through it —
+    /// which is what a 3D object carries and what the frame paints (Y7).
+    pub const fn render_material(&self) -> Option<MaterialRef> {
+        self.render_material
+    }
+
     /// The fallback thickness used when the material is absent.
     pub const fn last_known_thickness(&self) -> Length {
         self.last_known_thickness
@@ -357,6 +371,11 @@ impl Panel {
     /// Replaces the selected material.
     pub(crate) fn set_material(&mut self, material: Option<ItemId>) {
         self.material = material;
+    }
+
+    /// Assigns or clears the render material every surface of the panel wears.
+    pub(crate) fn set_render_material(&mut self, material: Option<MaterialRef>) {
+        self.render_material = material;
     }
 
     /// Replaces the fallback thickness used when the catalogue has no entry.
@@ -941,6 +960,8 @@ pub(crate) struct PanelWire {
     outline: PanelOutline,
     #[serde(default)]
     material: Option<ItemId>,
+    #[serde(default)]
+    render_material: Option<MaterialRef>,
     last_known_thickness: Length,
     placement: Placement,
     #[serde(default)]
@@ -1002,6 +1023,7 @@ impl TryFrom<PanelWire> for Panel {
         panel.validate_bevels()?;
         panel.trims = wire.trims;
         panel.properties = wire.properties;
+        panel.render_material = wire.render_material;
         Ok(panel)
     }
 }

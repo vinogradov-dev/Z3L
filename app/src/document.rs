@@ -32,6 +32,7 @@ use mesh::{EvaluationCache, object_mesh};
 use model::{ClassCode, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
+use scene::decor::Decors;
 use scene::{Camera, Lighting, Polyline, Projection, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
@@ -59,7 +60,7 @@ use crate::open_frame;
 use crate::osd;
 use crate::points_gizmo::{PointsAction, PointsGizmo, PointsInput, PointsModifiers};
 use crate::rotate_gizmo::RotateGizmo;
-use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
+use crate::scene_build::{Bounds, LevelBounds, home_camera};
 use crate::scene_gizmo;
 use crate::scene_writer::SceneWriter;
 use crate::shortcuts::{DraftKey, Shortcuts, drawing_key, take_drawing_shortcut};
@@ -424,6 +425,12 @@ pub(crate) struct Document {
     /// rebuild watches the session's own counter, and a picture a shop replaced reaches the frame
     /// without a restart (Y8).
     scene_materials: u64,
+    /// The workshop's material folder, when the shell has one: where a record's decor picture is
+    /// read. A tab without it paints every surface its flat colour (Y7).
+    pictures: Option<materials::Store>,
+    /// The decor pictures this tab decoded, one per material, so a board pays one decode and every
+    /// panel cut from the same record shares the texels (Y8, Y7).
+    decors: Decors,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
     /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
@@ -599,10 +606,22 @@ impl Document {
         shell: &Shell,
         session: Session,
         extra: PreservedSections,
+        pictures: Option<materials::Store>,
     ) -> Result<Self, String> {
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
-        let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), session.active_product())?;
+        // The folder is known at construction, so the first frame already shows the decors a scene
+        // names instead of painting them once and rebuilding them a frame later (Y7).
+        let mut decors = Decors::new();
+        let materials = crate::scene_build::FrameMaterials::new(session.materials(), pictures.as_ref(), &mut decors);
+        let evaluated = crate::scene_build::evaluate_with(
+            &mut cache,
+            &mut kernel,
+            &session,
+            &ViewFlags::default(),
+            session.active_product(),
+            materials,
+        )?;
         let scene_bounds = evaluated.bounds;
         let level_bounds = evaluated.levels;
         // A node the kernel refuses is reported from the first frame, exactly as it is from every
@@ -635,6 +654,8 @@ impl Document {
             scene_product: session.active_product(),
             scene_directory: session.directory_version(),
             scene_materials: session.materials_version(),
+            pictures,
+            decors,
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
@@ -706,13 +727,17 @@ impl Document {
         shell: &Shell,
         path: &Path,
         directory: Arc<catalog::Directory>,
+        library: Arc<materials::Library>,
+        pictures: Option<materials::Store>,
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let scene_settings = scene.settings();
         let project = scene.into_document();
-        let session = Session::with_directory(project, directory).with_contact(crate::scene_build::contact_engine());
-        let mut document = Self::new(render_state, settings, shell, session, extra)?;
+        let session = Session::with_directory(project, directory)
+            .with_materials(library)
+            .with_contact(crate::scene_build::contact_engine());
+        let mut document = Self::new(render_state, settings, shell, session, extra, pictures)?;
         document.settings = scene_settings;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -1336,7 +1361,19 @@ impl Document {
         self.editor.retain_flags(self.session.project());
         let visibility = self.editor.visibility_revision();
         let started = Instant::now();
-        let evaluated = evaluate(&mut self.cache, &mut self.kernel, &self.session, self.editor.flags(), product)?;
+        // A moved library drops the pictures this tab decoded, so a scan a shop replaced reaches
+        // the frame under a new id (Y8), and every drawable is painted from its node's material.
+        self.decors.follow(materials);
+        let materials_source =
+            crate::scene_build::FrameMaterials::new(self.session.materials(), self.pictures.as_ref(), &mut self.decors);
+        let evaluated = crate::scene_build::evaluate_with(
+            &mut self.cache,
+            &mut self.kernel,
+            &self.session,
+            self.editor.flags(),
+            product,
+            materials_source,
+        )?;
         self.scene_bounds = evaluated.bounds;
         self.level_bounds = evaluated.levels;
         self.note_scene_failures(evaluated.failures);
@@ -5658,6 +5695,7 @@ mod tests {
 
     use super::*;
     use crate::icons;
+    use crate::scene_build::evaluate;
     use crate::view_cluster::projection_button;
 
     #[test]
@@ -5911,8 +5949,8 @@ mod tests {
         let revision = session.project().revision();
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         document.layout.set_kind(crate::view_layout::LayoutKind::TwoColumns);
         let regions = document.layout.regions(area);
@@ -5981,8 +6019,8 @@ mod tests {
         let session = crate::scene_build::demo_session().expect("the sample scene");
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
 
         document.toggle_view_projection();
         assert!(matches!(document.camera().projection(), Projection::Orthographic { .. }), "the view is orthographic");
@@ -6018,8 +6056,8 @@ mod tests {
         let revision = session.project().revision();
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
         let active = document.layout.active();
         let wide = document.layout.active_camera().with_projection(Projection::Orthographic { height: 2_200_000.0 });
         document.layout.leaf_mut(active).expect("the active leaf").set_camera(wide);
