@@ -19,6 +19,7 @@ contact-parry = { path = "crates/contact-parry" }
 kernel = { path = "crates/kernel" }
 model = { path = "crates/model" }
 catalog = { path = "crates/catalog" }
+materials = { path = "crates/materials" }
 kernel-truck = { path = "crates/kernel-truck" }
 param = { path = "crates/param" }
 mesh = { path = "crates/mesh" }
