@@ -63,23 +63,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
 
-- `[~]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
-  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
-   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
-   material and left the mapping unwritten, so the viewport and the final render show something
-   the workshop does not buy, and they disagree with the catalogue record on the first order.
-  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
-   panel's board from its material record, a band from its own, hardware as a conductor with
-   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
-   tint its record names. A record with no material keeps the placeholder tone, because a
-   workshop that has not filled the catalogue must still see a board and not a black rectangle.
-   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
-   exposure and the filmic curve stay the command's settings.
-  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
-   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
-   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
-  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -437,8 +420,41 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    it; the inspector's material diagnostics still read the resolved surface; cargo xtask ci is
    green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,app/src/scene_build.rs,crates/scene/src/lib.rs,plan/notes`
+- `[ ]` **U129** U129 a person gives a node one of the workshop's materials, and the card lists the library
+  Why: Y7 made every surface of a panel or an object wear one record of the render's library,
+   and it reads that record from the document — but nothing writes the slot in the window. A
+   shop can only name a material in the scene file by hand, so the frame's ability is invisible
+   until the card and a command exist (ADR 0245).
+  Shape: Two ways in, one command: a `node.material.set` with its stable id, a README-style
+   inventory row, an icon, the card and the palette place, and one undo entry; a picker that
+   lists the session's library by name, says so when the library is empty and clears a slot;
+   the record a node names is resolved by the session, so a missing one is a readable
+   diagnostic naming the node and the id rather than a silent placeholder. The catalogue's own
+   link is O16's, not this entry's.
+  Done: Tests: a command assigns and clears a slot in one undo entry each; the picker lists the
+   library's names and refuses nothing when the library is empty; a node whose record is gone
+   is a finding the inspector prints; cargo xtask ci is green.
+  `files: crates/ui/src,crates/engine/src,app/src`
 
 ## Done
+
+- `[x]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
+   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
+   material and left the mapping unwritten, so the viewport and the final render show something
+   the workshop does not buy, and they disagree with the catalogue record on the first order.
+  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
+   panel's board from its material record, a band from its own, hardware as a conductor with
+   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
+   tint its record names. A record with no material keeps the placeholder tone, because a
+   workshop that has not filled the catalogue must still see a board and not a black rectangle.
+   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
+   exposure and the filmic curve stay the command's settings.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
+   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
+   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src` — `7a66fe6`
 
 - `[x]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
   Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:

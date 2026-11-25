@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=c207d61a6483c3825a18dd6690bdb2a53cb9eb88 updated=2026-11-25
+STATE: milestone=M7 phase=T task=- state=idle base=7a66fe6 updated=2026-11-25
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
