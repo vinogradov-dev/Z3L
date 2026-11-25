@@ -418,6 +418,12 @@ pub(crate) struct Document {
     /// watches the session's own counter instead, so a board whose thickness changed re-derives its
     /// panels without a restart and without pretending the person edited anything.
     scene_directory: u64,
+    /// The session's render material library version the frame was built from.
+    ///
+    /// Like the directory, the library is not the document: a reload moves no revision, so the
+    /// rebuild watches the session's own counter, and a picture a shop replaced reaches the frame
+    /// without a restart (Y8).
+    scene_materials: u64,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
     /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
@@ -628,6 +634,7 @@ impl Document {
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
             scene_directory: session.directory_version(),
+            scene_materials: session.materials_version(),
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
@@ -1170,6 +1177,7 @@ impl Document {
             || self.session.preview_version() != self.scene_preview
             || self.session.active_product() != self.scene_product
             || self.session.directory_version() != self.scene_directory
+            || self.session.materials_version() != self.scene_materials
     }
 
     /// Installs a newer snapshot of the workshop's directory in this tab's session.
@@ -1181,6 +1189,16 @@ impl Document {
     /// touches (ADR 0148, `docs/domain/nomenclature.md` §13).
     pub(crate) fn set_directory(&mut self, directory: Arc<catalog::Directory>) {
         self.session.set_directory(directory);
+    }
+
+    /// Installs a newer snapshot of the workshop's render material library in this tab's session.
+    ///
+    /// The tab keeps nothing else: the frame is re-derived on the next [`Document::sync_scene`]
+    /// because the session's library version moved, and a replaced decor picture is read again
+    /// there. The document, its revision, the selection and the undo history are untouched, because
+    /// a material is not the document (`AGENTS.md` §4.2).
+    pub(crate) fn set_materials(&mut self, library: Arc<materials::Library>) {
+        self.session.set_materials(library);
     }
 
     /// Takes the window's display state and rebuilds the frame when the document moved.
@@ -1303,11 +1321,13 @@ impl Document {
         let preview = self.session.preview_version();
         let product = self.session.active_product();
         let directory = self.session.directory_version();
+        let materials = self.session.materials_version();
         if revision == self.scene_revision
             && visibility == self.scene_visibility
             && preview == self.scene_preview
             && product == self.scene_product
             && directory == self.scene_directory
+            && materials == self.scene_materials
         {
             return Ok(());
         }
@@ -1330,6 +1350,7 @@ impl Document {
         self.scene_preview = preview;
         self.scene_product = product;
         self.scene_directory = directory;
+        self.scene_materials = materials;
         let uploaded = self.upload_scene();
         let elapsed = started.elapsed();
         self.rebuild.record(elapsed);

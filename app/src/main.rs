@@ -43,6 +43,7 @@ mod gizmo;
 mod gizmo_math;
 mod header;
 mod logging;
+mod materials_watch;
 mod measure_gizmo;
 mod mesh_pick;
 mod model_list;
@@ -273,6 +274,18 @@ enum Gesture {
     },
 }
 
+/// The folders the shell watches off the frame path: the workshop's nomenclature directory and the
+/// render material library beside the settings file.
+///
+/// One value rather than two fields, because every place that composes a window composes both and a
+/// test's workspace is read exactly as a workshop's is.
+struct Watching {
+    /// The packages a shop connects, and the rows a panel is cut from.
+    directory: directory_watch::Watch,
+    /// The materials a facade is drawn with, and the pictures beside them (Y8).
+    materials: materials_watch::Watch,
+}
+
 struct App {
     /// The open scenes, in the order the tab row draws them. Never empty.
     tabs: Tabs<Document>,
@@ -285,11 +298,12 @@ struct App {
     settings: Settings,
     /// Where [`Settings`] is read from and written to.
     settings_store: SettingsStore,
-    /// The worker that hands over a newer nomenclature directory, and its channel to this frame.
+    /// The workers that hand over a newer nomenclature directory and render material library, and
+    /// their channels to this frame.
     ///
-    /// The frame only takes what the worker finished: polling the folder's revision and validating
-    /// the packages both happen off the frame path (`docs/domain/nomenclature.md` §13).
-    watch: directory_watch::Watch,
+    /// The frame only takes what a worker finished: polling a folder's revision and validating its
+    /// packages or materials both happen off the frame path (`docs/domain/nomenclature.md` §13).
+    watching: Watching,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
     /// The model list the *Assistant* page asked its endpoint for, and the last answer (ADR 0234).
@@ -376,12 +390,20 @@ impl App {
     ) -> Result<Self, String> {
         let root = settings_store.directory_root();
         let start = directory_watch::open(root.as_deref());
-        let watch = directory_watch::Watch::start(root, start.revision);
-        let session = empty_session_with(start.directory)?;
-        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        let directory_watch = directory_watch::Watch::start(root, start.revision);
+        let store = settings_store.materials();
+        let materials = materials_watch::open(store.as_ref());
+        let materials_watch = materials_watch::Watch::start(store, materials.revision);
+        let session = empty_session_with(start.directory)?.with_materials(materials.library);
+        let watching = Watching { directory: directory_watch, materials: materials_watch };
+        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watching)?;
         app.apply_channel(ctx);
         if let Some(refusal) = start.refusal {
             log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
+            app.failed(refusal);
+        }
+        if let Some(refusal) = materials.refusal {
+            log::warn!("the workshop material library could not be read; no material is named: {refusal}");
             app.failed(refusal);
         }
         Ok(app)
@@ -424,8 +446,12 @@ impl App {
         // file. The stamp is taken now, so the folder the test wrote before it built the shell is
         // the state the shell starts from and only a later write is a reload (O5).
         let root = settings_store.directory_root();
-        let watch = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
-        Self::build(ctx, render_state, settings_store, loaded, session, watch)
+        let directory = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
+        // The library beside the test's own settings file, watched the same way the window watches
+        // the workshop's: a test that replaces a picture drives the same reload path (Y8).
+        let store = settings_store.materials();
+        let materials = materials_watch::Watch::start(store.clone(), materials_watch::open(store.as_ref()).revision);
+        Self::build(ctx, render_state, settings_store, loaded, session, Watching { directory, materials })
     }
 
     /// Composes the shell around one document, one workspace and, when the window has one, its GPU.
@@ -438,7 +464,7 @@ impl App {
         settings_store: SettingsStore,
         loaded: crate::settings_store::Loaded,
         session: engine::Session,
-        watch: directory_watch::Watch,
+        watching: Watching,
     ) -> Result<Self, String> {
         let settings = loaded.settings;
         let shell = Shell {
@@ -454,7 +480,7 @@ impl App {
             shell,
             settings,
             settings_store,
-            watch,
+            watching,
             settings_section: SettingsSection::default(),
             assistant_models: model_list::Models::default(),
             settings_open: false,
@@ -518,7 +544,7 @@ impl App {
     /// (`docs/domain/nomenclature.md` §13). A revision that could not be read keeps the rows in use
     /// and says why in the status bar.
     fn take_directory(&mut self) {
-        while let Some(reload) = self.watch.take() {
+        while let Some(reload) = self.watching.directory.take() {
             match reload {
                 directory_watch::Reload::Loaded(directory) => {
                     for (_, document) in self.tabs.iter_mut() {
@@ -527,6 +553,29 @@ impl App {
                 }
                 directory_watch::Reload::Refused(refusal) => {
                     log::warn!("the workshop directory could not be read; the rows in use stay: {refusal}");
+                    self.failed(refusal);
+                }
+            }
+        }
+    }
+
+    /// Swaps in the material library the worker finished since the last frame.
+    ///
+    /// The library is the workshop's, so every open tab takes the same snapshot in the same frame,
+    /// and each tab re-derives only its frame: no panel, its geometry or the undo history depends on
+    /// a material (`AGENTS.md` §4.2). A library that could not be read keeps the records in use and
+    /// says why in the status bar; a replaced picture arrives here as a new snapshot, which is what
+    /// makes the new scan reach the screen without a restart.
+    fn take_materials(&mut self) {
+        while let Some(reload) = self.watching.materials.take() {
+            match reload {
+                materials_watch::Reload::Loaded(library) => {
+                    for (_, document) in self.tabs.iter_mut() {
+                        document.set_materials(Arc::clone(&library));
+                    }
+                }
+                materials_watch::Reload::Refused(refusal) => {
+                    log::warn!("the workshop material library could not be read; the records in use stay: {refusal}");
                     self.failed(refusal);
                 }
             }
@@ -1599,6 +1648,7 @@ impl App {
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
         self.take_directory();
+        self.take_materials();
         // The file manager answers on its own schedule, so its path is taken at the same boundary
         // and becomes the open or the save the gesture would have been (ADR 0182).
         self.take_pick(ui.ctx());
