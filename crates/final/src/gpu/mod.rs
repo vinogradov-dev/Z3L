@@ -34,18 +34,33 @@ use crate::image::Image;
 use crate::soup::faces_of;
 use crate::{Bvh, FinalError, Request};
 
-/// The most pixels one dispatch writes into one accumulator buffer.
+/// The most pixels one dispatch writes into one strip of buffers.
 ///
 /// A device's largest storage binding is 128 MB by default and the accumulator is sixteen bytes per
-/// pixel, so two million pixels is a strip that fits with room for the faces and the nodes beside it
-/// on any device the editor runs on. The image is traced strip by strip, which keeps the cap on an
-/// image the operator's paper rather than the binding.
-const MAX_STRIP_PIXELS: u64 = 2_000_000;
+/// pixel, so a million pixels is a strip that fits with room for the faces and the nodes beside it —
+/// and for the moments, the guide and the traced buffer a strip carries while the filter reads them,
+/// which is a hundred and twelve bytes a pixel — on any device the editor runs on. The image is
+/// traced strip by strip, which keeps the cap on an image the operator's paper rather than the
+/// binding.
+const MAX_STRIP_PIXELS: u64 = 1_000_000;
 
-/// How many rows of an image one dispatch traces: whole rows, so a strip is a rectangle.
+/// How many rows beyond the ones a strip owns are traced, so the filter's widest tap has a neighbour.
+///
+/// The à-trous kernel is five taps wide and its last level steps sixteen pixels, so a pixel at the
+/// strip's edge reaches thirty-two rows past it. Those rows are traced twice — once for the strip
+/// above and once for this one — which costs an eighth of a strip and is what keeps a denoised image
+/// from carrying a seam where the strips met.
+fn pad_rows() -> u32 {
+    2 << (crate::denoise::LEVELS.saturating_sub(1))
+}
+
+/// How many rows of an image one strip owns: whole rows, so a strip is a rectangle, and few enough
+/// that the padding still fits [`MAX_STRIP_PIXELS`].
 fn strip_rows(request: Request) -> u32 {
     let width = u64::from(request.width()).max(1);
-    (MAX_STRIP_PIXELS / width).max(1).min(u64::from(request.height()).max(1)) as u32
+    let pad = u64::from(pad_rows()).saturating_mul(2);
+    let rows = (MAX_STRIP_PIXELS / width).saturating_sub(pad).max(1);
+    rows.min(u64::from(request.height()).max(1)) as u32
 }
 
 /// The tracer's state on the device: one pipeline and the frame it last uploaded.
@@ -148,12 +163,15 @@ impl Tracer {
         });
         let image_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Z3L final render accumulator layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: storage(false),
-                count: None,
-            }],
+            entries: &[
+                // One pixel's sums, its second moment and its guide: one buffer, one binding.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(false),
+                    count: None,
+                },
+            ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Z3L final render pipeline layout"),
@@ -254,10 +272,12 @@ impl Tracer {
         Ok(true)
     }
 
-    /// Traces one image of the uploaded frame, one sample per dispatch.
+    /// Traces one image of the uploaded frame, one sample per dispatch, and denoises it.
     ///
-    /// The result is summed radiance per pixel: the averaging belongs to [`Accumulation::into_image`],
-    /// because that is where the sample count is divided once instead of once per sample.
+    /// One strip at a time: the rows the strip owns plus the pad [`pad_rows`] rows the filter reaches
+    /// into. Each sample is dispatched separately so a cancel and the progress bar have somewhere to
+    /// happen, and each strip is filtered once — five à-trous levels over its guide, on the host — so
+    /// what comes back is the picture and, beside it, the raw sums a reference can be measured from.
     pub fn render(
         &self,
         device: &wgpu::Device,
@@ -277,25 +297,26 @@ impl Tracer {
             return Err(FinalError::ImageSize { width: request.width(), height: request.height() });
         };
         let mut sums = vec![[0.0f32; 4]; capacity];
+        let mut denoised = vec![[0.0f32; 3]; capacity];
         let rows = strip_rows(request);
+        let pad = pad_rows();
         let mut first_row = 0u32;
         while first_row < request.height() {
-            let strip_rows = rows.min(request.height() - first_row);
+            let owned = rows.min(request.height() - first_row);
+            // The rows this strip traces: its own, and the pad the filter's widest tap reaches into.
+            let start = first_row.saturating_sub(pad);
+            let end = first_row.saturating_add(owned).saturating_add(pad).min(request.height());
+            let strip_rows = end.saturating_sub(start);
             let strip_pixels = u64::from(request.width()) * u64::from(strip_rows);
             let Ok(strip_len) = usize::try_from(strip_pixels) else {
                 return Err(FinalError::ImageSize { width: request.width(), height: request.height() });
             };
-            let accumulator = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Z3L final render accumulator"),
-                size: (std::mem::size_of::<[f32; 4]>() as u64).saturating_mul(strip_pixels).max(16),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
+            let strip = strip_buffer(device, strip_pixels);
             let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
             let image_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Z3L final render accumulator"),
                 layout: &self.image_layout,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: accumulator.as_entire_binding() }],
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: strip.as_entire_binding() }],
             });
             if let Some(error) = pollster::block_on(scope.pop()) {
                 return Err(FinalError::Device { reason: format!("the accumulator does not fit the device: {error}") });
@@ -305,7 +326,7 @@ impl Tracer {
                     return Err(progress.refusal());
                 }
                 let counts = (uploaded.face_count, uploaded.node_count);
-                let uniform = layout::uniform(camera, lighting, request, counts, (first_row, strip_rows), sample)?;
+                let uniform = layout::uniform(camera, lighting, request, counts, (start, strip_rows), sample)?;
                 queue.write_buffer(&uploaded.uniform, 0, bytemuck::bytes_of(&uniform));
                 let mut encoder = device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Z3L final render sample") });
@@ -326,15 +347,64 @@ impl Tracer {
                 })?;
                 progress.advance();
             }
-            let strip = read_back(device, queue, &accumulator, strip_len)?;
-            let start = usize::try_from(u64::from(first_row) * u64::from(request.width())).unwrap_or(0);
-            if let Some(target) = sums.get_mut(start..start.saturating_add(strip.len())) {
-                target.copy_from_slice(&strip);
+            let traced: Vec<layout::GpuPixel> = read_back(device, queue, &strip, strip_len)?;
+            let picture = denoise_strip(request.width(), strip_rows, &traced)?;
+            // Only the rows this strip owns are kept: the pad was traced for the filter's sake and
+            // belongs to the strip beside it.
+            let offset = usize::try_from(u64::from(first_row - start) * u64::from(request.width())).unwrap_or(0);
+            let owned_pixels = usize::try_from(u64::from(owned) * u64::from(request.width())).unwrap_or(0);
+            let from = offset;
+            let to = offset.saturating_add(owned_pixels).min(traced.len());
+            let into = usize::try_from(u64::from(first_row) * u64::from(request.width())).unwrap_or(0);
+            let length = to.saturating_sub(from);
+            if let (Some(target), Some(picture_from), Some(picture_to)) = (
+                sums.get_mut(into..into.saturating_add(length)),
+                picture.get(from..to),
+                denoised.get_mut(into..into.saturating_add(length)),
+            ) {
+                if let Some(slice) = traced.get(from..to) {
+                    for (target, pixel) in target.iter_mut().zip(slice) {
+                        *target = pixel.sum;
+                    }
+                }
+                picture_to.copy_from_slice(picture_from);
             }
-            first_row = first_row.saturating_add(strip_rows);
+            first_row = first_row.saturating_add(owned.max(1));
         }
-        Ok(Accumulation { width: request.width(), height: request.height(), samples: request.samples(), sums })
+        Ok(Accumulation {
+            width: request.width(),
+            height: request.height(),
+            samples: request.samples(),
+            sums,
+            denoised,
+        })
     }
+}
+
+/// One strip's buffer: a [`layout::GpuPixel`] for every pixel it traces.
+///
+/// One buffer rather than three, because a compute shader has eight storage bindings in a stage and
+/// the frame's own arrays take six of them; and one allocation, because a sample writes all four
+/// `vec4`s of a pixel anyway. The device zeroes it: an accumulator that began at a previous strip's
+/// numbers would average two pictures together.
+fn strip_buffer(device: &wgpu::Device, pixels: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Z3L final render strip"),
+        size: (std::mem::size_of::<layout::GpuPixel>() as u64).saturating_mul(pixels).max(16),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+/// The picture one strip's pixels make: their means, their variance, and five à-trous levels.
+///
+/// The averaging and the filter are the host's (`crate::denoise`), which is where the tests measure
+/// them; this function is the one place a strip's buffer becomes that frame.
+fn denoise_strip(width: u32, height: u32, traced: &[layout::GpuPixel]) -> Result<Vec<[f32; 3]>, FinalError> {
+    let pixels: Vec<crate::denoise::Sample> = traced.iter().map(layout::GpuPixel::sample).collect();
+    let guides: Vec<crate::denoise::Guide> = traced.iter().map(layout::GpuPixel::guide).collect();
+    let frame = crate::denoise::Frame::new(width, height, pixels, guides)?;
+    Ok(frame.denoise())
 }
 
 impl std::fmt::Debug for Tracer {
@@ -357,14 +427,14 @@ fn storage_buffer<T: bytemuck::Pod>(device: &wgpu::Device, label: &str, values: 
     })
 }
 
-/// Copies a strip's accumulator back to the host.
-fn read_back(
+/// Copies one of a strip's buffers back to the host: `pixels` elements of `T`, whatever `T` is.
+fn read_back<T: bytemuck::Pod>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     accumulator: &wgpu::Buffer,
     pixels: usize,
-) -> Result<Vec<[f32; 4]>, FinalError> {
-    let bytes = (std::mem::size_of::<[f32; 4]>() as u64).saturating_mul(pixels as u64).max(16);
+) -> Result<Vec<T>, FinalError> {
+    let bytes = (std::mem::size_of::<T>() as u64).saturating_mul(pixels as u64).max(16);
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Z3L final render read-back"),
         size: bytes,
@@ -387,17 +457,17 @@ fn read_back(
         .recv()
         .map_err(|_| FinalError::Device { reason: "the read-back never answered".to_owned() })?
         .map_err(|error| FinalError::Device { reason: format!("the image could not be mapped: {error}") })?;
-    let mut sums = Vec::with_capacity(pixels);
+    let mut values = Vec::with_capacity(pixels);
     {
         let mapped = slice
             .get_mapped_range()
             .map_err(|error| FinalError::Device { reason: format!("the image is not mapped: {error}") })?;
-        let values: &[[f32; 4]] = bytemuck::try_cast_slice(&mapped)
+        let read: &[T] = bytemuck::try_cast_slice(&mapped)
             .map_err(|error| FinalError::Device { reason: format!("the accumulator is not readable: {error}") })?;
-        sums.extend_from_slice(&values[..values.len().min(pixels)]);
+        values.extend_from_slice(&read[..read.len().min(pixels)]);
     }
     staging.unmap();
-    Ok(sums)
+    Ok(values)
 }
 
 /// The run's cancel flag and its sample counter, which a surface reads while a render runs.
@@ -458,28 +528,66 @@ impl Progress {
     }
 }
 
-/// The linear radiance of one image, summed over its samples and not yet divided.
+/// The linear radiance of one image: what the tracer summed, and what the filter made of it.
+///
+/// Both pictures travel because they answer two questions: the sums are the raw estimator, which a
+/// reference is measured against and a test reads a single sample's value from, and `denoised` is the
+/// picture the file is written of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Accumulation {
     width: u32,
     height: u32,
     samples: u32,
     sums: Vec<[f32; 4]>,
+    denoised: Vec<[f32; 3]>,
 }
 
 impl Accumulation {
-    /// The image with its samples averaged, or a refusal when the buffer does not fit the size.
+    /// The image the filter made, which is the picture a render writes.
     pub fn into_image(self) -> Result<Image, FinalError> {
+        Image::from_linear(self.width, self.height, &self.denoised)
+    }
+
+    /// The image as the samples alone average to, before any filter touched it.
+    ///
+    /// A test comparing a render against a reference uses this one: the filter is what is being
+    /// measured, so it must not be able to hide inside the reference.
+    pub fn raw_image(&self) -> Result<Image, FinalError> {
         Image::from_accumulation(self.width, self.height, &self.sums, self.samples)
     }
 
-    /// The raw sums, per pixel, for a test that wants one sample's own value.
+    /// The raw sums, per pixel: three channels of radiance and the number of samples behind them.
     pub fn sums(&self) -> &[[f32; 4]] {
         &self.sums
     }
 
-    /// How many samples each pixel took, which is what the sums are divided by.
+    /// The denoised radiance, per pixel, row-major from the top.
+    pub fn denoised(&self) -> &[[f32; 3]] {
+        &self.denoised
+    }
+
+    /// How many samples each pixel was offered, which is the most any of them took.
     pub fn samples(&self) -> u32 {
         self.samples
+    }
+
+    /// How many samples one pixel actually took, which is fewer than [`Accumulation::samples`] where
+    /// the pixel converged and retired (`crate::denoise::MIN_SAMPLES`).
+    pub fn sample_count(&self, x: u32, y: u32) -> Option<u32> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let at = usize::try_from(u64::from(y) * u64::from(self.width) + u64::from(x)).ok()?;
+        self.sums.get(at).map(|sum| sum[3].max(0.0) as u32)
+    }
+
+    /// The image width in pixels.
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// The image height in pixels.
+    pub fn height(&self) -> u32 {
+        self.height
     }
 }

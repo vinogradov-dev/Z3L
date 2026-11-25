@@ -8,9 +8,10 @@
 //! refuses, reachable from the UI, the CLI or the assistant without a second code path.
 //!
 //! The order of the steps is the contract a person sees: the frame is uploaded (or reused), every
-//! sample is traced, and only then is the image encoded and written. A cancel at any sample therefore
-//! leaves the destination exactly as it was — the old picture is still there and no partial file is
-//! beside it — and the session is back to idle the moment the refusal arrives.
+//! sample is traced, the strips are filtered (`crate::denoise`), and only then is the image encoded and
+//! written. A cancel at any sample therefore leaves the destination exactly as it was — the old picture
+//! is still there and no partial file is beside it — and the session is back to idle the moment the
+//! refusal arrives.
 //!
 //! Refuses: a request or an exposure outside its range, a progress counter that belongs to another
 //! render, and every refusal the tracer and the encoder make. Nothing here panics on a full disk, a
@@ -109,7 +110,8 @@ pub struct Report {
     pub width: u32,
     /// The image height in pixels.
     pub height: u32,
-    /// How many samples each pixel took.
+    /// How many samples each pixel was offered — the most any of them took, since a pixel whose noise
+    /// is already under `crate::denoise::TARGET_RELATIVE_ERROR` retires and stops before it.
     pub samples: u32,
 }
 

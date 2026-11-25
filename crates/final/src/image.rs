@@ -46,9 +46,11 @@ impl Image {
 
     /// The average radiance of a render, from the accumulator the device wrote back.
     ///
-    /// The accumulator holds one `vec4` per pixel — three channels and one that is unused — summed
-    /// over every sample, so the division here is the only place a sample count is trusted. A buffer
-    /// of the wrong length, or a sample count of zero, is a refusal rather than a shifted image.
+    /// The accumulator holds one `vec4` per pixel — three channels and the number of samples behind
+    /// them — summed over every sample, so the division here is the only place a sample count is
+    /// trusted. The count is per pixel and not per image: a converged pixel retires before the last
+    /// sample (`crate::denoise::MIN_SAMPLES`), so its fourth channel is smaller than the request's own
+    /// count, and dividing it by the request would darken exactly the pixels that were cheap.
     pub fn from_accumulation(
         width: u32,
         height: u32,
@@ -60,9 +62,28 @@ impl Image {
             return Err(FinalError::Accumulation { pixels: accumulated.len(), width, height, samples });
         }
         let mut image = Self::new(width, height)?;
-        let divisor = samples as f32;
+        let offered = samples as f32;
         for (pixel, sum) in image.radiance.iter_mut().zip(accumulated) {
-            *pixel = [sum[0] / divisor, sum[1] / divisor, sum[2] / divisor];
+            // A pixel that reported no weight was never sampled: it is black rather than a division.
+            let count = if sum[3] > 0.0 { sum[3] } else { offered };
+            *pixel = [sum[0] / count, sum[1] / count, sum[2] / count];
+        }
+        Ok(image)
+    }
+
+    /// The image a filter produced: linear radiance per pixel, already averaged and already denoised.
+    ///
+    /// The four channels of an accumulator are not here — this picture is finished, so the only thing
+    /// checked is that there is one triple per pixel and that every value is a number.
+    pub fn from_linear(width: u32, height: u32, radiance: &[[f32; 3]]) -> Result<Self, FinalError> {
+        let expected = u64::from(width).checked_mul(u64::from(height));
+        if expected != Some(radiance.len() as u64) {
+            return Err(FinalError::Accumulation { pixels: radiance.len(), width, height, samples: 0 });
+        }
+        let mut image = Self::new(width, height)?;
+        for (pixel, value) in image.radiance.iter_mut().zip(radiance) {
+            let channel = |channel: f32| if channel.is_finite() { channel.max(0.0) } else { 0.0 };
+            *pixel = [channel(value[0]), channel(value[1]), channel(value[2])];
         }
         Ok(image)
     }
@@ -267,11 +288,28 @@ mod tests {
         assert_eq!(image.radiance_at(2, 0), None, "past the last column there is no pixel");
         assert_eq!(image.radiance_at(0, 1), None, "and past the last row");
 
+        // A pixel that retired early carries its own smaller count, and it is divided by that: the
+        // same light taken by eight samples is not a quarter of it.
+        let retired = vec![[4.0, 2.0, 1.0, 2.0], [8.0, 4.0, 2.0, 8.0]];
+        let image = Image::from_accumulation(2, 1, &retired, 8).expect("a two-pixel render");
+        assert_eq!(image.radiance_at(0, 0), Some([2.0, 1.0, 0.5]), "two samples, not eight");
+        assert_eq!(image.radiance_at(1, 0), Some([1.0, 0.5, 0.25]), "eight samples, as offered");
+
         let short = Image::from_accumulation(2, 2, &accumulated, 4).expect_err("two pixels are not four");
         assert!(matches!(short, FinalError::Accumulation { pixels: 2, .. }), "{short}");
         let zero = Image::from_accumulation(2, 1, &accumulated, 0).expect_err("a sample count of zero divides nothing");
         assert!(matches!(zero, FinalError::Accumulation { samples: 0, .. }), "{zero}");
         assert!(Image::new(0, 10).is_err());
+    }
+
+    #[test]
+    fn a_filtered_picture_keeps_its_light_and_refuses_what_is_not_a_number() {
+        let radiance = vec![[0.25, 0.5, 1.0], [f32::NAN, -1.0, f32::INFINITY]];
+        let image = Image::from_linear(2, 1, &radiance).expect("two pixels of a finished picture");
+        assert_eq!(image.radiance_at(0, 0), Some([0.25, 0.5, 1.0]), "a finished picture is not divided again");
+        assert_eq!(image.radiance_at(1, 0), Some([0.0, 0.0, 0.0]), "a broken pixel is black, not a hole");
+        let short = Image::from_linear(2, 2, &radiance).expect_err("two pixels are not four");
+        assert!(matches!(short, FinalError::Accumulation { pixels: 2, .. }), "{short}");
     }
 
     #[test]

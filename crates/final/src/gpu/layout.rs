@@ -101,6 +101,54 @@ pub(crate) fn decors(decors: &[scene::Decor]) -> DecorTable {
     DecorTable { texels, entries }
 }
 
+/// One pixel of a strip as the shader writes it: its samples' sums, and what its primary ray met.
+///
+/// Four `vec4`s and no more, in one buffer and one binding: the accumulator and its second moment,
+/// which are what the mean and the variance come from, and the guide, which is what the filter tells
+/// two surfaces apart by. They travel together because one sample writes all four and one filter
+/// reads all four — and because a compute shader has eight storage bindings to spend, and the frame's
+/// faces, nodes, two tables and two decor arrays already take six of them.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuPixel {
+    /// `xyz` the sum of the samples' radiance, `w` how many samples there are.
+    pub(crate) sum: [f32; 4],
+    /// `xyz` the sum of the squares of those samples, `w` unused.
+    pub(crate) squares: [f32; 4],
+    /// `xyz` the linear albedo of the surface the primary ray met, or the studio where it met none;
+    /// `w` how far that ray travelled in millimetres.
+    pub(crate) albedo: [f32; 4],
+    /// `xyz` the shading normal that faced the ray, or the ray's own direction where it met nothing.
+    pub(crate) normal: [f32; 4],
+}
+
+impl GpuPixel {
+    /// What the primary ray met, as the filter reads it: `crate::denoise::Guide`.
+    pub(crate) fn guide(&self) -> crate::denoise::Guide {
+        crate::denoise::Guide {
+            albedo: [self.albedo[0], self.albedo[1], self.albedo[2]],
+            normal: [self.normal[0], self.normal[1], self.normal[2]],
+            distance: self.albedo[3],
+        }
+    }
+
+    /// The pixel as the filter reads it: its mean, the variance of that mean and its sample count.
+    pub(crate) fn sample(&self) -> crate::denoise::Sample {
+        let count = self.sum[3];
+        // A pixel that never took a sample cannot divide; it is black rather than shifted.
+        let divisor = if count > 0.0 { count } else { 1.0 };
+        crate::denoise::Sample {
+            mean: [self.sum[0] / divisor, self.sum[1] / divisor, self.sum[2] / divisor],
+            variance: crate::denoise::variance_of_mean(
+                [self.sum[0], self.sum[1], self.sum[2]],
+                [self.squares[0], self.squares[1], self.squares[2]],
+                count,
+            ),
+            count: u32::try_from(count.max(0.0) as u64).unwrap_or(u32::MAX),
+        }
+    }
+}
+
 /// One node as the shader reads it: a box and what it means.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -137,8 +185,14 @@ pub(crate) struct Uniform {
     /// count including the key light.
     pub(crate) counts: [u32; 4],
     /// `x` the first image row of the strip this dispatch traces, `y` its row count. An image larger
-    /// than one accumulator buffer is traced strip by strip (`gpu::MAX_STRIP_PIXELS`).
+    /// than one accumulator buffer is traced strip by strip (`gpu::MAX_STRIP_PIXELS`), and a strip is
+    /// traced wider than the rows it owns so the filter's widest tap has a neighbour.
     pub(crate) strip: [u32; 4],
+    /// `x` the fewest samples a pixel takes before it may retire, `y` the relative error a finished
+    /// image is held to, `z` the dimmest light a relative error is measured against. All three are
+    /// `crate::denoise`'s own numbers, so the shader's retirement test and the filter's blend are one
+    /// threshold with one source.
+    pub(crate) denoise: [f32; 4],
     /// `xyz` the key light's colour as irradiance on a surface facing it, `w` one when it exists.
     pub(crate) key: [f32; 4],
     /// `xyz` the unit direction from a surface towards the key light.
@@ -304,6 +358,12 @@ pub(crate) fn uniform(
         view: [half_height as f32, aspect as f32, request.width() as f32, request.height() as f32],
         counts: [face_count, node_count, sample, light_count],
         strip: [strip.0, strip.1, 0, 0],
+        denoise: [
+            crate::denoise::MIN_SAMPLES as f32,
+            crate::denoise::TARGET_RELATIVE_ERROR,
+            crate::denoise::LIGHT_FLOOR,
+            0.0,
+        ],
         key: [
             if key_lit { lighting.key_color[0] } else { 0.0 },
             if key_lit { lighting.key_color[1] } else { 0.0 },

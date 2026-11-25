@@ -146,6 +146,15 @@ width.
 `GpuNode`s. Its costs are a `z3l render` timing, and there is no probe for the node layout yet — see
 §2.3.
 
+**The denoiser — the host, threaded, measured on one picture.** `denoise::Frame::filtered` runs three
+à-trous levels over the traced picture, one pass per level, its rows shared between threads. A
+1280 × 960 frame — 1.2 megapixels, every pixel's guide and mean — took **243 ms** on this machine's
+sixteen cores, i.e. 0.2 s per megapixel: 1.8 s for an A4 at 300 dpi, against the 15 s the same page
+costs the tracer at 256 samples. The first version, one core and an index computed per tap, took
+1.64 s for the same frame; sharing the rows out and clamping each tap's row and column once is what
+made the difference (Y4, ADR 0246). It is worth a compute pass the day a render is shorter than its
+own filter — at 16 samples a small image nearly is.
+
 ## 4. What to do next, in this order
 
 1. **Profile the rebuild walk** with the existing probe and name the per-node cost. This is the
