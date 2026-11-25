@@ -251,9 +251,16 @@ fn the_entry_point_names_itself_and_a_mismatched_counter_is_a_sentence() {
 
 /// The linear radiance of one accumulation, per pixel, summed over its samples and divided once.
 fn linear_of(accumulation: &crate::Accumulation) -> Vec<[f32; 3]> {
-    let samples = accumulation.samples();
-    let divisor = samples.max(1) as f32;
-    accumulation.sums().iter().map(|sum| [sum[0] / divisor, sum[1] / divisor, sum[2] / divisor]).collect()
+    // The raw picture, divided per pixel by the samples that pixel actually took: a pixel that
+    // converged early has fewer, and dividing it by the request's count would darken it.
+    let image = accumulation.raw_image().expect("the sums fit the size");
+    let mut linear = Vec::with_capacity((image.width() * image.height()) as usize);
+    for y in 0..image.height() {
+        for x in 0..image.width() {
+            linear.push(image.radiance_at(x, y).unwrap_or([0.0; 3]));
+        }
+    }
+    linear
 }
 
 /// A triangle soup from positions and indices, as the frame's drawables carry.
@@ -719,4 +726,157 @@ fn the_studio_is_the_render_settings_and_not_the_frames() {
     assert_eq!(dark, [0, 0, 0, 255], "no studio and no lamp is a black picture");
     assert!(lit[0] > 200, "a white studio returns the room: {lit:?}");
     assert_eq!((lit[0], lit[1], lit[2]), (lit[0], lit[0], lit[0]), "a neutral studio is not a colour");
+}
+
+/// The root mean square error of one picture against a reference, and the reference's own power.
+///
+/// Measured against the picture's own RMS rather than its mean, for the reason the convergence test
+/// gives: most of a furniture frame is a dark background, and a mean diluted by it says more about
+/// the empty corner than about the error on the surface a person looks at.
+fn compare(picture: &[[f32; 3]], reference: &[[f32; 3]]) -> (f64, f64) {
+    let mut squared = 0.0f64;
+    let mut power = 0.0f64;
+    let mut counted = 0.0f64;
+    for (picture, reference) in picture.iter().zip(reference) {
+        for channel in 0..3 {
+            let (picture, reference) = (f64::from(picture[channel]), f64::from(reference[channel]));
+            squared += (reference - picture) * (reference - picture);
+            power += reference * reference;
+            counted += 1.0;
+        }
+    }
+    if counted == 0.0 {
+        return (0.0, 0.0);
+    }
+    ((squared / counted).sqrt(), (power / counted).sqrt())
+}
+
+/// The frame two boards of different paint make, seen straight down from above under a lamp.
+///
+/// It is the denoiser's own fixture: the line between the boards is exactly the edge a filter must not
+/// cross, so the pair is one thousand millimetres across, orthographic, and the line falls on a pixel
+/// boundary — the filter is what is being measured, not the antialiasing of a slanted edge. The lamp's
+/// bounce is the light that is not known before the render starts, so the estimate is noisy.
+fn two_boards() -> (SceneFrame, Camera) {
+    let mut frame = SceneFrame::default();
+    frame.push(Drawable::new(id(1), plate(-500.0, -500.0, 0.0, 500.0, 0.0), DMat4::IDENTITY, [0.8, 0.8, 0.78, 1.0]));
+    frame.push(Drawable::new(id(2), plate(0.0, -500.0, 500.0, 500.0, 0.0), DMat4::IDENTITY, [0.05, 0.05, 0.05, 1.0]));
+    frame.lighting.key_color = [1.0, 1.0, 1.0];
+    frame.lighting.key_direction = DVec3::new(-0.2, 0.2, 1.0).try_normalize().unwrap_or(DVec3::Z);
+    // Three lamps, so a sample draws one of them by power instead of adding all of them: that draw is
+    // what makes the estimate noisy, which is the thing the filter exists for.
+    for (position, colour, power) in [
+        (DVec3::new(-300.0, -300.0, 900.0), [1.0, 0.95, 0.9], 2.0e6),
+        (DVec3::new(350.0, 250.0, 700.0), [0.9, 0.95, 1.0], 1.2e6),
+        (DVec3::new(0.0, 400.0, 1200.0), [1.0, 1.0, 1.0], 3.0e6),
+    ] {
+        frame.lighting.points.push(scene::PointLight { position, color: colour, power });
+    }
+    // Straight down, twenty-five millimetres to a pixel: the join of the boards is the image's centre.
+    let camera = Camera::default()
+        .looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, DVec3::NEG_Z)
+        .with_projection(scene::Projection::Orthographic { height: 1200.0 });
+    (frame, camera)
+}
+
+#[test]
+fn a_hundred_and_twenty_eight_samples_denoised_beat_the_raw_image_against_a_reference() {
+    // The entry's first clause: the picture a person waits for at 128 samples must be measurably
+    // closer to the converged one after the filter than before it, and both numbers are printed so the
+    // note can carry the measurement rather than the claim.
+    let (frame, camera) = two_boards();
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to filter a reference with");
+        return;
+    };
+    let size = Request::new(256, 192, 1).expect("a small image");
+    let request = |samples: u32| Request::new(size.width(), size.height(), samples).expect("a sample count");
+    let reference = trace_linear(&device, &queue, &frame, camera, request(4096));
+    let reference = linear_of(&reference);
+    let rough = trace_linear(&device, &queue, &frame, camera, request(128));
+    let raw = linear_of(&rough);
+    let denoised = rough.denoised().to_vec();
+    let (raw_error, rms) = compare(&raw, &reference);
+    let (denoised_error, _) = compare(&denoised, &reference);
+    println!(
+        "128 samples: raw rmse {raw_error:.6} denoised {denoised_error:.6} against a 4096-sample reference of rms \
+         {rms:.6} — {:.1}% closer",
+        (1.0 - denoised_error / raw_error.max(f64::MIN_POSITIVE)) * 100.0
+    );
+    assert!(rms > 0.001, "the fixture is lit: rms {rms}");
+    assert!(
+        denoised_error < raw_error * 0.9,
+        "the filter must take at least a tenth of the error away: {raw_error} became {denoised_error}"
+    );
+    // And it does not do it by smearing the line between the two boards: the join at the image's
+    // centre keeps its contrast, which is the guide the shader wrote for each primary hit.
+    let column = |picture: &[[f32; 3]], x: u32| {
+        let sum: f64 = (40..160).map(|y| f64::from(picture[(y * 256 + x) as usize][0])).sum();
+        (sum / 120.0) as f32
+    };
+    let raw_step = column(&raw, 108) - column(&raw, 148);
+    let denoised_step = column(&denoised, 108) - column(&denoised, 148);
+    println!("the join reads {raw_step:.5} raw and {denoised_step:.5} filtered");
+    assert!(raw_step > 0.1, "the boards are two paints: the join is {raw_step}");
+    assert!(denoised_step > raw_step * 0.99, "the join keeps its contrast: {raw_step} became {denoised_step}");
+}
+
+/// The eight-bit code values one picture lands on, which is what a person sees.
+fn codes(picture: &[[f32; 3]]) -> Vec<f32> {
+    picture
+        .iter()
+        .flat_map(|pixel| pixel.iter().map(|channel| (crate::image::tone_map([*channel; 3], 1.0)[0] * 255.0).round()))
+        .collect()
+}
+
+#[test]
+fn at_four_thousand_samples_the_filter_moves_the_picture_by_under_a_code_value() {
+    // The entry's second clause, and the one that rules out a permanent blur: an image that is already
+    // converged is not moved by a code value when the filter is done with it.
+    let (frame, camera) = two_boards();
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to converge a picture on");
+        return;
+    };
+    let request = Request::new(128, 96, 4096).expect("a converged image");
+    let accumulation = trace_linear(&device, &queue, &frame, camera, request);
+    let raw = codes(&linear_of(&accumulation));
+    let denoised = codes(accumulation.denoised());
+    let mut squared = 0.0f64;
+    for (raw, denoised) in raw.iter().zip(&denoised) {
+        squared += f64::from((raw - denoised) * (raw - denoised));
+    }
+    let rms = (squared / raw.len().max(1) as f64).sqrt();
+    println!("4096 samples: the filter moves the picture by {rms:.4} code values RMS");
+    assert!(rms < 1.0, "a converged picture is not blurred: {rms:.4} code values RMS");
+}
+
+#[test]
+fn a_converged_pixel_stops_at_the_floor_and_the_picture_is_still_the_room() {
+    // The entry's third clause, adaptive retirement: a pixel whose error bar is under the target stops
+    // being traced, and the count it stops at is the divisor its mean is averaged by. A white room
+    // around a white plate is the deterministic case — one sample is exact — so every pixel retires at
+    // the floor and the picture is still the radiance that was asked for.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to retire a pixel on");
+        return;
+    };
+    let mut frame = SceneFrame::default();
+    frame.push(Drawable::new(id(1), plate(-800.0, -800.0, 800.0, 800.0, 0.0), DMat4::IDENTITY, [1.0, 1.0, 1.0, 1.0]));
+    frame.lighting.key_color = [0.0; 3];
+    frame.lighting.points.clear();
+    frame.lighting.environment = [1.0, 1.0, 1.0];
+    let camera = Camera::new(DVec3::ZERO, 1500.0).expect("a camera looking at the plate");
+    let request = Request::new(32, 32, 256).expect("a small render");
+    let accumulation = trace_linear(&device, &queue, &frame, camera, request);
+    let floor = crate::denoise::MIN_SAMPLES;
+    assert_eq!(accumulation.sample_count(16, 16), Some(floor), "a converged pixel stops at the floor");
+    assert_eq!(accumulation.sample_count(0, 0), Some(floor), "and so does the one beside it");
+    let linear = linear_of(&accumulation);
+    let centre = linear.get(16 * 32 + 16).copied().expect("the centre pixel");
+    assert!((centre[0] - 1.0).abs() < 0.01, "the room is still white after the filter: {centre:?}");
+    // The picture is not the filter's: a retired pixel's variance is zero, so it keeps its own value.
+    let denoised = accumulation.denoised();
+    let filtered = denoised.get(16 * 32 + 16).copied().expect("the centre pixel");
+    assert!((filtered[0] - centre[0]).abs() < 1.0e-4, "a converged pixel is not moved: {centre:?} became {filtered:?}");
 }

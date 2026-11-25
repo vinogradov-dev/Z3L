@@ -37,6 +37,9 @@ const MAX_POINT_LIGHTS: u32 = 8u;
 const MAX_STACK: u32 = 64u;
 // How far a ray must travel before it may hit anything: the camera's near plane, in millimetres.
 const T_MIN: f32 = 0.05;
+// How far a ray may travel before it hits nothing, which is also the distance a background pixel's
+// guide reports (`crate::denoise::FAR_AWAY`).
+const FAR_AWAY: f32 = 1.0e7;
 // How far off a surface a secondary ray starts, so it does not meet the face it left.
 const SURFACE_BIAS: f32 = 0.1;
 const TILE: u32 = 8u;
@@ -85,6 +88,23 @@ struct Node {
     info: vec4<u32>,
 };
 
+// One pixel of a strip: its samples' sums and what its primary ray met.
+//
+// It is one buffer because a compute shader has eight storage bindings in a stage and the frame takes
+// six, and because one sample writes all four vectors anyway. The sums and the guide die with the
+// strip: the host reads them once, averages them, filters them, and keeps only the picture.
+struct Pixel {
+    // xyz: the sum of the samples' radiance; w: how many samples there are.
+    sum: vec4<f32>,
+    // xyz: the sum of the squares of those samples, which is the variance's numerator.
+    squares: vec4<f32>,
+    // xyz: the linear albedo of the face the ray met, or the studio where it met nothing;
+    // w: how far the ray travelled in millimetres, or FAR_AWAY.
+    albedo: vec4<f32>,
+    // xyz: the shading normal that faced the ray, or the ray's own direction where it met nothing.
+    normal: vec4<f32>,
+};
+
 struct Uniform {
     eye: vec4<f32>,
     right: vec4<f32>,
@@ -95,8 +115,12 @@ struct Uniform {
     view: vec4<f32>,
     // x: the face count; y: the node count; z: the sample index; w: the point-light count.
     counts: vec4<u32>,
-    // x: the first image row of this strip; y: its row count.
+    // x: the first image row of this strip; y: its row count; z and w: unused.
     strip: vec4<u32>,
+    // x: the fewest samples a pixel takes before it may retire; y: the relative error a finished image
+    // is held to; z: the dimmest light a relative error is measured against (`crate::denoise::MIN_SAMPLES`,
+    // `TARGET_RELATIVE_ERROR` and `LIGHT_FLOOR`); w: unused.
+    denoise: vec4<f32>,
     // xyz: the key light's irradiance; w: one when it exists.
     key: vec4<f32>,
     key_direction: vec4<f32>,
@@ -127,8 +151,8 @@ struct Uniform {
 // same arithmetic instead of trusting two views of it to agree.
 @group(0) @binding(5) var<storage, read> decor_texels: array<u32>;
 @group(0) @binding(6) var<storage, read> decor_entries: array<Decor>;
-// The accumulator: one `vec4` per pixel, summed over samples and divided by the count in `crate::image`.
-@group(1) @binding(0) var<storage, read_write> accum: array<vec4<f32>>;
+// One strip's pixels: their sums, their second moment and their guide, in one buffer.
+@group(1) @binding(0) var<storage, read_write> pixels: array<Pixel>;
 
 struct Ray {
     origin: vec3<f32>,
@@ -978,6 +1002,37 @@ fn camera_ray(sample_position: vec2<f32>) -> Ray {
     return make_ray(camera.eye.xyz, direction);
 }
 
+// The variance of the mean of `count` samples, from their sum and their sum of squares, exactly as
+// `crate::denoise::variance_of_mean` writes it: the unbiased sample variance divided by the count
+// again. The two implementations are one formula, and the test that renders a shape whose variance is
+// known is what keeps them one.
+fn variance_of_mean(sum: vec3<f32>, squares: vec3<f32>, count: f32) -> vec3<f32> {
+    if (!(count > 1.0)) {
+        return vec3<f32>(0.0);
+    }
+    let denominator = count * (count - 1.0);
+    return max(vec3<f32>(0.0), (squares - sum * sum / count) / denominator);
+}
+
+// The luminance of a colour, Rec. 709's weights, as `crate::denoise::luminance` writes them.
+fn luminance_of(colour: vec3<f32>) -> f32 {
+    return dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Whether a pixel has taken enough samples and has a small enough error to stop being traced:
+// `crate::denoise::retires`, whose threshold arrives in `camera.denoise`.
+fn retires(pixel: u32) -> bool {
+    let count = pixels[pixel].sum.w;
+    if (count < camera.denoise.x) {
+        return false;
+    }
+    let mean = pixels[pixel].sum.xyz / count;
+    let variance = variance_of_mean(pixels[pixel].sum.xyz, pixels[pixel].squares.xyz, count);
+    let light = max(luminance_of(mean), camera.denoise.z);
+    let width = sqrt(max(luminance_of(variance), 0.0));
+    return width / light < camera.denoise.y;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = u32(camera.view.z);
@@ -985,7 +1040,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let pixel = id.y * width + id.x;
-    if (pixel >= arrayLength(&accum)) {
+    if (pixel >= arrayLength(&pixels)) {
+        return;
+    }
+    // A converged pixel costs nothing from here on: the sample it would take cannot move its mean
+    // further than the image tolerates, and the count it stops at is the divisor the host averages by.
+    if (retires(pixel)) {
         return;
     }
     let sample = camera.counts.z;
@@ -1003,11 +1063,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var inside = false;
     var bounce = 0u;
     loop {
-        let hit = trace(ray, 1.0e7);
+        let hit = trace(ray, FAR_AWAY);
         if (hit.t <= 0.0) {
             // Nothing there: what the ray sees is the environment, which is the studio the workshop
             // does not build.
             radiance = radiance + throughput * camera.environment.xyz;
+            if (sample == 0u && bounce == 0u) {
+                pixels[pixel].albedo = vec4<f32>(camera.environment.xyz, FAR_AWAY);
+                pixels[pixel].normal = vec4<f32>(-ray.direction, 0.0);
+            }
             break;
         }
         // Beer and Lambert: the beam lost this much on the way to the surface it just met.
@@ -1021,6 +1085,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             break;
         }
         let bounce_seed = hash(pixel_seed ^ hash(bounce * 2u + 1u));
+        // The guide is written on the first sample only: the primary hit does not depend on where
+        // inside the pixel that sample landed, so a second write would only repeat it.
+        if (sample == 0u && bounce == 0u) {
+            pixels[pixel].albedo = vec4<f32>(material.albedo, hit.t);
+            pixels[pixel].normal = vec4<f32>(frame.normal, 0.0);
+        }
         let u = sample_pair(0u, sample, bounce_seed);
         let pick = sample_1d(2u, sample, bounce_seed);
         radiance = radiance + throughput * direct_light(material, frame, wo, position, u, inside);
@@ -1053,5 +1123,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // One clamp, documented rather than felt: a pane can concentrate a light into a number an `f32`
     // accumulator has no room for. Its bias is measured against an unclamped reference in the note.
     radiance = clamp(radiance, vec3<f32>(0.0), vec3<f32>(MAX_SAMPLE_RADIANCE));
-    accum[pixel] = accum[pixel] + vec4<f32>(radiance, 1.0);
+    pixels[pixel].sum = pixels[pixel].sum + vec4<f32>(radiance, 1.0);
+    pixels[pixel].squares = pixels[pixel].squares + vec4<f32>(radiance * radiance, 0.0);
 }
