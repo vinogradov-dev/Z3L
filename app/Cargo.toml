@@ -33,6 +33,9 @@ mcp = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
 catalog = { workspace = true }
+# The render's material base: the shell reads the workshop's library off the frame path, hands every
+# tab one snapshot and watches the folder for a picture a shop replaced (Y8).
+materials = { workspace = true }
 param = { workspace = true }
 project = { workspace = true }
 render = { workspace = true }
@@ -45,6 +48,8 @@ log = { workspace = true }
 # The system file manager: a pick runs on a worker thread so the window keeps drawing (X91).
 rfd = { workspace = true }
 pollster = { workspace = true }
+# Writes the interface shots U81 renders; already in the tree through `epaint`.
+png = { workspace = true }
 
 [dev-dependencies]
 # A device without a window: the interface is rendered offscreen to PNG shots (U81).

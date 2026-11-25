@@ -16,7 +16,9 @@
 //! Refuses: an image with no texel, a side of zero, a side past [`MAX_DECOR_SIDE`] (a hostile record
 //! must not become an allocation), and a size that covers no board at all.
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use geom::DVec2;
 use units::Length;
@@ -270,6 +272,110 @@ impl PartialEq for Decor {
     }
 }
 
+/// The picture and the board it covers, as the material library answers a decor.
+///
+/// The value is what a frame build hands [`Decors`] for one record: the texels already as one shared
+/// image, the size the record names and the way its grain runs. It says nothing about where the
+/// picture came from, so nothing here depends on the library's file format.
+#[derive(Clone, Debug)]
+pub struct Picture {
+    image: Arc<DecorImage>,
+    covers: Length,
+    turns: Turns,
+}
+
+impl Picture {
+    /// The picture `image` repeating every `covers` millimetres, turned by `turns`.
+    pub fn new(image: Arc<DecorImage>, covers: Length, turns: Turns) -> Self {
+        Self { image, covers, turns }
+    }
+
+    /// The texels, shared with every drawable faced with this decor.
+    pub fn image(&self) -> &Arc<DecorImage> {
+        &self.image
+    }
+
+    /// How many millimetres of board one image width spans.
+    pub const fn covers(&self) -> Length {
+        self.covers
+    }
+
+    /// The quarter turns the picture is turned by.
+    pub const fn turns(&self) -> Turns {
+        self.turns
+    }
+}
+
+/// The decors one frame's build has read, kept so three boards of one material share one picture.
+///
+/// A material is a record a shop names once; a cabinet of forty boards cut from it is one picture,
+/// one set of texels and one texture on the device. The set is keyed by the library's number for the
+/// material, and it answers one shared [`Decor`] per record — a drawable clones the value, which
+/// shares its texels and copies nothing (`AGENTS.md` §4.2: a derived picture is not document data).
+///
+/// The set belongs to a build and not to a document: [`Decors::follow`] is what tells it the library
+/// moved. Every decor it makes takes a **new** [`DecorId`], never a derived one, because the
+/// renderer and the tracer keep a texture under that number until the frame stops naming it — a
+/// picture a person replaced must therefore arrive under a number nothing has drawn before.
+#[derive(Debug, Default)]
+pub struct Decors {
+    /// The library's revision the entries were read from.
+    generation: u64,
+    /// The next decor id, which is never reused.
+    next: u64,
+    /// One entry per material: its decor, or `None` when the record names none.
+    entries: BTreeMap<u64, Option<Arc<Decor>>>,
+}
+
+impl Decors {
+    /// An empty set, ready for the first frame.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts a build from the library at `generation`: a moved generation drops every decor.
+    ///
+    /// Dropping them is what makes a replaced picture reach the screen: the next frame asks for the
+    /// decor again, reads the new texels and allocates a new id, so the renderer cannot draw the
+    /// picture it kept from the previous generation. The counter itself is not reset, so no id is
+    /// ever handed out twice.
+    pub fn follow(&mut self, generation: u64) {
+        if generation == self.generation {
+            return;
+        }
+        self.generation = generation;
+        self.entries.clear();
+    }
+
+    /// The decor the material `key` names, reading it with `load` the first time it is asked for.
+    ///
+    /// `None` means the record has no decor — a flat colour — and it is remembered like a picture,
+    /// so a banded board does not walk the library once per drawable. A load that refuses is a
+    /// missing decor for this frame and is not remembered: the next build tries again.
+    pub fn decor(&mut self, key: u64, load: impl FnOnce() -> Option<Picture>) -> Option<&Decor> {
+        if !self.entries.contains_key(&key) {
+            let entry = load().and_then(|picture| {
+                self.next = self.next.wrapping_add(1);
+                let id = DecorId::new(self.next)?;
+                let decor = Decor::new(id, picture.image, picture.covers, picture.turns).ok()?;
+                Some(Arc::new(decor))
+            });
+            self.entries.insert(key, entry);
+        }
+        self.entries.get(&key).and_then(|entry| entry.as_deref())
+    }
+
+    /// How many records this set has answered.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the set has answered no record yet.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +455,72 @@ mod tests {
         let covers = Length::from_millimetres(0).expect("zero millimetres");
         assert_eq!(Decor::new(id, image(2, 2), covers, Turns::ALONG).err(), Some(DecorError::Covers { covers }));
         assert_eq!(DecorId::new(0), None, "no decor is number zero");
+    }
+
+    fn picture(texel: [u8; 4]) -> Picture {
+        Picture::new(image_of(vec![texel]), Length::from_millimetres(600).expect("600 mm"), Turns::ALONG)
+    }
+
+    fn image_of(texels: Vec<[u8; 4]>) -> Arc<DecorImage> {
+        Arc::new(DecorImage::new(1, 1, texels).expect("a one-texel image"))
+    }
+
+    #[test]
+    fn three_boards_of_one_material_share_one_picture_and_one_record() {
+        let mut decors = Decors::new();
+        let mut reads = 0;
+        let mut board = |decors: &mut Decors| {
+            decors
+                .decor(7, || {
+                    reads += 1;
+                    Some(picture([200, 100, 50, 255]))
+                })
+                .cloned()
+                .expect("the record names a decor")
+        };
+        let first = board(&mut decors);
+        let second = board(&mut decors);
+        let third = board(&mut decors);
+        assert_eq!(reads, 1, "the picture is read once, not once per board");
+        assert_eq!(decors.len(), 1, "one entry for one record");
+        assert!(std::ptr::eq(first.image(), second.image()), "the texels are one allocation");
+        assert!(std::ptr::eq(second.image(), third.image()));
+        let ids = [first.id(), second.id(), third.id()];
+        assert_eq!(ids[0], ids[1], "and they share the id the renderer keeps the texture under");
+        assert_eq!(ids[1], ids[2]);
+    }
+
+    #[test]
+    fn a_moved_library_reads_a_replaced_picture_under_a_new_id() {
+        let mut decors = Decors::new();
+        decors.follow(0);
+        let before = decors.decor(4, || Some(picture([255, 0, 0, 255]))).cloned().expect("a decor");
+        assert_eq!(before.image().texel(0, 0), Some([255, 0, 0, 255]));
+
+        // The shop replaced the scan: the library moved, so the frame reads the picture again.
+        decors.follow(1);
+        assert!(decors.is_empty(), "a moved generation drops what the old pictures said");
+        let after = decors.decor(4, || Some(picture([0, 0, 255, 255]))).cloned().expect("a decor");
+        assert_eq!(after.image().texel(0, 0), Some([0, 0, 255, 255]), "the new texels are what the frame draws");
+        assert_ne!(after.id(), before.id(), "a replaced picture never reuses the id the renderer kept");
+    }
+
+    #[test]
+    fn a_record_with_no_picture_is_remembered_as_flat() {
+        let mut decors = Decors::new();
+        let mut reads = 0;
+        for _ in 0..3 {
+            assert!(
+                decors
+                    .decor(9, || {
+                        reads += 1;
+                        None
+                    })
+                    .is_none()
+            );
+        }
+        assert_eq!(reads, 1, "a flat board does not walk the library once per drawable");
+        assert_eq!(decors.len(), 1);
     }
 
     #[test]

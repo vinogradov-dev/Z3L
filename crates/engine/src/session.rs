@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use catalog::Directory;
 use geom::Contact;
+use materials::Library;
 use model::{
     BandingSpec, ClassCode, EdgeBanding, EdgeBevel, Geometry, Id, ItemId, PanelGeometry, PanelNominalSize,
     PanelOutline, PanelTrims, Placement, Project, ProjectError, WorkshopProfile,
@@ -137,6 +138,14 @@ pub struct Session {
     /// reload moves no document revision; the frame follows this counter instead
     /// (`docs/domain/nomenclature.md` §13).
     directory_version: u64,
+    /// The render's material library, shared with every tab of the window like the directory.
+    ///
+    /// A frame is built from it and no document field holds it: a shop edits its materials once and
+    /// every part that names one follows (ADR 0243, Y8).
+    materials: Arc<Library>,
+    /// How often the shell installed a newer material library. The library is not the document, so a
+    /// reload moves no document revision; the frame follows this counter instead.
+    materials_version: u64,
     edit: Option<OpenEdit>,
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
@@ -218,6 +227,8 @@ impl Session {
             dirty: false,
             directory: directory.into(),
             directory_version: 0,
+            materials: Arc::new(Library::default()),
+            materials_version: 0,
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
@@ -390,6 +401,39 @@ impl Session {
         self.directory = directory;
         self.preview.clear();
         self.directory_version = self.directory_version.wrapping_add(1);
+    }
+
+    /// The render's read-only material library.
+    pub fn materials(&self) -> &Library {
+        &self.materials
+    }
+
+    /// The library as the one value every tab shares, for a tab that is about to open.
+    pub fn materials_shared(&self) -> Arc<Library> {
+        Arc::clone(&self.materials)
+    }
+
+    /// How often a newer material library was installed, so the shell knows its frame is stale.
+    pub fn materials_version(&self) -> u64 {
+        self.materials_version
+    }
+
+    /// Installs a newer snapshot of the render's material library.
+    ///
+    /// The library is not the document: this swaps one value, writes no field of the project,
+    /// pushes no undo entry and leaves the saved-content marker alone. What was derived from it is
+    /// the frame, which the shell re-derives from this counter — a picture a shop replaced is read
+    /// again, and no panel, its thickness or its geometry depends on a material here.
+    pub fn set_materials(&mut self, materials: Arc<Library>) {
+        self.materials = materials;
+        self.materials_version = self.materials_version.wrapping_add(1);
+    }
+
+    /// The same session sharing the render library of `other`, which is how a new tab takes the
+    /// workshop's materials from the tab in front of the user.
+    pub fn with_materials(mut self, materials: impl Into<Arc<Library>>) -> Self {
+        self.materials = materials.into();
+        self
     }
 
     /// Resolves one panel's geometry against the session directory.
@@ -709,6 +753,8 @@ impl Session {
             dirty: self.dirty,
             directory: Arc::clone(&self.directory),
             directory_version: self.directory_version,
+            materials: Arc::clone(&self.materials),
+            materials_version: self.materials_version,
             edit: None,
             next_scope: self.next_scope,
             profile: WorkshopProfile::default(),
@@ -1634,6 +1680,33 @@ mod tests {
         session.undo().expect("and the first one");
         assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf");
         assert!(session.can_redo(), "the redo branch survives the swap as well");
+    }
+
+    #[test]
+    fn a_new_material_library_moves_its_own_counter_and_no_document_field() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        session
+            .dispatch("panel.rename", &json_params(&PanelRename { panel: panel_id, name: "Shelf".to_owned() }))
+            .expect("rename the panel");
+        session.mark_saved();
+        let stored = session.project().clone();
+        assert!(session.materials().is_empty(), "a session born without a library names no material");
+
+        let board = materials::Material::of_base(
+            materials::MaterialId::new(1).expect("id"),
+            "Oak",
+            materials::Base::matte([0.62, 0.42, 0.22]).expect("a board"),
+        )
+        .expect("a record");
+        session.set_materials(Arc::new(materials::Library::new([board]).expect("one record")));
+
+        assert_eq!(session.materials().len(), 1, "the frame is built from the new snapshot");
+        assert_eq!(session.materials_version(), 1, "the shell is told the frame it holds is stale");
+        assert!(session.project().same_content(&stored), "a library writes no field of the document");
+        assert!(!session.is_dirty(), "nor does it make a saved scene dirty");
+        assert!(session.can_undo(), "a library update takes no undo entry away");
+        assert!(Arc::ptr_eq(&session.materials_shared(), &session.materials_shared()), "one value, not a copy");
     }
 
     #[test]

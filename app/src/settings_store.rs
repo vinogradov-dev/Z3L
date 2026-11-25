@@ -90,6 +90,12 @@ impl SettingsStore {
         self.path().and_then(Path::parent)
     }
 
+    /// The workshop's render material library: `library.json` and the folder of decor pictures
+    /// beside the settings file, so a shop carries its workspace by copying one folder (Y8).
+    pub(crate) fn materials(&self) -> Option<materials::Store> {
+        self.folder().map(materials::Store::at)
+    }
+
     /// The folder the workshop's nomenclature directory lives in, beside the settings file.
     ///
     /// Settings and the directory sit beside each other in the application's config folder, so a

@@ -97,6 +97,9 @@ const CRATES: &[CrateRule] = &[
     CrateRule { name: "kernel", layer: 1, forbidden: UI_GPU_DEPS },
     CrateRule { name: "model", layer: 1, forbidden: UI_GPU_DEPS },
     CrateRule { name: "catalog", layer: 2, forbidden: UI_GPU_DEPS },
+    // The render's own material base, beside the catalogue: a portable file and its pictures that
+    // a renderer can carry into another project (Y8). It knows no document and no scene.
+    CrateRule { name: "materials", layer: 2, forbidden: UI_GPU_DEPS },
     // The only crate allowed to depend on truck.
     CrateRule { name: TRUCK_ADAPTER, layer: 2, forbidden: UI_GPU_DEPS },
     // The only crate allowed to depend on parry: the contact port's implementation (ADR 0179).
