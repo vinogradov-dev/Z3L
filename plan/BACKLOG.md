@@ -62,6 +62,21 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
+- `[~]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/final/src`
 
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
@@ -173,21 +188,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
-  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
-   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
-   The reference project measured its a-trous filter at about a third off the error at 8 spp
-   and recorded where the filter stops paying and starts smearing; shipping one without our own
-   numbers would repeat the mistake that project documents.
-  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
-  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
-  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
-  catalogue image is graded in the print pipeline, not in the renderer.
-  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
-   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
-   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
-   1000 mm panel keeps its edge; `cargo xtask ci` is green.
-  `files: crates/render/src,crates/mesh/src/lib.rs`
 - `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
    that end, a negative grows it. The overlay wall is the same mechanism read the other way:
