@@ -138,6 +138,21 @@ pub(crate) fn create_triangle_pipeline(
     })
 }
 
+/// One source face pipeline: a light's own face, drawn unlit and blended over the scene.
+///
+/// It is the third way a mesh reaches the screen and it exists because a window is a source: shading
+/// a light's face by the lights would draw it as a grey board under the model's key (L2). It blends,
+/// writes no depth and stamps no stencil, exactly like the translucent pass, and it still *tests*
+/// against the depth the opaque pass wrote, so a pane behind a body stays behind it.
+pub(crate) fn create_source_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    label: &str,
+) -> wgpu::RenderPipeline {
+    create_triangle_pipeline(device, layout, shader, label, "fs_mesh_source", ShadingStyle::Translucent)
+}
+
 /// The depth state of the face pass: opaque faces write depth, translucent faces do not.
 ///
 /// An opaque face also stamps the stencil buffer with the drawable's slot, because that stamp is

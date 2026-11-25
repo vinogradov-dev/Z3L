@@ -12,6 +12,8 @@ use kernel::TessOptions;
 use kernel_truck::TruckKernel;
 use materials::{Library, Material, MaterialId, Store};
 use mesh::{EvaluationCache, PanelEval};
+#[cfg(test)]
+use model::LightSpec;
 use model::{
     CameraProjection, Container, Envelope, Id, LightKind, MaterialRef, Node, NodeQuery, Panel, Placement, Project,
     StructuralKind,
@@ -26,8 +28,8 @@ use model::ItemId;
 use model::{CutoutDepth, CutoutShape, EdgeBanding, EdgeId, FaceSide, PanelNominalSize, PanelRect};
 use scene::decor::{Decors, Picture};
 use scene::{
-    Camera, DEFAULT_FOV_Y, Decor, DecorImage, Drawable, Lighting, MAX_POINT_LIGHTS, PointLight, Polyline,
-    ProductEnvelope, ProductEnvelopeState, Projection, SceneFrame, Surface, Turns,
+    AreaLight, Camera, DEFAULT_FOV_Y, Decor, DecorImage, Drawable, Lighting, MAX_AREA_LIGHTS, MAX_POINT_LIGHTS,
+    PointLight, Polyline, ProductEnvelope, ProductEnvelopeState, Projection, SceneFrame, Surface, Turns,
 };
 #[cfg(test)]
 use std::f64::consts::FRAC_PI_2;
@@ -437,6 +439,7 @@ pub fn evaluate_with(
     if let Some(lighting) = authored_lighting_with(project, &[], flags) {
         frame.lighting = lighting;
     }
+    add_light_panes(&mut frame, project, flags);
     Ok(EvaluatedScene { frame, bounds: scene_bounds, levels, failures })
 }
 
@@ -496,9 +499,84 @@ pub fn authored_lighting_with(project: &Project, previewed: &[(Id, Placement)], 
                 }
                 any_authored = true;
             }
+            LightKind::Area => {
+                // The face the final render samples: watts over its own area, one side, along the
+                // light's local -Z (ADR 0247).
+                let size = light.size();
+                let rotation = world.rotation();
+                let (half_width, half_height) =
+                    (size.width().millimetres_f64() * 0.5, size.height().millimetres_f64() * 0.5);
+                if lighting.areas.len() < MAX_AREA_LIGHTS {
+                    lighting.areas.push(AreaLight {
+                        origin: world.translation(),
+                        half_width: rotation * DVec3::X * half_width,
+                        half_height: rotation * DVec3::Y * half_height,
+                        color: light.color(),
+                        power: light.intensity(),
+                    });
+                }
+                // A viewport shades from points, so a window lights it from the middle of its face:
+                // an approximation of the softness and never of the power, which keeps a room the
+                // final render fills with daylight from drawing as a black box (L2).
+                if lighting.points.len() < MAX_POINT_LIGHTS {
+                    lighting.points.push(PointLight {
+                        position: world.translation(),
+                        color: light.color(),
+                        power: light.intensity(),
+                    });
+                }
+                any_authored = true;
+            }
         }
     }
     any_authored.then_some(lighting)
+}
+
+/// How opaque a light's pane is drawn: enough to read as a lit face, thin enough to see through.
+///
+/// A window is a hole in the wall authored as a light, so the model behind it must stay readable:
+/// the pane tints what it covers and its outline says where it ends (L2).
+const PANE_ALPHA: f32 = 0.22;
+
+/// The panes the rectangular lights draw: one translucent face and one outline each.
+///
+/// The face is a source ([`scene::Drawable::as_source`]), so the viewport draws its colour unlit and
+/// blended and the final render never sees it as geometry — the tracer samples the rectangle from
+/// [`Lighting::areas`] instead (L2). The outline is the chain the person picks and the line the eye
+/// follows; it carries no colour of its own, so a theme switch repaints it without a rebuild.
+fn add_light_panes(frame: &mut SceneFrame, project: &Project, flags: &ViewFlags) {
+    for id in project.query(&NodeQuery::any().with_kind(StructuralKind::Light)) {
+        let Some(light) = project.light(id) else {
+            continue;
+        };
+        if !light.kind().has_area() || flags.hides(project, id) {
+            continue;
+        }
+        let Some(world) = project.world_placement(id) else {
+            continue;
+        };
+        let size = light.size();
+        let (half_width, half_height) = (size.width().millimetres_f64() * 0.5, size.height().millimetres_f64() * 0.5);
+        // The face in the light's own plane, its ring counter-clockwise seen from the side it emits
+        // from, which is the order `AreaLight::corners` writes.
+        let corners = [
+            [-half_width, -half_height],
+            [-half_width, half_height],
+            [half_width, half_height],
+            [half_width, -half_height],
+        ];
+        let positions: Vec<[f32; 3]> = corners.iter().map(|[x, y]| [*x as f32, *y as f32, 0.0]).collect();
+        let normals = vec![[0.0, 0.0, -1.0]; corners.len()];
+        let indices = vec![0, 1, 2, 0, 2, 3];
+        let mesh = Arc::new(geom::MeshData { positions, normals, indices });
+        let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
+        let colour = light.color();
+        let pane = Drawable::new(id, mesh, transform, [colour[0], colour[1], colour[2], PANE_ALPHA]).as_source();
+        frame.push(pane);
+        let ring: Arc<[DVec3]> =
+            Arc::from(corners.iter().chain(corners.first()).map(|[x, y]| DVec3::new(*x, *y, 0.0)).collect::<Vec<_>>());
+        frame.polylines.push(Polyline::in_ink(id, ring, transform));
+    }
 }
 
 /// The tolerance a footprint's arcs are flattened with, in millimetres.
@@ -883,7 +961,7 @@ mod tests {
 
     use super::*;
     use model::{ClassCode, ContourSegment, Geometry, Path, Revision};
-    use testkit::sample_project;
+    use testkit::{sample_catalog, sample_project};
 
     fn panels_in<'a>(children: &'a [Node], panels: &mut Vec<&'a Panel>) {
         for child in children {
@@ -974,7 +1052,7 @@ mod tests {
         assert_eq!(authored_lighting(&project), None);
         let root = project.root().id();
         project
-            .add_light(root, "Fill", Placement::IDENTITY, LightKind::Point, [0.2, 0.3, 0.4], 1000.0)
+            .add_light(root, "Fill", Placement::IDENTITY, LightSpec::point([0.2, 0.3, 0.4], 1000.0))
             .expect("point light");
         let lighting = authored_lighting(&project).expect("a point light lights the frame");
         assert_eq!(lighting.key_color, Lighting::default().key_color, "a point-only scene keeps the built-in key");
@@ -984,7 +1062,7 @@ mod tests {
 
         let spin = DQuat::from_rotation_y(FRAC_PI_2);
         let placement = Placement::new(DVec3::new(10.0, 20.0, 30.0), spin).expect("placement");
-        project.add_light(root, "Sun", placement, LightKind::Sun, [1.0, 0.5, 0.25], 2.0).expect("sun");
+        project.add_light(root, "Sun", placement, LightSpec::sun([1.0, 0.5, 0.25], 2.0)).expect("sun");
         let lighting = authored_lighting(&project).expect("the sun lights the frame");
         assert!(
             lighting.key_direction.dot(DVec3::X) > 1.0 - 1.0e-9,
@@ -1003,7 +1081,7 @@ mod tests {
         let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, vec![Node::Container(group)]);
         let mut nested = Project::new(root).expect("project");
         nested
-            .add_light(id(2).expect("id"), "Sun", placement, LightKind::Sun, [1.0, 1.0, 1.0], 1.0)
+            .add_light(id(2).expect("id"), "Sun", placement, LightSpec::sun([1.0, 1.0, 1.0], 1.0))
             .expect("nested sun");
         let lighting = authored_lighting(&nested).expect("the nested sun lights the frame");
         assert!(
@@ -1020,7 +1098,7 @@ mod tests {
             let placement =
                 Placement::new(DVec3::new(index as f64 * 100.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement");
             project
-                .add_light(root, format!("Point {index}"), placement, LightKind::Point, [1.0; 3], 1000.0)
+                .add_light(root, format!("Point {index}"), placement, LightSpec::point([1.0; 3], 1000.0))
                 .expect("point light");
         }
 
@@ -1047,9 +1125,7 @@ mod tests {
                 id(2).expect("id"),
                 "Fill",
                 Placement::new(DVec3::new(10.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("nested point light");
 
@@ -1066,9 +1142,7 @@ mod tests {
                 root,
                 "Sun",
                 Placement::new(DVec3::ZERO, DQuat::IDENTITY).expect("placement"),
-                LightKind::Sun,
-                [1.0; 3],
-                1.0,
+                LightSpec::sun([1.0; 3], 1.0),
             )
             .expect("sun");
         let point = project
@@ -1076,9 +1150,7 @@ mod tests {
                 root,
                 "Fill",
                 Placement::new(DVec3::new(100.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("point light");
 
@@ -1093,6 +1165,66 @@ mod tests {
         assert!(previewed.key_direction.dot(DVec3::Y) > 1.0 - 1.0e-9, "the previewed sun lights from +Y");
         assert_eq!(previewed.points[0].position, DVec3::new(300.0, 40.0, 0.0));
         assert_eq!(previewed.points[0].power, 1000.0, "a preview does not change the power");
+    }
+
+    #[test]
+    fn a_window_reaches_the_frame_as_a_face_and_as_a_pane() {
+        // A window is a rectangle the tracer samples and a pane the viewport draws: the same object,
+        // two readings of one placement (L2, ADR 0247).
+        let mut project = sample_project();
+        let root = project.root().id();
+        let size = model::LightSize::new(millimetres(1_200).expect("a side"), millimetres(1_400).expect("a side"))
+            .expect("a window");
+        let placement = Placement::new(DVec3::new(0.0, 500.0, 2_000.0), DQuat::IDENTITY).expect("placement");
+        let window = project
+            .add_light(root, "Window", placement, LightSpec::area([1.0, 0.98, 0.9], 40.0, size))
+            .expect("the window");
+
+        let lighting = authored_lighting(&project).expect("the window lights the frame");
+        assert_eq!(lighting.areas.len(), 1);
+        let face = lighting.areas[0];
+        assert_eq!(face.origin, DVec3::new(0.0, 500.0, 2_000.0));
+        assert_eq!(face.half_width, DVec3::new(600.0, 0.0, 0.0));
+        assert_eq!(face.half_height, DVec3::new(0.0, 700.0, 0.0));
+        assert!(
+            face.normal().dot(-DVec3::Z) > 1.0 - 1.0e-9,
+            "a light emits from the side it faces: {:?}",
+            face.normal()
+        );
+        assert_eq!(face.power, 40.0);
+        // The viewport has no area shading, so it lights from the middle of the face at the same
+        // power: an approximation of the softness, never of the watts.
+        assert_eq!(lighting.points.len(), 1);
+        assert_eq!(lighting.points[0].position, DVec3::new(0.0, 500.0, 2_000.0));
+        assert_eq!(lighting.points[0].power, 40.0);
+        assert_eq!(lighting.key_color, Lighting::default().key_color, "a window is not the key light");
+
+        // The frame carries the pane and its outline under the light's own id, so the viewport draws
+        // it and a click picks it.
+        let session = Session::with_directory(project, sample_catalog());
+        let mut cache = EvaluationCache::new();
+        let mut kernel = TruckKernel::new();
+        let mut decors = Decors::new();
+        let materials = FrameMaterials::new(session.materials(), None, &mut decors);
+        let evaluated = evaluate_with(&mut cache, &mut kernel, &session, &ViewFlags::default(), None, materials)
+            .expect("the scene evaluates");
+        let frame = evaluated.frame;
+        let pane = frame.drawables().iter().find(|drawable| drawable.id == window).expect("the pane");
+        assert_eq!(pane.faces, scene::FaceShading::Source, "a source is drawn unlit and blended");
+        assert!(pane.color[3] < 1.0, "a pane is translucent: {}", pane.color[3]);
+        assert_eq!(pane.mesh.triangle_count(), 2);
+        let outline = frame.polylines().iter().find(|line| line.id == window).expect("the outline");
+        assert_eq!(outline.points.len(), 5, "a closed ring of four corners");
+
+        // A click on the pane picks the light: the ray meets the face and answers the node it belongs
+        // to, which is what makes a window selectable without a second picking rule (L2).
+        // From in front of the face, straight at it: the pane is the nearest thing on the way down.
+        let eye = DVec3::new(0.0, 500.0, 3_000.0);
+        let ray = scene::Ray::new(eye, -DVec3::Z).expect("a ray at the pane");
+        assert_eq!(frame.pick_surface(ray, 1_000.0), Some(window), "the pane answers the light's id");
+        // A ray past the face's edge meets something else, or nothing: the pane is its own rectangle.
+        let beside = scene::Ray::new(DVec3::new(2_000.0, 500.0, 3_000.0), -DVec3::Z).expect("a ray beside it");
+        assert_ne!(frame.pick_surface(beside, 1_000.0), Some(window), "the pane is only its own face");
     }
 
     #[test]
@@ -1867,7 +1999,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let group = project.add_component(root, "Lamp", Placement::IDENTITY).expect("container");
-        let sun = project.add_light(group, "Sun", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("sun");
+        let sun = project.add_light(group, "Sun", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("sun");
         assert!(authored_lighting(&project).is_some(), "an authored sun is the key light");
 
         let mut flags = ViewFlags::default();

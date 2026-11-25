@@ -270,7 +270,7 @@ mod tests {
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("add camera");
         let light = project
-            .add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0, 0.9, 0.8], 2.0)
+            .add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0, 0.9, 0.8], 2.0))
             .expect("add light");
 
         assert_eq!(project.camera(camera).expect("camera").name(), "Camera");
@@ -294,7 +294,7 @@ mod tests {
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("add camera");
         let light =
-            project.add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("add light");
+            project.add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("add light");
         let moved = Placement::new(DVec3::new(100.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement");
 
         let before = project.revision();
@@ -394,7 +394,7 @@ mod tests {
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("add camera");
         let light =
-            project.add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("add light");
+            project.add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("add light");
         let not_a_camera = project.root().id();
 
         let before = project.revision();
@@ -414,17 +414,17 @@ mod tests {
             Err(ProjectError::CameraNotFound { id: not_a_camera })
         );
 
-        project.set_light_params(light, LightKind::Point, [0.5, 0.4, 0.3], 4.0).expect("light params");
+        project.set_light_params(light, LightSpec::point([0.5, 0.4, 0.3], 4.0)).expect("light params");
         let light_node = project.light(light).expect("light");
         assert_eq!(light_node.kind(), LightKind::Point);
         assert_eq!(light_node.color(), [0.5, 0.4, 0.3]);
         assert_eq!(light_node.intensity(), 4.0);
         assert_eq!(
-            project.set_light_params(light, LightKind::Point, [2.0; 3], 1.0),
+            project.set_light_params(light, LightSpec::point([2.0; 3], 1.0)),
             Err(ProjectError::Light(LightError::InvalidColor))
         );
         assert_eq!(
-            project.set_light_params(camera, LightKind::Point, [1.0; 3], 1.0),
+            project.set_light_params(camera, LightSpec::point([1.0; 3], 1.0)),
             Err(ProjectError::LightNotFound { id: camera })
         );
     }

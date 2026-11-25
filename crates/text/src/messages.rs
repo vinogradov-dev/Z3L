@@ -642,6 +642,12 @@ messages! {
     SectionLight = ["Light", "Свет"],
     Sun = ["Sun", "Солнце"],
     Point = ["Point", "Точечный"],
+    Area = ["Window", "Окно"],
+    LightSize = ["Face", "Плоскость"],
+    LightSizeRange = [
+        "A light's face must be between {} and {} mm a side.",
+        "Плоскость источника должна быть от {} до {} мм по стороне."
+    ],
     Colour = ["Colour", "Цвет"],
     PowerWatts = ["Power (W)", "Мощность (Вт)"],
     Intensity = ["Intensity", "Интенсивность"],

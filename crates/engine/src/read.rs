@@ -473,7 +473,7 @@ mod tests {
     use std::sync::Arc;
 
     use geom::DQuat;
-    use model::{ClassCode, Envelope, LightKind, Placement};
+    use model::{ClassCode, Envelope, LightSpec, Placement};
     use testkit::{millimetres, sample_catalog, sample_project};
 
     use super::*;
@@ -490,7 +490,7 @@ mod tests {
         let size = model::PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
         project.add_panel(root, "Side", size, None, millimetres(18), Placement::IDENTITY).expect("the side is added");
         let centre = Placement::new(DVec3::new(300.0, 280.0, 360.0), DQuat::IDENTITY).expect("a unit placement");
-        project.add_light(product, "Key", centre, LightKind::Sun, [1.0; 3], 1.0).expect("the light is added");
+        project.add_light(product, "Key", centre, LightSpec::sun([1.0; 3], 1.0)).expect("the light is added");
         // The real contact adapter, so the niche of a splayed body is measured as the window does.
         Session::with_directory(project, sample_catalog()).with_contact(Arc::new(contact_parry::Parry))
     }

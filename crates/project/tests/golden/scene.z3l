@@ -2,9 +2,9 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 33,
+    "schema_version": 34,
     "revision": 12,
-    "next_id": 14,
+    "next_id": 16,
     "root": {
       "id": 1,
       "name": "Root",
@@ -61,7 +61,7 @@
             ],
             "machining": [
               {
-                "id": 12,
+                "id": 14,
                 "anchor": {
                   "kind": "face",
                   "side": "A"
@@ -687,7 +687,47 @@
               0.95,
               0.9
             ],
-            "intensity": 2.0
+            "intensity": 2.0,
+            "size": {
+              "width": 1000000,
+              "height": 1000000
+            }
+          }
+        },
+        {
+          "light": {
+            "id": 13,
+            "name": "Window",
+            "placement": {
+              "translation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "pivot_local": [
+              0,
+              0,
+              0
+            ],
+            "properties": {},
+            "kind": "area",
+            "color": [
+              1.0,
+              1.0,
+              0.98
+            ],
+            "intensity": 40.0,
+            "size": {
+              "width": 1200000,
+              "height": 1400000
+            }
           }
         },
         {
@@ -764,7 +804,7 @@
         },
         {
           "container": {
-            "id": 13,
+            "id": 15,
             "name": "Corner cabinet",
             "placement": {
               "translation": [

@@ -135,7 +135,12 @@ multiplier with no distance falloff, because a sun is directional. Every point l
 position, colour and power, at most eight in tree order; its intensity is radiant power in watts and
 the renderer applies inverse-square falloff with no hard range cutoff
 ([ADR 0039](../decisions/0039-point-lights-use-watts-and-inverse-square-falloff.md)). A scene
-without a sun keeps the built-in key light, and point lights add to that key. While an active camera
+without a sun keeps the built-in key light, and point lights add to that key. A third kind,
+`Area`, is a rectangle: a face of a size in millimetres centred on the node's origin in its local
+`XY`, emitting from one side along its local `-Z` with its intensity read as watts over that face.
+Four of them reach one frame, and the final render samples each by solid angle
+([ADR 0247](../decisions/0247-a-rectangular-light-is-a-face-at-watts.md)); the viewport shades the
+room from the middle of the face, at the same power. While an active camera
 is set the viewport draws through it, and navigation and the projection toggle are disabled, because
 both would change a camera the document owns. Clearing the active camera returns the viewport to the
 built-in, navigable camera, whose projection the viewport toggles between perspective and
