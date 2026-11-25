@@ -62,22 +62,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-- `[~]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
-  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
-   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
-   The reference project measured its a-trous filter at about a third off the error at 8 spp
-   and recorded where the filter stops paying and starts smearing; shipping one without our own
-   numbers would repeat the mistake that project documents.
-  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
-  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
-  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
-  catalogue image is graded in the print pipeline, not in the renderer.
-  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
-   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
-   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
-   1000 mm panel keeps its edge; `cargo xtask ci` is green.
-  `files: crates/final/src`
-
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -437,6 +421,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src,crates/engine/src,app/src`
 
 ## Done
+
+- `[x]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/final/src` — `703cbb5`
 
 - `[x]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
   Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
