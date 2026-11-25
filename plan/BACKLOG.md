@@ -63,7 +63,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
 
-- `[ ]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+- `[~]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
   Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
    one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
    material and left the mapping unwritten, so the viewport and the final render show something
