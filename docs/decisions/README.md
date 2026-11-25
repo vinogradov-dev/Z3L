@@ -270,3 +270,4 @@ The code and `AGENTS.md` stay the authority for rules; a record keeps the reason
 | [0244](0244-the-renders-materials-are-a-library-of-their-own.md) | The render's materials are a library of their own, and a catalogue record points into it | Accepted; extends 0243 with the record's home and shape |
 | [0245](0245-a-3d-object-wears-one-render-material.md) | A 3D object wears one render material, and the frame never reads the catalogue | Accepted; builds on 0244 and shapes Y7, O16 and O18 |
 | [0246](0246-the-noise-a-pixel-carries-is-measured-and-spent.md) | The tracer tracks a pixel's variance, and an edge-avoiding filter spends it | Accepted; builds on 0210, 0213 and Y2, and shapes Y4 |
+| [0247](0247-a-rectangular-light-is-a-face-at-watts.md) | A rectangular light is a face at watts, and the tracer samples it by solid angle | Accepted; extends 0039 and 0213, and gives multiple importance sampling its second strategy |

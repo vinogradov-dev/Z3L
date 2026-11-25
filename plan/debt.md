@@ -455,12 +455,11 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   keeps that line in the body, so a note that names its subject in its first line shows the sentence
   twice. Strip the first line from the body before it is written when it is the heading (X95).
 
-- `[render]` The frame carries one key light and up to eight point lights, so the final render traces
-  no area light: a window, a softbox or a strip is a point or nothing. Y2 samples the point lights by
-  emitted power through an alias table and weights a light sample by the power heuristic, but every
-  light in the frame is a delta emitter, so that weight is one and the BSDF sample never competes for
-  the same path. A rectangular emitter is L2's (the document gains the object, the frame carries it);
-  until it lands, multiple importance sampling has nothing to combine.
+- `[render]` A window's pane follows its light on commit, not during the drag: the frame is rebuilt
+  when the document revision changes and a gizmo drag writes nothing, so the lighting follows the
+  pointer through the uniform while the pane stands where the last upload put it. The fix is the one
+  the drawables already use — a previewed placement in the frame the shell renders — which needs the
+  evaluated frame copied with the panes moved rather than rebuilt (L2).
 
 - `[render]` A tinted pane seen through glass reads above the hand-summed series of its internal
   reflections: 3, 8 and 21 percent in red, green and blue for a 400 mm slab at 40 degrees, while the
@@ -469,8 +468,10 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   does not model rather than at the absorption law (Y2, `plan/notes/Y2.md`).
 
 - `[render]` Glass casts a black shadow: a pane is a geometric occluder for every shadow ray, so a
-  floor lit through a window is in shadow rather than lit by the window. Closing it needs a light that
-  transmits, which is L2's area emitter and a shadow ray that knows what it crossed.
+  floor lit through a window is in shadow rather than lit by the window. L2 gave the frame a
+  rectangular emitter sampled by solid angle, so half the shape is there; closing the rest needs a
+  shadow ray that knows what it crossed and an emitter that transmits, which is a decision of its own
+  and not a field on the one L2 landed.
 
 - `[ui]` The render place has no preview of the last image and no status line of its own: the picture
   is written and named, and the status bar still describes the node the selection points at while the

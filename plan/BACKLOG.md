@@ -62,27 +62,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-- `[~]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
-  Why: The image the owner points at is lit by one big source the size of a window: shadows
-   that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
-   clips to white. The document carries `Sun` and `Point` only
-   (`crates/model/src/light.rs:23`), and a point light cannot make a shadow soft at one
-   distance and hard at another, nor a visible bright pane. Without a rectangular emitter the
-   final render (Y1–Y4) has nothing to sample by solid angle, and every interior it renders
-   stays flat.
-  Shape: A third light kind: a rectangle with a size in the document's own units beside the
-   placement, colour and watts the other kinds carry, created and edited by one command and
-   drawn in the viewport as a translucent pane with an outline so it is selectable and still
-   out of the way. The viewport shades it as a source; the final render samples it by solid
-   angle with next-event estimation and multiple importance sampling (Y2), and a pane the
-   camera sees contributes its own emission. A new variant is a new layout with no migration
-   (ADR 0096).
-  Done: Tests: the command creates, resizes and removes one, the document round-trips the new
-   kind, an unknown kind is a readable load error, picking returns its id, and the emitted
-   power to radiance conversion has a unit test; the traced image against analytic irradiance
-   is Y2's test, not this one; `cargo xtask ci` is green.
-  `files: crates/model/src/light.rs,crates/scene/src/lib.rs,crates/engine/src`
-
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -422,6 +401,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src,crates/engine/src,app/src`
 
 ## Done
+
+- `[x]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
+  Why: The image the owner points at is lit by one big source the size of a window: shadows
+   that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
+   clips to white. The document carries `Sun` and `Point` only
+   (`crates/model/src/light.rs:23`), and a point light cannot make a shadow soft at one
+   distance and hard at another, nor a visible bright pane. Without a rectangular emitter the
+   final render (Y1–Y4) has nothing to sample by solid angle, and every interior it renders
+   stays flat.
+  Shape: A third light kind: a rectangle with a size in the document's own units beside the
+   placement, colour and watts the other kinds carry, created and edited by one command and
+   drawn in the viewport as a translucent pane with an outline so it is selectable and still
+   out of the way. The viewport shades it as a source; the final render samples it by solid
+   angle with next-event estimation and multiple importance sampling (Y2), and a pane the
+   camera sees contributes its own emission. A new variant is a new layout with no migration
+   (ADR 0096).
+  Done: Tests: the command creates, resizes and removes one, the document round-trips the new
+   kind, an unknown kind is a readable load error, picking returns its id, and the emitted
+   power to radiance conversion has a unit test; the traced image against analytic irradiance
+   is Y2's test, not this one; `cargo xtask ci` is green.
+  `files: crates/model/src/light.rs,crates/scene/src/lib.rs,crates/engine/src` — `b039a5d`
 
 - `[x]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
   Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
