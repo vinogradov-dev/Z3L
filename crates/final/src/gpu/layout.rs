@@ -13,7 +13,7 @@
 //! Changes when: a field of the shader's input changes, or the tree's layout does.
 
 use geom::DVec3;
-use scene::{Camera, Lighting, MAX_POINT_LIGHTS, Projection};
+use scene::{AreaLight, Camera, Lighting, MAX_AREA_LIGHTS, MAX_POINT_LIGHTS, Projection};
 
 use crate::bsdf;
 use crate::bvh::Bvh;
@@ -25,6 +25,12 @@ const VERTEX_SLOTS: usize = 3;
 
 /// How many `vec4`s the alias table of [`MAX_POINT_LIGHTS`] columns occupies.
 const ALIAS_WORDS: usize = MAX_POINT_LIGHTS.div_ceil(4);
+
+/// The rectangular lights one frame carries, which is the scene's own cap.
+const MAX_AREAS: usize = MAX_AREA_LIGHTS;
+
+/// How many `vec4`s the alias table of [`MAX_AREAS`] columns occupies.
+const AREA_ALIAS_WORDS: usize = MAX_AREAS.div_ceil(4);
 
 /// One face as the shader reads it: three vertices and the surface's colour.
 ///
@@ -209,6 +215,23 @@ pub(crate) struct Uniform {
     pub(crate) point_alias: [[u32; 4]; ALIAS_WORDS],
     /// The share of the light each point light carries, which is the density of a draw.
     pub(crate) point_share: [[f32; 4]; ALIAS_WORDS],
+    /// `xyz` the centre of each rectangular light's face, `w` unused.
+    pub(crate) area_origin: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the half-edge along the light's own `X` in world space, `w` unused.
+    pub(crate) area_half_width: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the half-edge along the light's own `Y` in world space, `w` unused.
+    pub(crate) area_half_height: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the radiance the face emits, `w` its area in square millimetres: the two the sample's
+    /// pdf divides by and multiplies with (L2).
+    pub(crate) area_radiance: [[f32; 4]; MAX_AREAS],
+    /// `x` the number of rectangular lights the frame carries, the rest unused.
+    pub(crate) area_count: [u32; 4],
+    /// The alias table over the rectangles' emitted power, four columns to a vector.
+    pub(crate) area_probability: [[f32; 4]; AREA_ALIAS_WORDS],
+    /// The other column of each rectangle's alias, four to a vector.
+    pub(crate) area_alias: [[u32; 4]; AREA_ALIAS_WORDS],
+    /// The share of the power each rectangle carries, which is the density of a draw.
+    pub(crate) area_share: [[f32; 4]; AREA_ALIAS_WORDS],
 }
 
 /// The frame's faces as the shader reads them, in the tree's order.
@@ -350,6 +373,7 @@ pub(crate) fn uniform(
         }
     }
     let environment = lighting.environment.map(|channel| if channel.is_finite() { channel.max(0.0) } else { 0.0 });
+    let (areas, area_table) = area_lights(&lighting.areas)?;
     Ok(Uniform {
         eye: [eye.x as f32, eye.y as f32, eye.z as f32, orthographic],
         right: [right.x as f32, right.y as f32, right.z as f32, 0.0],
@@ -377,7 +401,96 @@ pub(crate) fn uniform(
         point_probability,
         point_alias,
         point_share,
+        area_origin: areas.origin,
+        area_half_width: areas.half_width,
+        area_half_height: areas.half_height,
+        area_radiance: areas.radiance,
+        area_count: [areas.count, 0, 0, 0],
+        area_probability: area_table.probability,
+        area_alias: area_table.alias,
+        area_share: area_table.share,
     })
+}
+
+/// The rectangular lights as the shader reads them, and the table that picks one by its power.
+struct Areas {
+    origin: [[f32; 4]; MAX_AREAS],
+    half_width: [[f32; 4]; MAX_AREAS],
+    half_height: [[f32; 4]; MAX_AREAS],
+    radiance: [[f32; 4]; MAX_AREAS],
+    count: u32,
+}
+
+/// The alias table of the rectangles, in the same shape the point lights use.
+struct AreaTable {
+    probability: [[f32; 4]; AREA_ALIAS_WORDS],
+    alias: [[u32; 4]; AREA_ALIAS_WORDS],
+    share: [[f32; 4]; AREA_ALIAS_WORDS],
+}
+
+/// Packs the frame's rectangular emitters into the uniform, refusing a hostile one.
+///
+/// A face with no extent is skipped rather than uploaded: a radiance over no area is a number that
+/// divides an image by zero, and the frame's own builder already guards it (`AreaLight::area_mm2`).
+fn area_lights(lights: &[AreaLight]) -> Result<(Areas, AreaTable), FinalError> {
+    let mut areas = Areas {
+        origin: [[0.0; 4]; MAX_AREAS],
+        half_width: [[0.0; 4]; MAX_AREAS],
+        half_height: [[0.0; 4]; MAX_AREAS],
+        radiance: [[0.0; 4]; MAX_AREAS],
+        count: 0,
+    };
+    let mut powers: Vec<f32> = Vec::new();
+    for light in lights.iter().take(MAX_AREAS) {
+        let area = light.area_mm2();
+        if area <= 0.0 {
+            continue;
+        }
+        let finite = light.origin.is_finite()
+            && light.half_width.is_finite()
+            && light.half_height.is_finite()
+            && light.color.iter().all(|channel| channel.is_finite())
+            && light.power.is_finite();
+        if !finite {
+            return Err(refuse("a rectangular light's numbers are not finite"));
+        }
+        let index = areas.count as usize;
+        let radiance = light.radiance();
+        if let (Some(origin), Some(u), Some(v), Some(scale)) = (
+            areas.origin.get_mut(index),
+            areas.half_width.get_mut(index),
+            areas.half_height.get_mut(index),
+            areas.radiance.get_mut(index),
+        ) {
+            *origin = [light.origin.x as f32, light.origin.y as f32, light.origin.z as f32, 0.0];
+            *u = [light.half_width.x as f32, light.half_width.y as f32, light.half_width.z as f32, 0.0];
+            *v = [light.half_height.x as f32, light.half_height.y as f32, light.half_height.z as f32, 0.0];
+            *scale = [radiance[0], radiance[1], radiance[2], area as f32];
+        }
+        areas.count = areas.count.saturating_add(1);
+        powers.push(light.power);
+    }
+    let mut table = AreaTable {
+        probability: [[0.0; 4]; AREA_ALIAS_WORDS],
+        alias: [[0u32; 4]; AREA_ALIAS_WORDS],
+        share: [[0.0; 4]; AREA_ALIAS_WORDS],
+    };
+    if let Some(alias) = crate::light::AliasTable::build(&powers) {
+        for index in 0..powers.len() {
+            let (vector, channel) = (index / 4, index % 4);
+            let (probability, instead) = alias.column(index);
+            if let Some(slot) = table.probability.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = probability.clamp(0.0, 1.0);
+            }
+            if let Some(slot) = table.share.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = alias.share(index) as f32;
+            }
+            if let Some(slot) = table.alias.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = instead;
+            }
+        }
+    }
+    Ok((areas, table))
 }
 
 /// Sobol's direction numbers, flattened for the device: four dimensions of thirty-two words.
@@ -511,6 +624,50 @@ mod tests {
         assert_eq!(uniform.point_position[0], [500.0, 0.0, 300.0, 0.0]);
         assert_eq!(uniform.point_colour[0], [1.0, 0.9, 0.8, 1000.0]);
         assert_eq!(uniform.point_colour[1], [0.0; 4], "a dead light is not uploaded as a lamp");
+    }
+
+    #[test]
+    fn a_rectangular_light_reaches_the_uniform_as_a_face_and_a_share() {
+        let mut frame = SceneFrame::default();
+        frame.lighting.areas.push(scene::AreaLight {
+            origin: DVec3::new(0.0, 0.0, 1_000.0),
+            half_width: DVec3::new(600.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 700.0, 0.0),
+            color: [1.0, 0.5, 0.25],
+            power: 40.0,
+        });
+        frame.lighting.areas.push(scene::AreaLight {
+            origin: DVec3::new(2_000.0, 0.0, 1_000.0),
+            half_width: DVec3::new(100.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 100.0, 0.0),
+            color: [1.0; 3],
+            power: 40.0,
+        });
+        let camera = Camera::new(DVec3::new(0.0, 0.0, 500.0), 2_000.0).expect("a camera");
+        let packed = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).expect("a uniform");
+        assert_eq!(packed.area_count[0], 2);
+        assert_eq!(packed.area_origin[0], [0.0, 0.0, 1_000.0, 0.0]);
+        assert_eq!(packed.area_half_width[0], [600.0, 0.0, 0.0, 0.0]);
+        assert_eq!(packed.area_half_height[0], [0.0, 700.0, 0.0, 0.0]);
+        // The radiance is the watts over the area and the hemisphere, and the area travels with it so
+        // the shader's pdf needs no second conversion.
+        let radiance = 40.0 / (std::f32::consts::PI * 1.68);
+        assert!((packed.area_radiance[0][0] - radiance).abs() < 1.0e-3, "{:?}", packed.area_radiance[0]);
+        assert_eq!(packed.area_radiance[0][1], packed.area_radiance[0][0] * 0.5);
+        assert!((packed.area_radiance[0][3] - 1.68e6).abs() < 1.0, "the area is square millimetres");
+        // Two equal-wattage faces are drawn equally often.
+        assert!((packed.area_share[0][0] - 0.5).abs() < 1.0e-6);
+        assert!((packed.area_share[0][1] - 0.5).abs() < 1.0e-6);
+
+        // A face with no extent is not uploaded at all: a radiance over no area has no pdf.
+        frame.lighting.areas[1].half_width = DVec3::ZERO;
+        let skipped = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).expect("a uniform");
+        assert_eq!(skipped.area_count[0], 1, "a degenerate face is skipped");
+        assert_eq!(skipped.area_share[0][0], 1.0, "the one face left takes every draw");
+
+        // A hostile number stops the render instead of poisoning it.
+        frame.lighting.areas[0].origin = DVec3::new(f64::NAN, 0.0, 0.0);
+        assert!(uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).is_err());
     }
 
     #[test]

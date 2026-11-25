@@ -317,6 +317,86 @@ pub struct PointLight {
     pub power: f32,
 }
 
+/// The largest number of rectangular emitters one frame carries.
+///
+/// A window is one and a softbox is another; four keep the shader's light loop and the uniform small,
+/// and a fifth is a scene that does not fit rather than an image that silently loses a source. The
+/// document holds as many as a maker authors, and only the first four in tree order reach a frame.
+pub const MAX_AREA_LIGHTS: usize = 4;
+
+/// A rectangular emitter in world space: its face, its colour and its watts.
+///
+/// The face is the light's own `XY` plane centred on its origin, and the light emits from one side of
+/// it, along its local `-Z` — the convention a sun already uses ([`Lighting::key_direction`]), so a
+/// window lights the room and not the street (ADR 0247).
+///
+/// The frame carries watts and geometry, never a radiance: the conversion from emitted power to
+/// radiance is one function here, [`AreaLight::radiance`], and the tests of it are the frame's own.
+///
+/// [ADR 0247]: ../docs/decisions/0247-a-rectangular-light-is-a-face-at-watts.md
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaLight {
+    /// The centre of the face, in world millimetres.
+    pub origin: DVec3,
+    /// The half-edge along the light's own `X`, in world millimetres.
+    pub half_width: DVec3,
+    /// The half-edge along the light's own `Y`, in world millimetres.
+    pub half_height: DVec3,
+    /// Linear RGB colour.
+    pub color: [f32; 3],
+    /// Radiant power in watts, the unit a point light already uses (ADR 0039).
+    pub power: f32,
+}
+
+impl AreaLight {
+    /// The unit normal of the face the light emits from.
+    ///
+    /// It is derived and never stored: the face is the two half-edges, and their cross product in the
+    /// ring's own order — the height edge into the width edge — is the side the light emits from, the
+    /// same order [`AreaLight::corners`] writes. A second stored normal could disagree with the edge
+    /// the shader samples, and did in the test that turned a window around (L2).
+    pub fn normal(&self) -> DVec3 {
+        self.half_height.cross(self.half_width).try_normalize().unwrap_or(DVec3::Z)
+    }
+
+    /// The area of the face in square millimetres, or 0 for a face with no extent.
+    ///
+    /// It is the length of the cross product of the two half-edges, doubled and doubled again, so a
+    /// degenerate rectangle answers zero instead of a number that divides a radiance by nothing.
+    pub fn area_mm2(&self) -> f64 {
+        let area = 4.0 * self.half_width.cross(self.half_height).length();
+        if area.is_finite() && area > 0.0 { area } else { 0.0 }
+    }
+
+    /// The radiance of the face: the watts spread over its area and its hemisphere.
+    ///
+    /// A Lambertian emitter of power `P` and area `A` radiates `P = L * PI * A`, so the radiance a
+    /// tracer samples is `P / (PI * A)` in `W/(m^2 sr)`. The document's millimetres become square
+    /// metres here, once, because that is the unit watts are defined in.
+    pub fn radiance(&self) -> [f32; 3] {
+        let area = self.area_mm2() * 1.0e-6;
+        if area <= 0.0 || !self.power.is_finite() || self.power <= 0.0 {
+            return [0.0; 3];
+        }
+        let scale = f64::from(self.power) / (std::f64::consts::PI * area);
+        self.color.map(|channel| if channel.is_finite() { (f64::from(channel) * scale) as f32 } else { 0.0 })
+    }
+
+    /// The four corners of the face, in world millimetres, counter-clockwise seen from the emitting
+    /// side.
+    ///
+    /// The viewport draws them and a picking test meets them, so the two readings of one rectangle
+    /// come from one list.
+    pub fn corners(&self) -> [DVec3; 4] {
+        [
+            self.origin - self.half_width - self.half_height,
+            self.origin - self.half_width + self.half_height,
+            self.origin + self.half_width + self.half_height,
+            self.origin + self.half_width - self.half_height,
+        ]
+    }
+}
+
 /// The key light, point lights and ambient term used to shade solid drawables.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lighting {
@@ -328,6 +408,13 @@ pub struct Lighting {
     pub ambient: f32,
     /// Point lights in tree order, at most [`MAX_POINT_LIGHTS`] of them when built from a scene.
     pub points: Vec<PointLight>,
+    /// Rectangular emitters in tree order, at most [`MAX_AREA_LIGHTS`] of them when built from a
+    /// scene.
+    ///
+    /// A viewport shades the model from [`Lighting::points`] and draws the faces; it is the final
+    /// render that samples them, by solid angle, and that is why they are data here and not geometry
+    /// in the soup.
+    pub areas: Vec<AreaLight>,
     /// The radiance of an infinite, uniform environment, linear RGB and zero for none.
     ///
     /// This is the studio the workshop does not build: the light a final render sees where the frame
@@ -344,6 +431,7 @@ impl Default for Lighting {
             key_color: [1.0, 0.97, 0.92],
             ambient: 0.32,
             points: Vec::new(),
+            areas: Vec::new(),
             environment: [0.0; 3],
         }
     }
@@ -381,6 +469,21 @@ impl Default for Surface {
     fn default() -> Self {
         Self::MATTE
     }
+}
+
+/// How a viewport draws one mesh's faces.
+///
+/// A body is shaded by the frame's lights; a light's own face is not, because it is the source
+/// rather than a surface the source falls on. The two are one enum rather than a `bool` so a third
+/// way of drawing a mesh has a name to take.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FaceShading {
+    /// Shaded by the frame's lights: every body in the model.
+    #[default]
+    Lit,
+    /// The surface's own colour, blended over the scene and never darkened by a light: the face of a
+    /// rectangular emitter, which is a source and not a board (L2).
+    Source,
 }
 
 /// One shaded mesh in world space.
@@ -424,6 +527,8 @@ pub struct Drawable {
     /// drawable whose extent is unknown. [`Drawable::world_bounds`] turns it into the box a view
     /// culls by (X58).
     pub local_bounds: Option<Aabb>,
+    /// How the viewport draws the faces: lit like a body, or as a source.
+    pub faces: FaceShading,
 }
 
 impl Drawable {
@@ -459,7 +564,15 @@ impl Drawable {
             surface: Surface::MATTE,
             decor: None,
             local_bounds,
+            faces: FaceShading::Lit,
         }
+    }
+
+    /// The same drawable drawn as a source: its colour is the light it gives, not a surface under a
+    /// light, and the viewport blends it over the scene instead of shading it.
+    pub fn as_source(mut self) -> Self {
+        self.faces = FaceShading::Source;
+        self
     }
 
     /// The same drawable made of `surface`, which is how a frame says a front is glass or a handle is
@@ -2658,5 +2771,57 @@ mod tests {
         let mut drawn = Vec::new();
         frustum.visible([None, Some(measured)], &mut drawn);
         assert_eq!(drawn, vec![0], "the unmeasured box is kept, the measured one is dropped");
+    }
+
+    #[test]
+    fn a_window_of_a_known_area_carries_the_radiance_its_watts_are() {
+        // A one-metre square radiating 100 W: the radiance is `P / (PI * A)` and the frame keeps the
+        // watts, so the conversion is one function with one test (ADR 0247).
+        let square = AreaLight {
+            origin: DVec3::ZERO,
+            half_width: DVec3::new(500.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 500.0, 0.0),
+            color: [1.0, 1.0, 1.0],
+            power: 100.0,
+        };
+        assert!((square.area_mm2() - 1_000_000.0).abs() < 1.0, "a square metre is a million square millimetres");
+        let radiance = square.radiance();
+        let expected = 100.0 / std::f64::consts::PI;
+        for channel in radiance {
+            assert!((f64::from(channel) - expected).abs() < 1.0e-4, "{radiance:?} is not {expected}");
+        }
+        // Radiance grows with the watts and falls with the area, because the power is spread over it.
+        let brighter = AreaLight { power: 200.0, ..square };
+        assert!(brighter.radiance()[0] > radiance[0]);
+        let wider = AreaLight { half_width: DVec3::new(1_000.0, 0.0, 0.0), ..square };
+        assert!(wider.radiance()[0] < radiance[0]);
+        // A rectangle of a colour lights in that colour, and one of no power or no extent is dark.
+        let tinted = AreaLight { color: [1.0, 0.5, 0.25], ..square };
+        assert!((tinted.radiance()[1] / tinted.radiance()[0] - 0.5).abs() < 1.0e-6);
+        assert_eq!(AreaLight { power: 0.0, ..square }.radiance(), [0.0; 3]);
+        assert_eq!(AreaLight { half_width: DVec3::ZERO, ..square }.radiance(), [0.0; 3]);
+        assert_eq!(AreaLight { power: f32::NEG_INFINITY, ..square }.radiance(), [0.0; 3]);
+    }
+
+    #[test]
+    fn a_window_draws_the_four_corners_of_its_face() {
+        let window = AreaLight {
+            origin: DVec3::new(0.0, 0.0, 1_000.0),
+            half_width: DVec3::new(600.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 700.0, 0.0),
+            color: [1.0; 3],
+            power: 40.0,
+        };
+        let corners = window.corners();
+        assert_eq!(corners[0], DVec3::new(-600.0, -700.0, 1_000.0));
+        assert_eq!(corners[2], DVec3::new(600.0, 700.0, 1_000.0));
+        // The ring is counter-clockwise seen from the emitting side: the corners in order cross to a
+        // normal that points the way the light emits.
+        let across = (corners[1] - corners[0]).cross(corners[3] - corners[0]);
+        assert!(across.normalize().dot(window.normal()) > 0.999, "{across:?}");
+        assert!(window.normal().dot(-DVec3::Z) > 1.0 - 1.0e-9, "a light with its height along +Y emits along -Z");
+        let turned = AreaLight { half_height: DVec3::new(0.0, -700.0, 0.0), ..window };
+        assert!(turned.normal().dot(DVec3::Z) > 1.0 - 1.0e-9, "the same face the other way round emits the other way");
+        assert!((window.area_mm2() - 1_200.0 * 1_400.0).abs() < 1.0e-6);
     }
 }

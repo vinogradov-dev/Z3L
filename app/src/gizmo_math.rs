@@ -1346,7 +1346,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use model::{
-        CameraProjection, ClassCode, Container, Envelope, Geometry, LightKind, Panel, Project, PropertyValue,
+        CameraProjection, ClassCode, Container, Envelope, Geometry, LightSpec, Panel, Project, PropertyValue,
         SYSTEM_CLASS,
     };
     use testkit::{millimetres, sample_panel_nominal_size, sample_panel_thickness, sample_project};
@@ -1586,7 +1586,7 @@ mod tests {
         let root = project.root().id();
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("camera");
-        let light = project.add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("light");
+        let light = project.add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("light");
 
         let targets = move_targets(&project, &[camera, light]);
         assert_eq!(

@@ -182,12 +182,24 @@ pub(crate) fn stencil_slot(index: usize) -> u32 {
 pub(crate) fn sort_back_to_front(centres: &[DVec3], eye: DVec3, order: &mut Vec<usize>) {
     order.clear();
     order.extend(0..centres.len());
+    sort_subset_back_to_front(centres, eye, order);
+}
+
+/// The same order over the drawables already in `order`.
+///
+/// A blended pass may own only part of the visible list — the light sources are drawn in a pass of
+/// their own — so the ordering has to take the subset as it stands instead of the whole frame.
+pub(crate) fn sort_subset_back_to_front(centres: &[DVec3], eye: DVec3, order: &mut [usize]) {
     let eye = if eye.is_finite() { eye } else { DVec3::ZERO };
-    order.sort_by(|&a, &b| {
-        let far = centres.get(a).map_or(0.0, |centre| (centre - eye).length_squared());
-        let near = centres.get(b).map_or(0.0, |centre| (centre - eye).length_squared());
-        near.total_cmp(&far)
-    });
+    // The distance is measured once per drawable rather than in every comparison.
+    let mut keyed: Vec<(f64, usize)> = order
+        .iter()
+        .map(|&index| (centres.get(index).map_or(0.0, |centre| (centre - eye).length_squared()), index))
+        .collect();
+    keyed.sort_by(|&(far, a), &(near, b)| near.total_cmp(&far).then(a.cmp(&b)));
+    for (slot, (_, index)) in order.iter_mut().zip(keyed) {
+        *slot = index;
+    }
 }
 
 /// Builds the floor plate: one quad on `z = 0` across the square the grid draws.

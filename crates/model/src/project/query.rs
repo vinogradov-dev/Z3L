@@ -782,7 +782,7 @@ mod tests {
 
         // A light is no geometry, and neither is a container that holds none.
         let light = project
-            .add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0)
+            .add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0))
             .expect("a light joins the root");
         assert_eq!(project.bounds_local(light), None, "a light occupies no box");
         let empty = project.add_component(root, "Empty", Placement::IDENTITY).expect("an empty component");

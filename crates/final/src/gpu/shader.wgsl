@@ -34,6 +34,7 @@
 
 const PI: f32 = 3.141592653589793;
 const MAX_POINT_LIGHTS: u32 = 8u;
+const MAX_AREA_LIGHTS: u32 = 4u;
 const MAX_STACK: u32 = 64u;
 // How far a ray must travel before it may hit anything: the camera's near plane, in millimetres.
 const T_MIN: f32 = 0.05;
@@ -50,7 +51,7 @@ const RR_DEPTH: u32 = 3u;
 // The hard stop: a pane between two mirrors is a path that never ends.
 const MAX_BOUNCES: u32 = 24u;
 // The dimensions the Sobol generator carries, which is `sampler::DIMENSIONS`.
-const DIMENSIONS: u32 = 4u;
+const DIMENSIONS: u32 = 8u;
 // The energy table's resolution, which is `bsdf::ENERGY_STEPS`.
 const ENERGY_STEPS: u32 = 16u;
 // The smallest roughness the lobes are evaluated at, which is `bsdf::MIN_ROUGHNESS`.
@@ -135,6 +136,19 @@ struct Uniform {
     point_alias: array<vec4<u32>, 2>,
     // The share of the light each point light carries, which is the density of a pick.
     point_share: array<vec4<f32>, 2>,
+    // The rectangular lights: a window, a softbox or a strip (L2). `xyz` is the centre of the face and
+    // the two half-edges lie in its own plane, so a corner is `origin +- half_width +- half_height`.
+    area_origin: array<vec4<f32>, 4>,
+    area_half_width: array<vec4<f32>, 4>,
+    area_half_height: array<vec4<f32>, 4>,
+    // xyz: the radiance the face emits; w: its area in square millimetres.
+    area_radiance: array<vec4<f32>, 4>,
+    // x: how many rectangular lights the frame carries.
+    area_count: vec4<u32>,
+    // The alias table of the rectangles, by emitted power, in the point lights' own shape.
+    area_probability: vec4<f32>,
+    area_alias: vec4<u32>,
+    area_share: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Uniform;
@@ -797,6 +811,26 @@ fn bsdf_eval(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> 
     return total;
 }
 
+// The mixture density of the surface's continuous lobes at `(wo, wi)`, which is `bsdf::pdf`.
+//
+// A light sample is taken with this weight: the path it finds could also have been found by a sample
+// of the surface, so the two strategies share it instead of counting it twice. A pane's transmitted
+// beam is smooth and its density is not part of the sum, so `probabilities_of` gives it no cosine
+// term and the formula is the one the Rust writes.
+fn bsdf_pdf(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> f32 {
+    if (wo.z <= 0.0 || wi.z <= 0.0) {
+        return 0.0;
+    }
+    let alpha = alpha_of(material);
+    let probabilities = probabilities_of(material, wo, inside);
+    let cosine = (probabilities.diffuse + probabilities.completion) * wi.z / PI;
+    let density = probabilities.specular * ggx_pdf(wo, wi, alpha) + cosine;
+    if (!(density > 0.0)) {
+        return 0.0;
+    }
+    return density;
+}
+
 fn sample_cosine(u: vec2<f32>) -> vec3<f32> {
     let radius = sqrt(u.x);
     let phi = 2.0 * PI * u.y;
@@ -925,13 +959,125 @@ fn balance(first: f32, second: f32) -> f32 {
     return clamp(a * a / squares, 0.0, 1.0);
 }
 
-// The direct light one vertex receives from the key light and one point light drawn by emitted power.
+// ---------------------------------------------------------------------------------------------------
+// The rectangular lights: a window is a face, and a face is sampled by solid angle.
+// ---------------------------------------------------------------------------------------------------
+
+fn area_threshold(index: u32) -> f32 {
+    return camera.area_probability[index % 4u];
+}
+
+fn area_alias_of(index: u32) -> u32 {
+    return camera.area_alias[index % 4u];
+}
+
+fn area_share_of(index: u32) -> f32 {
+    return camera.area_share[index % 4u];
+}
+
+// The same alias draw the point lights use, over the rectangles' emitted power.
+fn pick_area_light(u: vec2<f32>) -> u32 {
+    let count = camera.area_count.x;
+    if (count == 0u) {
+        return NO_LIGHT;
+    }
+    let scaled = clamp(u.x, 0.0, 1.0) * f32(count);
+    let column = min(u32(scaled), count - 1u);
+    if ((scaled - f32(column)) < area_threshold(column)) {
+        return column;
+    }
+    return area_alias_of(column);
+}
+
+// The unit normal of a rectangle's face, which points the way it emits.
+//
+// The ring the frame builds runs counter-clockwise seen from the emitting side, so its normal is the
+// cross of the *height* edge into the width edge — the order `AreaLight::corners` writes (L2). The
+// other order would make every window emit into the wall behind it.
+fn area_normal(index: u32) -> vec3<f32> {
+    return safe_normalize(cross(camera.area_half_height[index].xyz, camera.area_half_width[index].xyz));
+}
+
+// One point of the face, uniform over its area: `u` and `v` in `[0, 1)` are the two halves.
+fn area_point(index: u32, u: vec2<f32>) -> vec3<f32> {
+    let across = camera.area_half_width[index].xyz * (2.0 * u.x - 1.0);
+    let down = camera.area_half_height[index].xyz * (2.0 * u.y - 1.0);
+    return camera.area_origin[index].xyz + across + down;
+}
+
+// The density of one point of a face being drawn: uniform over the area, converted from square
+// millimetres to a solid angle at `seen_from`, divided by the cosine the face presents there.
+//
+// It is the density of the *face*, not of the strategy: a caller multiplies it by the share the alias
+// table gave the light, so both strategies price one path the same way (L2).
+fn area_pdf(index: u32, point: vec3<f32>, seen_from: vec3<f32>) -> f32 {
+    let area = camera.area_radiance[index].a;
+    if (!(area > 0.0)) {
+        return 0.0;
+    }
+    let to_light = point - seen_from;
+    let distance_squared = dot(to_light, to_light);
+    if (!(distance_squared > 0.0)) {
+        return 0.0;
+    }
+    let direction = to_light * inverseSqrt(distance_squared);
+    let cosine = abs(dot(area_normal(index), direction));
+    if (!(cosine > 1.0e-6)) {
+        return 0.0;
+    }
+    return distance_squared / (area * cosine);
+}
+
+// The distance to the face of rectangle `index` along `ray`, or -1 for no hit or a point outside it.
+fn intersect_area(ray: Ray, index: u32, t_max: f32) -> f32 {
+    let origin = camera.area_origin[index].xyz;
+    let normal = area_normal(index);
+    let denominator = dot(normal, ray.direction);
+    if (abs(denominator) <= 1.0e-9) {
+        return -1.0;
+    }
+    let t = dot(origin - ray.origin, normal) / denominator;
+    if (t <= T_MIN || t >= t_max) {
+        return -1.0;
+    }
+    let point = ray.origin + ray.direction * t;
+    let local = point - origin;
+    let across = camera.area_half_width[index].xyz;
+    let down = camera.area_half_height[index].xyz;
+    let a = dot(local, across) / max(dot(across, across), 1.0e-9);
+    let b = dot(local, down) / max(dot(down, down), 1.0e-9);
+    if (abs(a) > 1.0 || abs(b) > 1.0) {
+        return -1.0;
+    }
+    return t;
+}
+
+// The nearest face of any rectangle along the ray, or -1 for none. The index is the one the alias
+// table and the radiance array share.
+fn trace_area(ray: Ray, t_max: f32) -> i32 {
+    var best = t_max;
+    var found = -1;
+    let count = min(camera.area_count.x, MAX_AREA_LIGHTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let t = intersect_area(ray, index, best);
+        if (t > 0.0) {
+            best = t;
+            found = i32(index);
+        }
+    }
+    return found;
+}
+
+// The direct light one vertex receives from the key light, one point light drawn by emitted power,
+// and one rectangle drawn by emitted power and sampled by solid angle.
 fn direct_light(
     material: Material,
     frame: Frame,
     wo: vec3<f32>,
     position: vec3<f32>,
     u: vec2<f32>,
+    pick: vec2<f32>,
+    across_down: vec2<f32>,
     inside: bool,
 ) -> vec3<f32> {
     var radiance = vec3<f32>(0.0);
@@ -946,36 +1092,79 @@ fn direct_light(
             }
         }
     }
+    // One point light, drawn by emitted power. Every way out of this block is a *continue*, not a
+    // return: the rectangles below are a second strategy and must run whatever the draw landed on.
     let picked = pick_point_light(u);
-    if (picked == NO_LIGHT || picked >= camera.counts.w) {
-        return radiance;
+    if (picked != NO_LIGHT && picked < camera.counts.w) {
+        let share = point_share(picked);
+        let to_light = camera.point_position[picked].xyz - position;
+        let distance_squared = dot(to_light, to_light);
+        if (share > 0.0 && distance_squared > 0.0) {
+            let distance = sqrt(distance_squared);
+            let direction = to_light / distance;
+            let local = to_local(frame, direction);
+            let origin = position + frame.normal * SURFACE_BIAS;
+            if (local.z > 0.0 && !occluded(origin, direction, distance - SURFACE_BIAS)) {
+                let value = bsdf_eval(material, wo, local, inside);
+                // A point light's radiant power is watts: the irradiance it gives a surface is
+                // `power / (4 PI d^2)`, and it is never cut off at a range (ADR 0039).
+                let irradiance = camera.point_colour[picked].a / (4.0 * PI * distance_squared);
+                let mis = balance(1.0 / share, 0.0);
+                radiance = radiance + value * local.z * camera.point_colour[picked].rgb * irradiance * (mis / share);
+            }
+        }
     }
-    let share = point_share(picked);
+    return radiance + area_light(material, frame, wo, position, pick, across_down, inside);
+}
+
+// The light one rectangular emitter gives a vertex: a point on its face, the shadow ray to it, and
+// the two strategies' weights. The face is drawn by solid angle, so `pdf` is a per-steradian density
+// and the surface's own density for the same direction competes with it (L2).
+fn area_light(
+    material: Material,
+    frame: Frame,
+    wo: vec3<f32>,
+    position: vec3<f32>,
+    pick: vec2<f32>,
+    across_down: vec2<f32>,
+    inside: bool,
+) -> vec3<f32> {
+    let picked = pick_area_light(pick);
+    if (picked == NO_LIGHT || picked >= min(camera.area_count.x, MAX_AREA_LIGHTS)) {
+        return vec3<f32>(0.0);
+    }
+    let share = area_share_of(picked);
     if (!(share > 0.0)) {
-        return radiance;
+        return vec3<f32>(0.0);
     }
-    let to_light = camera.point_position[picked].xyz - position;
+    let point = area_point(picked, across_down);
+    let to_light = point - position;
     let distance_squared = dot(to_light, to_light);
-    if (distance_squared <= 0.0) {
-        return radiance;
+    if (!(distance_squared > 0.0)) {
+        return vec3<f32>(0.0);
     }
     let distance = sqrt(distance_squared);
     let direction = to_light / distance;
+    // The face emits from one side: a vertex behind it sees nothing.
+    if (dot(area_normal(picked), direction) >= 0.0) {
+        return vec3<f32>(0.0);
+    }
     let local = to_local(frame, direction);
     if (local.z <= 0.0) {
-        return radiance;
+        return vec3<f32>(0.0);
+    }
+    let density = area_pdf(picked, point, position);
+    if (!(density > 0.0)) {
+        return vec3<f32>(0.0);
     }
     let origin = position + frame.normal * SURFACE_BIAS;
     if (occluded(origin, direction, distance - SURFACE_BIAS)) {
-        return radiance;
+        return vec3<f32>(0.0);
     }
     let value = bsdf_eval(material, wo, local, inside);
-    // A point light's radiant power is watts: the irradiance it gives a surface is
-    // `power / (4 PI d^2)`, and it is never cut off at a range (ADR 0039).
-    let irradiance = camera.point_colour[picked].a / (4.0 * PI * distance_squared);
-    let mis = balance(1.0 / share, 0.0);
-    return radiance
-        + value * local.z * camera.point_colour[picked].rgb * irradiance * (mis / share);
+    let pdf = share * density;
+    let mis = balance(pdf, bsdf_pdf(material, wo, local, inside));
+    return value * local.z * camera.area_radiance[picked].rgb * (mis / pdf);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1062,8 +1251,35 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var extinction = vec3<f32>(0.0);
     var inside = false;
     var bounce = 0u;
+    // The density of the surface sample that produced the current ray, which is what a rectangle the
+    // ray walks into is weighted against: the path could have been found by a light sample too (L2).
+    var previous_pdf = 0.0;
     loop {
         let hit = trace(ray, FAR_AWAY);
+        let face_of_light = trace_area(ray, select(FAR_AWAY, hit.t, hit.t > 0.0));
+        if (face_of_light >= 0) {
+            // A rectangle is opaque and emits from one side: a ray that walks into its back is black,
+            // and one that walks into its front ends the path with the face's radiance.
+            let index = u32(face_of_light);
+            let distance = intersect_area(ray, index, FAR_AWAY);
+            let point = ray.origin + ray.direction * distance;
+            let normal = area_normal(index);
+            let emitting = dot(normal, ray.direction) < 0.0;
+            if (sample == 0u && bounce == 0u) {
+                // The guide faces the ray, exactly as a body's hit normal does, so the filter compares
+                // two normals written the same way.
+                pixels[pixel].albedo = vec4<f32>(camera.area_radiance[index].rgb, distance);
+                pixels[pixel].normal = vec4<f32>(select(-normal, normal, emitting), 0.0);
+            }
+            if (emitting) {
+                // What a light sample would have paid for this path: the face's own density times the
+                // share the alias table gave it, so the two strategies share one path exactly.
+                let light_pdf = area_share_of(index) * area_pdf(index, point, ray.origin);
+                let weight = select(1.0, balance(previous_pdf, light_pdf), bounce > 0u);
+                radiance = radiance + throughput * camera.area_radiance[index].rgb * weight;
+            }
+            break;
+        }
         if (hit.t <= 0.0) {
             // Nothing there: what the ray sees is the environment, which is the studio the workshop
             // does not build.
@@ -1093,11 +1309,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         let u = sample_pair(0u, sample, bounce_seed);
         let pick = sample_1d(2u, sample, bounce_seed);
-        radiance = radiance + throughput * direct_light(material, frame, wo, position, u, inside);
+        // The rectangle's two draws: which window, and where on its face. They are their own pair of
+        // dimensions so the light sample is not correlated with the surface's own (L2).
+        let area_pick = sample_pair(2u, sample, bounce_seed);
+        let area_point_uv = sample_pair(3u, sample, bounce_seed);
+        radiance = radiance + throughput * direct_light(material, frame, wo, position, u, area_pick, area_point_uv, inside);
         let scatter = sample_bsdf(material, wo, u, pick, inside);
         if (!scatter.valid) {
             break;
         }
+        previous_pdf = scatter.pdf;
         throughput = throughput * scatter.weight;
         if (scatter.transmitted) {
             inside = !inside;

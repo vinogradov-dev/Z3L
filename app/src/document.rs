@@ -5689,7 +5689,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use geom::{DMat4, DQuat, DVec3};
-    use model::{CameraProjection, ClassCode, Container, Envelope, LightKind};
+    use model::{CameraProjection, ClassCode, Container, Envelope, LightSpec};
     use scene::Projection;
     use testkit::{millimetres, sample_project};
 
@@ -5846,9 +5846,7 @@ mod tests {
                 rig,
                 "Fill",
                 Placement::new(DVec3::new(0.0, 0.0, 30.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("light");
         Fixture { project, rig, camera, light }

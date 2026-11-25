@@ -222,6 +222,13 @@ fn fs_mesh_translucent(fragment: MeshIn) -> @location(0) vec4<f32> {
     return vec4<f32>(gamma_encode(rgb), min(fragment.color.a, GHOST_ALPHA));
 }
 
+// The face of a source: a window is what gives the light, so no light falls on it. Its colour is drawn
+// as it stands and blended over the model at the opacity it carries (L2).
+@fragment
+fn fs_mesh_source(fragment: MeshIn) -> @location(0) vec4<f32> {
+    return vec4<f32>(gamma_encode(albedo_of(fragment.color, fragment.uv)), fragment.color.a);
+}
+
 struct LineOut {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,

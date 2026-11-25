@@ -31,7 +31,7 @@ use std::sync::OnceLock;
 /// reused with a different seed per bounce and per lobe: the first pair — the one the eye notices,
 /// because it jitters the pixel and the lens — keeps the sequence's stratification, and every deeper
 /// pair is a scramble of the same sequence, which decorrelates it from the first.
-pub const DIMENSIONS: usize = 4;
+pub const DIMENSIONS: usize = 8;
 
 /// How many dimensions one [`sample_2d`] call consumes.
 pub const PAIR: usize = 2;
@@ -40,11 +40,21 @@ pub const PAIR: usize = 2;
 /// order: the degree `s`, the polynomial's inner coefficients `a`, and the first `s` direction
 /// integers.
 ///
-/// Dimension zero is the van der Corput sequence, which is Sobol's first dimension. The four rows are
-/// the first four of the standard table; a fifth dimension would take the next row, `(3, 2, [1, 1, 1])`,
-/// and the generator below already reads any row the same way.
-const TABLE: [(u32, u32, [u32; 3]); DIMENSIONS] =
-    [(0, 0, [0, 0, 0]), (1, 0, [1, 0, 0]), (2, 1, [1, 3, 0]), (3, 1, [1, 3, 1])];
+/// Dimension zero is the van der Corput sequence, which is Sobol's first dimension. The rows are the
+/// first eight of the standard table, and the generator below reads any row the same way, so a ninth
+/// is a row and not a new function.
+const TABLE: [(u32, u32, [u32; 5]); DIMENSIONS] = [
+    (0, 0, [0, 0, 0, 0, 0]),
+    (1, 0, [1, 0, 0, 0, 0]),
+    (2, 1, [1, 3, 0, 0, 0]),
+    (3, 1, [1, 3, 1, 0, 0]),
+    // The pairs a rectangular light spends: one draw picks which window, the next lands on its face
+    // (L2).
+    (3, 2, [1, 1, 1, 0, 0]),
+    (4, 1, [1, 1, 3, 3, 0]),
+    (4, 4, [1, 3, 5, 13, 0]),
+    (5, 2, [1, 1, 5, 5, 7]),
+];
 
 /// The direction numbers of every dimension, each a `u32` per bit of an index.
 ///
@@ -70,7 +80,7 @@ pub fn direction_numbers() -> &'static [[u32; 32]; DIMENSIONS] {
 /// The recurrence is Bratley and Fox's (1988) reading of Sobol's construction: the first `s` words
 /// come from the table, and every later word is the words the polynomial links together, shifted by
 /// the polynomial's degree.
-fn build(s: u32, a: u32, m: [u32; 3]) -> [u32; 32] {
+fn build(s: u32, a: u32, m: [u32; 5]) -> [u32; 32] {
     let mut v = [0u32; 32];
     if s == 0 {
         // The first dimension is the van der Corput sequence: bit `k` of the index becomes bit
@@ -207,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn the_four_direction_tables_are_the_published_ones() {
+    fn the_eight_direction_tables_are_the_published_ones() {
         let table = direction_numbers();
         // Dimension zero is the van der Corput sequence: bit k of the index is bit 31 - k of the word.
         assert_eq!(table[0][0], 0x8000_0000);
@@ -218,6 +228,16 @@ mod tests {
         assert_eq!(table[1][1], 0xc000_0000);
         assert_eq!(table[1][2], 0xa000_0000);
         assert_eq!(table[1][3], 0xf000_0000);
+        // The pair a rectangular light draws with (L2) is the standard table's fifth dimension,
+        // `s = 3, a = 2, m = [1, 1, 1]`: its fourth word is v0 ^ (v0 >> 3) ^ v2.
+        assert_eq!(table[4][0], 0x8000_0000);
+        assert_eq!(table[4][1], 0x4000_0000);
+        assert_eq!(table[4][2], 0x2000_0000);
+        assert_eq!(table[4][3], 0xb000_0000);
+        // And its sixth, `s = 4, a = 1, m = [1, 1, 3, 3]`, whose fifth word is v0 ^ (v0 >> 4) ^ v1.
+        assert_eq!(table[5][0], 0x8000_0000);
+        assert_eq!(table[5][2], 0x6000_0000);
+        assert_eq!(table[5][4], 0xc800_0000);
         // Every word is a direction number: odd initial integers, and each later one below 2^32.
         for row in table.iter() {
             assert_ne!(row[31], 0, "the finest bit of every dimension is set");

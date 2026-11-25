@@ -17,8 +17,8 @@ use std::fs;
 
 use model::{
     CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth, CutoutShape,
-    EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightKind, LightNode,
-    MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
+    EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightNode, LightSize,
+    LightSpec, MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -99,9 +99,22 @@ fn scene() -> SceneFile {
             CameraNode::new(id(6), "Presentation", Placement::IDENTITY, CameraProjection::DEFAULT)
                 .expect("a camera")
                 .into(),
-            LightNode::new(id(7), "Key", Placement::IDENTITY, LightKind::Sun, [1.0, 0.95, 0.9], 2.0)
+            LightNode::new(id(7), "Key", Placement::IDENTITY, LightSpec::sun([1.0, 0.95, 0.9], 2.0))
                 .expect("a light")
                 .into(),
+            // A rectangular emitter is the one light whose wire carries a face (L2, ADR 0247).
+            LightNode::new(
+                id(13),
+                "Window",
+                Placement::IDENTITY,
+                LightSpec::area(
+                    [1.0, 1.0, 0.98],
+                    40.0,
+                    LightSize::new(millimetres(1200), millimetres(1400)).expect("a window"),
+                ),
+            )
+            .expect("a window")
+            .into(),
             drawer.into(),
         ],
     );

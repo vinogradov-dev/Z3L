@@ -1,6 +1,6 @@
 //! Commands that add and edit the camera and light objects the user authors.
 
-use crate::light::{valid_light_color, valid_light_intensity};
+use crate::light::{valid_light_color, valid_light_intensity, valid_light_size};
 use crate::tree::{find_container_mut, find_node_mut};
 use crate::*;
 
@@ -35,16 +35,14 @@ impl Project {
         parent: Id,
         name: impl Into<String>,
         placement: Placement,
-        kind: LightKind,
-        color: [f32; 3],
-        intensity: f32,
+        spec: LightSpec,
     ) -> Result<Id, ProjectError> {
         if !self.is_container(parent) {
             return Err(ProjectError::ContainerNotFound { id: parent });
         }
         let next_revision = self.next_revision()?;
         let id = self.allocate_id()?;
-        let light = LightNode::new(id, name, placement, kind, color, intensity)?;
+        let light = LightNode::new(id, name, placement, spec)?;
         let Some((_depth, children)) = find_container_mut(&mut self.root, parent, 1) else {
             return Err(ProjectError::ContainerNotFound { id: parent });
         };
@@ -70,28 +68,25 @@ impl Project {
         Ok(next_revision)
     }
 
-    /// Replaces a light's kind, colour and intensity and bumps the revision once.
+    /// Replaces a light's kind, colour, intensity and size, and bumps the revision once.
     ///
     /// The values are validated before anything changes; an id that is not a light is
     /// [`ProjectError::LightNotFound`].
-    pub fn set_light_params(
-        &mut self,
-        id: Id,
-        kind: LightKind,
-        color: [f32; 3],
-        intensity: f32,
-    ) -> Result<Revision, ProjectError> {
-        if !valid_light_color(color) {
+    pub fn set_light_params(&mut self, id: Id, spec: LightSpec) -> Result<Revision, ProjectError> {
+        if !valid_light_color(spec.color) {
             return Err(LightError::InvalidColor.into());
         }
-        if !valid_light_intensity(intensity) {
+        if !valid_light_intensity(spec.intensity) {
             return Err(LightError::InvalidIntensity.into());
+        }
+        if !valid_light_size(spec.size) {
+            return Err(LightError::InvalidSize.into());
         }
         let next_revision = self.next_revision()?;
         let Some(light) = find_node_mut(&mut self.root, id).and_then(Node::as_light_mut) else {
             return Err(ProjectError::LightNotFound { id });
         };
-        light.set_params(kind, color, intensity)?;
+        light.set_params(spec)?;
         self.revision = next_revision;
         Ok(next_revision)
     }

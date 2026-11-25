@@ -367,6 +367,10 @@ impl ShadowMap {
                 pass.set_bind_group(0, camera.0, &[camera.1]);
                 pass.set_bind_group(1, &self.pass_group, &[]);
                 for drawn in drawables {
+                    // A light's own face is a source, not geometry: it casts nothing (L2).
+                    if drawn.source {
+                        continue;
+                    }
                     pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
                     pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);

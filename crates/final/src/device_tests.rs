@@ -880,3 +880,132 @@ fn a_converged_pixel_stops_at_the_floor_and_the_picture_is_still_the_room() {
     let filtered = denoised.get(16 * 32 + 16).copied().expect("the centre pixel");
     assert!((filtered[0] - centre[0]).abs() < 1.0e-4, "a converged pixel is not moved: {centre:?} became {filtered:?}");
 }
+
+/// The irradiance a Lambertian rectangle gives a point on a parallel surface, in `W/m^2` of a unit
+/// radiance source.
+///
+/// The integrand is the one the shader samples — `cos_emitter * cos_receiver / r^2` over the face —
+/// integrated here by a midpoint rule fine enough that the number is the formula and not a guess.
+fn irradiance_of_parallel_rectangle(centre: DVec3, half: (f64, f64), point: DVec3) -> f64 {
+    const STEPS: usize = 120;
+    let (step_x, step_y) = (half.0 * 2.0 / STEPS as f64, half.1 * 2.0 / STEPS as f64);
+    let mut total = 0.0;
+    for row in 0..STEPS {
+        let y = -half.1 + (row as f64 + 0.5) * step_y;
+        for column in 0..STEPS {
+            let x = -half.0 + (column as f64 + 0.5) * step_x;
+            let to_light = centre + DVec3::new(x, y, 0.0) - point;
+            let squared = to_light.length_squared();
+            // Both cosines are `dz / r` for two parallel faces, so the integrand is `dz^2 / r^4`.
+            total += to_light.z * to_light.z / (squared * squared);
+        }
+    }
+    total * step_x * step_y
+}
+
+/// The world point a pixel's centre ray meets the `z = 0` plate, or `None` for a ray that misses it.
+fn plate_point_of(camera: Camera, request: Request, x: u32, y: u32) -> Option<DVec3> {
+    let aspect = crate::view::aspect(request.width(), request.height())?;
+    let ndc_x = 2.0 * (f64::from(x) + 0.5) / f64::from(request.width()) - 1.0;
+    let ndc_y = 1.0 - 2.0 * (f64::from(y) + 0.5) / f64::from(request.height());
+    let ray = camera.ray_ndc(ndc_x, ndc_y, aspect);
+    let (origin, direction) = (ray.origin(), ray.direction());
+    if direction.z.abs() < 1.0e-9 {
+        return None;
+    }
+    let t = -origin.z / direction.z;
+    (t > 0.0).then(|| origin + direction * t)
+}
+
+#[test]
+fn a_window_lights_the_plate_under_it_by_the_irradiance_a_rectangle_gives() {
+    // The clause about a soft source: a diffuse plate under a one-metre window must read the
+    // irradiance the rectangle gives it, which this test computes twice — once by the tracer sampling
+    // the face by solid angle, and once by integrating the same cosine law here, pixel by pixel.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to hold a window over a plate");
+        return;
+    };
+    let half = 100.0;
+    let distance = 1_000.0;
+    let power = 100.0;
+    let mut frame = SceneFrame::default();
+    let white = [0.8, 0.8, 0.8, 1.0];
+    frame.push(Drawable::new(id(1), plate(-2_000.0, -2_000.0, 2_000.0, 2_000.0, 0.0), DMat4::IDENTITY, white));
+    // No key light and no studio: the window is the only light in the picture.
+    frame.lighting.key_color = [0.0; 3];
+    frame.lighting.environment = [0.0; 3];
+    let window = scene::AreaLight {
+        origin: DVec3::new(0.0, 0.0, distance),
+        half_width: DVec3::new(half, 0.0, 0.0),
+        half_height: DVec3::new(0.0, half, 0.0),
+        color: [1.0; 3],
+        power: power as f32,
+    };
+    frame.lighting.areas.push(window);
+    // A second window of a different power and size beside the first, so the draw between two faces
+    // and the power-weighted share are exercised on the same plate: MIS is only unbiased if the
+    // strategy's own share is in both densities (L2).
+    let narrow = scene::AreaLight {
+        origin: DVec3::new(900.0, -400.0, 700.0),
+        half_width: DVec3::new(300.0, 0.0, 0.0),
+        half_height: DVec3::new(0.0, 450.0, 0.0),
+        color: [0.9, 0.95, 1.0],
+        power: 60.0,
+    };
+    frame.lighting.areas.push(narrow);
+    // A camera under the window's edge, looking at the plate: its rays meet the floor, never the pane.
+    let eye = DVec3::new(0.0, -3_000.0, 400.0);
+    let forward = (-eye).try_normalize().unwrap_or(DVec3::Z);
+    let right = forward.cross(DVec3::Z).try_normalize().unwrap_or(DVec3::X);
+    let up = right.cross(forward).try_normalize().unwrap_or(DVec3::Z);
+    let camera = Camera::default().looked_from(eye, right, up, forward);
+
+    let request = Request::new(48, 48, 512).expect("a small render");
+    let linear = linear_of(&trace_linear(&device, &queue, &frame, camera, request));
+
+    // A patch of pixels, compared with the same patch of the analytic profile: one pixel's estimate
+    // is a stopping rule's answer (the pixel retires when it looks converged), while a patch is the
+    // estimator's expectation.
+    assert!(
+        (f64::from(window.radiance()[0]) - power / (std::f64::consts::PI * (2.0 * half / 1_000.0).powi(2))).abs()
+            < 1.0e-2,
+        "the frame's watts became radiance"
+    );
+    let mut measured = 0.0;
+    let mut expected = 0.0;
+    let mut counted = 0.0;
+    for y in 22..27u32 {
+        for x in 22..27u32 {
+            let Some(point) = plate_point_of(camera, request, x, y) else {
+                continue;
+            };
+            let value = linear.get((y * request.width() + x) as usize).and_then(|p| p.first()).copied();
+            let value = f64::from(value.expect("the pixel is inside the image"));
+            let irradiance = f64::from(window.radiance()[0])
+                * irradiance_of_parallel_rectangle(window.origin, (half, half), point)
+                + f64::from(narrow.radiance()[0])
+                    * irradiance_of_parallel_rectangle(narrow.origin, (300.0, 450.0), point);
+            measured += value;
+            expected += 0.8 / std::f64::consts::PI * irradiance;
+            counted += 1.0;
+        }
+    }
+    assert!(counted >= 20.0, "the patch is on the plate");
+    let (measured, expected) = (measured / counted, expected / counted);
+    let relative = (measured - expected).abs() / expected;
+    assert!(relative < 0.02, "the plate's patch reads {measured}, the cosine law says {expected}: {relative} off");
+
+    // A window that faces away gives the plate nothing, and neither does one of no power: the face
+    // emits from one side only, and a dark rectangle is a dark rectangle.
+    let mut turned = frame.clone();
+    // The same face the other way round: the height edge turned over is what makes it emit upwards.
+    turned.lighting.areas = vec![scene::AreaLight { half_height: DVec3::new(0.0, -half, 0.0), ..window }];
+    let dark = linear_of(&trace_linear(&device, &queue, &turned, camera, Request::new(24, 24, 16).expect("small")));
+    let biggest = dark.iter().flatten().fold(0.0f64, |a, b| a.max(f64::from(*b)));
+    assert!(biggest <= 1.0e-6, "a window seen from behind lights nothing: {biggest}");
+    let mut unlit = frame.clone();
+    unlit.lighting.areas = vec![scene::AreaLight { power: 0.0, ..window }];
+    let unlit = linear_of(&trace_linear(&device, &queue, &unlit, camera, Request::new(24, 24, 16).expect("small")));
+    assert!(unlit.iter().flatten().all(|channel| *channel <= 0.0), "a window of no power lights nothing");
+}

@@ -18,7 +18,7 @@ use engine::{
     NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter, NodeUngroup,
     PanelCreate, SceneActiveCameraSet, Session,
 };
-use model::{CameraProjection, Id as NodeId, LightKind, Placement};
+use model::{CameraProjection, Id as NodeId, LightKind, LightSize, Placement};
 use serde_json::Value;
 use text::{Counted, Lang, Message};
 
@@ -504,6 +504,7 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
             kind: LightKind::Sun,
             color: [1.0, 0.97, 0.92],
             intensity: 1.0,
+            size: LightSize::DEFAULT,
         }),
         _ => Err(Message::PaletteNeedsSelection.text(lang).to_owned()),
     }

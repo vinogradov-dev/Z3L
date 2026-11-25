@@ -41,8 +41,8 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use geom::{Aabb, DMat4, DVec3, MeshData};
 use scene::{
-    Camera, ContactShadows, Decor, DecorId, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline, ProductEnvelope,
-    SceneFrame, ShadingStyle,
+    Camera, ContactShadows, Decor, DecorId, FaceShading, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline,
+    ProductEnvelope, SceneFrame, ShadingStyle,
 };
 use thiserror::Error;
 use wgpu::util::DeviceExt as _;
@@ -50,12 +50,13 @@ use wgpu::util::DeviceExt as _;
 use self::cache::{EdgeKey, FaceKey, Rebuilt, SlotCache};
 use self::geometry::{
     edge_ink, edge_vertices, faces_centre, grid_vertices, polyline_vertices, product_envelope_vertices, sanitize_color,
-    sort_back_to_front, stencil_slot, world_vertices,
+    sort_back_to_front, sort_subset_back_to_front, stencil_slot, world_vertices,
 };
 use self::gpu::{DecorGroup, GpuEdges, GpuLineList, GpuMesh, clamp_size, line_list};
 use self::ground::{Ground, GroundKey, PlateKey};
 use self::pipelines::{
-    create_line_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state, pipeline_layout,
+    create_line_pipeline, create_source_pipeline, create_triangle_pipeline, edge_depth_state, line_depth_state,
+    pipeline_layout,
 };
 use self::shadow::{LightSpace, ShadowKey, ShadowMap, scene_box};
 
@@ -318,6 +319,23 @@ impl ViewSpec {
     }
 }
 
+/// Splits the visible drawables into the bodies the shaded passes draw and the sources, which the
+/// viewport draws once, unlit and blended (L2).
+///
+/// It runs per view because the culling list is per view, and it is the one place a pass asks what it
+/// owns: a source that leaked into the shaded list would be drawn twice and would cast a shadow.
+fn partition_visible(visible: &[usize], drawables: &[Drawn], solid: &mut Vec<usize>, sources: &mut Vec<usize>) {
+    solid.clear();
+    sources.clear();
+    for &index in visible {
+        match drawables.get(index) {
+            Some(drawn) if drawn.source => sources.push(index),
+            Some(_) => solid.push(index),
+            None => {}
+        }
+    }
+}
+
 /// The product envelopes and the two inks their dashes are drawn with.
 type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
 
@@ -331,6 +349,9 @@ type EnvelopeInput = (Vec<ProductEnvelope>, [f32; 4], [f32; 4]);
 pub(crate) struct Drawn {
     pub(crate) faces: Arc<GpuMesh>,
     edges: Option<Arc<GpuEdges>>,
+    /// Whether the faces are a source rather than a surface: a light's pane is drawn unlit, blended,
+    /// in its own pass and casts no shadow (L2).
+    source: bool,
     /// The picture the face pass binds for this drawable: its own decor, or the white texel.
     decor: Arc<DecorGroup>,
     pub(crate) stencil_reference: u32,
@@ -345,6 +366,8 @@ pub(crate) struct Drawn {
 pub struct ViewportRenderer {
     mesh_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
+    /// A light's own face: unlit, blended, no depth write (L2).
+    source_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     edge_pipeline: wgpu::RenderPipeline,
     hidden_edge_pipeline: wgpu::RenderPipeline,
@@ -365,6 +388,11 @@ pub struct ViewportRenderer {
     /// Every pass of one view reads it — faces, the translucent order and both edge passes — so a
     /// culled drawable costs nothing at all instead of two buffer binds and a draw call.
     visible: Vec<usize>,
+    /// The visible drawables that are bodies, in frame order: the shaded passes read this list and
+    /// never a source, so a window's pane is drawn once, unlit, instead of twice (L2).
+    solid: Vec<usize>,
+    /// The visible drawables that are sources: a light's own face, drawn blended and back to front.
+    sources: Vec<usize>,
     /// Face buffers kept between uploads, keyed by the mesh, transform, colour and decor they hold.
     faces: SlotCache<FaceKey, GpuMesh>,
     /// The layout the face pipelines bind their decor in, and the rule every decor is read with.
@@ -472,6 +500,7 @@ impl ViewportRenderer {
             "fs_mesh_translucent",
             ShadingStyle::Translucent,
         );
+        let source_pipeline = create_source_pipeline(device, &mesh_layout, &shader, "Z3L source face pipeline");
         let line_pipeline =
             create_line_pipeline(device, &camera_only, &shader, "Z3L line pipeline", line_depth_state());
         let edge_pipeline =
@@ -515,6 +544,7 @@ impl ViewportRenderer {
         Self {
             mesh_pipeline,
             translucent_pipeline,
+            source_pipeline,
             line_pipeline,
             edge_pipeline,
             hidden_edge_pipeline,
@@ -527,6 +557,8 @@ impl ViewportRenderer {
             centres: Vec::new(),
             draw_order: Vec::new(),
             visible: Vec::new(),
+            solid: Vec::new(),
+            sources: Vec::new(),
             faces: SlotCache::new(),
             decor_layout: decor_layout.clone(),
             decor_sampler,
@@ -723,6 +755,7 @@ impl ViewportRenderer {
             drawables.push(Drawn {
                 faces,
                 edges,
+                source: drawable.faces == FaceShading::Source,
                 decor,
                 stencil_reference: stencil_slot(index),
                 bounds: drawable.world_bounds(),
@@ -931,6 +964,7 @@ impl ViewportRenderer {
             let aspect = f64::from(region.width.max(1)) / f64::from(region.height.max(1));
             let frustum = Frustum::of_camera(camera, aspect);
             frustum.visible(self.drawables.iter().map(|drawn| drawn.bounds), &mut self.visible);
+            partition_visible(&self.visible, &self.drawables, &mut self.solid, &mut self.sources);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Z3L view pass"),
@@ -945,9 +979,9 @@ impl ViewportRenderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[offset]);
             pass.set_bind_group(1, self.shadow.group(), &[]);
 
-            if passes.opaque_faces && !self.visible.is_empty() {
+            if passes.opaque_faces && !self.solid.is_empty() {
                 pass.set_pipeline(&self.mesh_pipeline);
-                for &index in &self.visible {
+                for &index in &self.solid {
                     let Some(drawn) = self.drawables.get(index) else {
                         continue;
                     };
@@ -1000,11 +1034,31 @@ impl ViewportRenderer {
             // Blended faces go after the opaque scene and back to front, so a nearer panel tints a
             // farther one instead of hiding it. The order is per view: two views see the same
             // centre from opposite sides, and only the drawables the view kept are ordered.
-            if passes.translucent_faces && !self.visible.is_empty() {
+            if passes.translucent_faces && !self.solid.is_empty() {
                 self.draw_order.clear();
                 self.draw_order.extend_from_slice(&self.visible);
                 sort_back_to_front(&self.centres, camera.eye(), &mut self.draw_order);
                 pass.set_pipeline(&self.translucent_pipeline);
+                for &index in &self.draw_order {
+                    let Some(drawn) = self.drawables.get(index) else {
+                        continue;
+                    };
+                    pass.set_bind_group(2, drawn.decor.group(), &[]);
+                    pass.set_vertex_buffer(0, drawn.faces.vertex_buffer.slice(..));
+                    pass.set_index_buffer(drawn.faces.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..drawn.faces.index_count, 0, 0..1);
+                }
+            }
+
+            // A light's own face goes after the scene it lights and before the lines, so its outline
+            // sits on it: unlit, blended, back to front, and out of every pass that shades or casts a
+            // shadow. It follows the styles that draw faces, because a wireframe draws no face at all
+            // and a window there is its outline (L2).
+            if (passes.opaque_faces || passes.translucent_faces) && !self.sources.is_empty() {
+                self.draw_order.clear();
+                self.draw_order.extend_from_slice(&self.sources);
+                sort_subset_back_to_front(&self.centres, camera.eye(), &mut self.draw_order);
+                pass.set_pipeline(&self.source_pipeline);
                 for &index in &self.draw_order {
                     let Some(drawn) = self.drawables.get(index) else {
                         continue;
@@ -1025,7 +1079,7 @@ impl ViewportRenderer {
             // showing through a neighbour.
             if passes.visible_edges {
                 pass.set_pipeline(&self.edge_pipeline);
-                for &index in &self.visible {
+                for &index in &self.solid {
                     let Some(drawn) = self.drawables.get(index) else {
                         continue;
                     };
@@ -1040,7 +1094,7 @@ impl ViewportRenderer {
                 }
             } else if passes.through_edges {
                 pass.set_pipeline(&self.hidden_edge_pipeline);
-                for &index in &self.visible {
+                for &index in &self.solid {
                     let Some(drawn) = self.drawables.get(index) else {
                         continue;
                     };
@@ -1767,6 +1821,34 @@ mod tests {
         let off = ContactShadows { visible: false, ..workspace };
         assert_eq!(shadow_uniform(&on, DVec3::Z)[3], 0.55, "the workspace strength reaches the plate");
         assert_eq!(shadow_uniform(&off, DVec3::Z)[3], 0.0, "the other view keeps its own floor");
+    }
+
+    #[test]
+    fn a_light_s_pane_is_a_source_the_shaded_passes_never_draw() {
+        // A window's face is drawn unlit, blended, in a pass of its own, and every pass that shades a
+        // body, stamps the stencil or casts a shadow skips it (L2): the source is drawn once.
+        let Some((device, queue)) = noop_device() else {
+            println!("this build has no noop backend to upload geometry with");
+            return;
+        };
+        let mesh = Arc::new(triangle());
+        let mut frame = SceneFrame::default();
+        frame.push(Drawable::new(Id::new(1).expect("id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4]));
+        frame.push(Drawable::new(Id::new(2).expect("id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4]).as_source());
+        assert_eq!(frame.drawables[1].faces, FaceShading::Source, "the frame keeps the flag");
+
+        let mut renderer = ViewportRenderer::new(&device, 320, 240);
+        renderer.upload(&device, &queue, &frame).expect("the frame uploads");
+        assert!(!renderer.drawables[0].source);
+        assert!(renderer.drawables[1].source, "the pane is the one drawable that is a source");
+
+        // Both drawables are in the view, and the passes split them: the body is shaded, the pane is
+        // not, so no pass draws the source twice.
+        let mut solid = Vec::new();
+        let mut sources = Vec::new();
+        partition_visible(&[0, 1], &renderer.drawables, &mut solid, &mut sources);
+        assert_eq!(solid, vec![0], "the shaded passes own the body alone");
+        assert_eq!(sources, vec![1], "the source pass owns the pane alone");
     }
 
     #[test]

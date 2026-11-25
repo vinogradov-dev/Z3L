@@ -510,7 +510,7 @@ fn first_panel_in(children: &[Node]) -> Option<Id> {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use model::{CameraProjection, Id, LightKind, Node, Panel, PanelNominalSize, Placement};
+    use model::{CameraProjection, Id, LightSpec, Node, Panel, PanelNominalSize, Placement};
     use testkit::{sample_catalog, sample_project};
 
     use super::*;
@@ -837,7 +837,7 @@ mod tests {
         let root = project.root().id();
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("camera");
-        let light = project.add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("light");
+        let light = project.add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("light");
 
         let mut selection = Selection::default();
         selection.replace_all(vec![camera, light]);

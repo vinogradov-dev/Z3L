@@ -20,8 +20,8 @@ use engine::product_cmds::{PRODUCT_CREATE_ID, ProductCreate};
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID};
 use engine::{AssemblyCreate, CameraCreate, EditScope, LightCreate, ObjectPrimitiveCreate, PanelCreate, Session};
 use model::{
-    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, PanelNominalSize, PanelOutline, Placement,
-    PrimitiveShape, Project,
+    CameraProjection, ClassCode, EdgeBevel, Envelope, Id, ItemId, LightKind, LightSize, PanelNominalSize, PanelOutline,
+    Placement, PrimitiveShape, Project,
 };
 use text::{Lang, Message};
 use units::Length;
@@ -370,6 +370,7 @@ impl Editor {
             kind: LightKind::Sun,
             color: [1.0, 0.97, 0.92],
             intensity: 1.0,
+            size: LightSize::DEFAULT,
         })?;
         let outcome = dispatch(session, LIGHT_CREATE_ID, &params)?;
         self.select_created(outcome.created_id());

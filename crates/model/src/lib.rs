@@ -62,7 +62,7 @@ pub use contour_frames::{ArcFrame, CircleFrame, PolygonFrame, RectangleFrame};
 pub use footprint::{Footprint, FootprintError};
 pub use frame::{Anchored, FrameAnchor, FrameError, Rebased, rebase_origin_at};
 pub use ids::{ContourSegmentId, EdgeId, Id, ItemId, ItemIdError, MachiningId, MaterialRef, Revision, VertexId};
-pub use light::{LightError, LightKind, LightNode};
+pub use light::{LightError, LightKind, LightNode, LightSize, LightSpec};
 pub use mesh::{MAX_FACE_VERTICES, MAX_MESH_FACES, MAX_MESH_VERTICES, Mesh, MeshError};
 pub use node::Node;
 pub use object::{
