@@ -71,6 +71,7 @@ const HOST_OWNERS: &[Owner] = &[
     Owner { path: "crates/ui/src/class_picker.rs", owns: "the class picker popup" },
     Owner { path: "crates/ui/src/draw_menu.rs", owns: "the running polyline's segment menu" },
     Owner { path: "crates/ui/src/home.rs", owns: "the Home start view" },
+    Owner { path: "crates/ui/src/material_window.rs", owns: "the material window" },
     Owner { path: "crates/ui/src/node_actions.rs", owns: "the node context menu over the scene" },
     Owner { path: "crates/ui/src/palette.rs", owns: "the command palette" },
     Owner { path: "crates/ui/src/point_fields.rs", owns: "the number of the point being placed" },

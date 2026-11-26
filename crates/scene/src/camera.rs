@@ -66,6 +66,12 @@ pub const MIN_DISTANCE_MM: f64 = 10.0;
 /// Farthest camera distance from its target, in millimetres.
 pub const MAX_DISTANCE_MM: f64 = 1.0e6;
 
+/// The distance a lens focuses at until a render names its own, in millimetres.
+///
+/// A metre and a fifth is the default camera's own distance, so a lens switched on over an untouched
+/// view focuses on the point the viewport orbits: the frame a person is looking at (Y5).
+pub const DEFAULT_FOCUS_MM: f64 = 1200.0;
+
 /// How far past a distance limit a computed distance may sit and still count as the limit.
 ///
 /// A visible height is a multiplication away from the distance that shows it, so a view wound out to
@@ -85,7 +91,16 @@ pub enum CameraError {
         /// The rejected distance.
         distance: f64,
     },
+    /// A lens radius or a focus distance is outside the supported range.
+    #[error("a lens needs a radius of 0 to {MAX_APERTURE_MM} mm and a focus of 1 to {MAX_DISTANCE_MM} mm")]
+    InvalidLens,
 }
+
+/// The largest lens radius a camera accepts, in millimetres.
+///
+/// Half a metre is a lens no camera has and a number a mistyped field can reach; past it the blur is
+/// a smear of the whole frame and the answer is the sentence, not the picture.
+pub const MAX_APERTURE_MM: f64 = 500.0;
 
 /// How a camera projects the scene onto the viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -175,6 +190,10 @@ pub struct Camera {
     /// Far plane in millimetres along the forward axis, [`MAX_DISTANCE_MM`] by default.
     pub(crate) far: f64,
     fixed: Option<FixedBasis>,
+    /// Lens radius in millimetres, zero for a pinhole.
+    aperture: f64,
+    /// Distance from the eye to the plane the lens focuses on, in millimetres.
+    focus: f64,
 }
 
 impl Default for Camera {
@@ -189,6 +208,11 @@ impl Default for Camera {
             near: 1.0,
             far: MAX_DISTANCE_MM,
             fixed: None,
+            // The default camera is a pinhole: a viewport has no film, and a sharp picture is what a
+            // catalogue image usually wants. A lens is the camera's own and the document's — this is
+            // the frame's copy of it (Y11, ADR 0249).
+            aperture: 0.0,
+            focus: DEFAULT_FOCUS_MM,
         }
     }
 }
@@ -258,6 +282,40 @@ impl Camera {
         }
         self.fixed = Some(FixedBasis { eye, right, up, forward });
         self
+    }
+
+    /// Gives the camera a lens: a radius in millimetres and the distance it focuses at, both along
+    /// the view's forward axis.
+    ///
+    /// A radius of zero is a pinhole, which is what every camera was before this existed. The document
+    /// keeps the lens on its camera node ([`model::CameraLens`]) and the frame carries it here, so the
+    /// tracer reads the picture the scene was authored with (Y11, ADR 0249).
+    /// A radius or a focus outside the accepted range is [`CameraError::InvalidLens`].
+    pub fn with_lens(mut self, aperture: f64, focus: f64) -> Result<Self, CameraError> {
+        if !aperture.is_finite() || !(0.0..=MAX_APERTURE_MM).contains(&aperture) {
+            return Err(CameraError::InvalidLens);
+        }
+        if !focus.is_finite() || !(1.0..=MAX_DISTANCE_MM).contains(&focus) {
+            return Err(CameraError::InvalidLens);
+        }
+        self.aperture = aperture;
+        self.focus = focus;
+        Ok(self)
+    }
+
+    /// The lens radius in millimetres, zero for a pinhole.
+    pub const fn aperture(&self) -> f64 {
+        self.aperture
+    }
+
+    /// The distance from the eye to the plane the lens focuses on, in millimetres.
+    pub const fn focus(&self) -> f64 {
+        self.focus
+    }
+
+    /// Whether the camera is a pinhole.
+    pub const fn is_pinhole(&self) -> bool {
+        self.aperture <= 0.0
     }
 
     /// Replaces the projection when it is valid, keeping the current one otherwise.

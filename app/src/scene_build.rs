@@ -10,9 +10,13 @@ use engine::Session;
 use geom::{Aabb, DMat4, DVec2, DVec3};
 use kernel::TessOptions;
 use kernel_truck::TruckKernel;
+use materials::{Library, Material, MaterialId, Store};
 use mesh::{EvaluationCache, PanelEval};
+#[cfg(test)]
+use model::LightSpec;
 use model::{
-    CameraProjection, Container, Envelope, Id, LightKind, Node, NodeQuery, Panel, Placement, Project, StructuralKind,
+    CameraProjection, Container, Envelope, Id, LightKind, MaterialRef, Node, NodeQuery, Panel, Placement, Project,
+    StructuralKind,
 };
 // The demonstration fixture is the only caller of these: a test build evaluates the same document
 // a maker builds, and nothing else in the shell creates cutouts, bands or a named panel size.
@@ -22,9 +26,10 @@ use geom::{DQuat, MeshData};
 use model::ItemId;
 #[cfg(test)]
 use model::{CutoutDepth, CutoutShape, EdgeBanding, EdgeId, FaceSide, PanelNominalSize, PanelRect};
+use scene::decor::{Decors, Picture};
 use scene::{
-    Camera, DEFAULT_FOV_Y, Drawable, Lighting, MAX_POINT_LIGHTS, PointLight, Polyline, ProductEnvelope,
-    ProductEnvelopeState, Projection, SceneFrame,
+    AreaLight, Camera, DEFAULT_FOV_Y, Decor, DecorImage, Drawable, Lighting, MAX_AREA_LIGHTS, MAX_POINT_LIGHTS,
+    PointLight, Polyline, ProductEnvelope, ProductEnvelopeState, Projection, SceneFrame, Surface, Turns,
 };
 #[cfg(test)]
 use std::f64::consts::FRAC_PI_2;
@@ -39,6 +44,93 @@ pub(crate) const PANEL_COLORS: [[f32; 4]; 3] =
 
 /// A common debug colour for every band on a panel.
 pub(crate) const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
+
+/// The colour and surface one record of the render's material library names.
+///
+/// A record's base carries every channel the frame needs — the albedo the decor multiplies, the
+/// roughness and metallic the tracer shades by, the index, the transmission and the absorption
+/// (ADR 0243) — and its coat, when it has one, is the clear layer over that base with its own gloss
+/// and index. A record with no base is a finish alone (a lacquer), which paints nothing: a lacquer
+/// over a veneer is one record the catalogue composes (O18), and a coat on its own has no base to be
+/// seen through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Paint {
+    /// Linear RGB colour and opacity.
+    pub color: [f32; 4],
+    /// What the surface is made of.
+    pub surface: Surface,
+}
+
+/// Where a frame build reads its materials: the workshop's library, the folder its pictures live
+/// in and the pictures already decoded for this frame.
+///
+/// The frame never reads the catalogue: a node names a [`MaterialRef`] and this value resolves it
+/// against the library. The shell owns one of these per tab, so a board's picture is decoded once
+/// and every panel cut from the same record shares it ([`scene::Decors`]).
+pub struct FrameMaterials<'a> {
+    library: &'a Library,
+    pictures: Option<&'a Store>,
+    decors: &'a mut Decors,
+}
+
+impl<'a> FrameMaterials<'a> {
+    /// Builds the source a frame reads; `pictures` is `None` where the workshop has no folder, and
+    /// then every surface keeps its flat colour.
+    pub fn new(library: &'a Library, pictures: Option<&'a Store>, decors: &'a mut Decors) -> Self {
+        Self { library, pictures, decors }
+    }
+
+    /// The record `reference` names, or `None` when the library does not hold it.
+    fn record(&self, reference: MaterialRef) -> Option<&'a Material> {
+        self.library.get(MaterialId::new(reference.get())?)
+    }
+
+    /// The paint a node's material names, or `None` when the node names no material, the library
+    /// does not hold it, or the record has no base to paint with.
+    fn paint_of(&self, reference: Option<MaterialRef>) -> Option<Paint> {
+        let record = self.record(reference?)?;
+        let base = record.base()?;
+        let [red, green, blue] = base.colour();
+        // The gloss a record stores becomes the width the tracer reads here, once (ADR 0243).
+        let coat = record
+            .coat()
+            .map_or(scene::Coat::NONE, |coat| scene::Coat::glossed(coat.weight(), coat.gloss(), coat.ior()));
+        Some(Paint {
+            color: [red, green, blue, 1.0],
+            surface: Surface {
+                roughness: base.roughness(),
+                metallic: base.metallic(),
+                ior: base.ior(),
+                transmission: base.transmission(),
+                absorption: base.absorption(),
+                coat,
+            },
+        })
+    }
+
+    /// The decor a node's material names, decoded once per library revision.
+    ///
+    /// `None` covers every quiet answer — no material, no record, a record with no picture, and a
+    /// frame built with no folder — and each of them draws the record's flat colour. A picture that
+    /// is named and cannot be read is a refusal naming the record and the file, reported once and
+    /// never a board that draws black (Y8).
+    fn decor_of(&mut self, reference: Option<MaterialRef>) -> Option<Decor> {
+        let reference = reference?;
+        let record = self.record(reference)?;
+        let decor = record.base()?.decor()?;
+        let pictures = self.pictures?;
+        let picture = match pictures.picture(record) {
+            Ok(picture) => picture?,
+            Err(refusal) => {
+                log::warn!("the decor of material {reference} could not be read: {refusal}");
+                return None;
+            }
+        };
+        let image = DecorImage::from_rgba8(picture.width(), picture.height(), picture.rgba8()).ok()?;
+        let frame_picture = Picture::new(Arc::new(image), decor.covers(), Turns::new(decor.turns().get()));
+        self.decors.decor(u64::from(reference.get()), || Some(frame_picture)).cloned()
+    }
+}
 
 /// The default surface colour of a geometry object; v1 has no per-object material.
 const OBJECT_COLOR: [f32; 4] = [0.58, 0.60, 0.64, 1.0];
@@ -321,10 +413,30 @@ pub fn evaluate(
     flags: &ViewFlags,
     open_product: Option<Id>,
 ) -> Result<EvaluatedScene, String> {
+    // A caller with no folder reads no picture, so the flat colour of every record is still right:
+    // the library is the session's and the decors a frame decodes belong to whoever builds it.
+    let mut decors = Decors::new();
+    let materials = FrameMaterials::new(session.materials(), None, &mut decors);
+    evaluate_with(cache, kernel, session, flags, open_product, materials)
+}
+
+/// Evaluates the scene with the workshop's pictures, so a board wears its decor (Y7).
+///
+/// This is [`evaluate`] with `materials` in hand: the shell passes the folder a record's picture
+/// lives in and the cache the frame keeps it under. Everything else — the tree walk, the cache, the
+/// bounds — is the same one path.
+pub fn evaluate_with(
+    cache: &mut EvaluationCache,
+    kernel: &mut TruckKernel,
+    session: &Session,
+    flags: &ViewFlags,
+    open_product: Option<Id>,
+    materials: FrameMaterials<'_>,
+) -> Result<EvaluatedScene, String> {
     let project = session.project();
     let root_world = Placement::compose(Placement::IDENTITY, project.root().placement()).map_err(describe)?;
     cache.start();
-    let mut evaluation = Evaluation::new(cache, kernel, session, flags, open_product);
+    let mut evaluation = Evaluation::new(cache, kernel, session, flags, open_product, materials);
     let mut scene_bounds = Bounds::empty();
     for child in project.root().children() {
         scene_bounds.include_bounds(evaluation.collect(std::slice::from_ref(child), root_world));
@@ -335,6 +447,7 @@ pub fn evaluate(
     if let Some(lighting) = authored_lighting_with(project, &[], flags) {
         frame.lighting = lighting;
     }
+    add_light_panes(&mut frame, project, flags);
     Ok(EvaluatedScene { frame, bounds: scene_bounds, levels, failures })
 }
 
@@ -394,9 +507,84 @@ pub fn authored_lighting_with(project: &Project, previewed: &[(Id, Placement)], 
                 }
                 any_authored = true;
             }
+            LightKind::Area => {
+                // The face the final render samples: watts over its own area, one side, along the
+                // light's local -Z (ADR 0247).
+                let size = light.size();
+                let rotation = world.rotation();
+                let (half_width, half_height) =
+                    (size.width().millimetres_f64() * 0.5, size.height().millimetres_f64() * 0.5);
+                if lighting.areas.len() < MAX_AREA_LIGHTS {
+                    lighting.areas.push(AreaLight {
+                        origin: world.translation(),
+                        half_width: rotation * DVec3::X * half_width,
+                        half_height: rotation * DVec3::Y * half_height,
+                        color: light.color(),
+                        power: light.intensity(),
+                    });
+                }
+                // A viewport shades from points, so a window lights it from the middle of its face:
+                // an approximation of the softness and never of the power, which keeps a room the
+                // final render fills with daylight from drawing as a black box (L2).
+                if lighting.points.len() < MAX_POINT_LIGHTS {
+                    lighting.points.push(PointLight {
+                        position: world.translation(),
+                        color: light.color(),
+                        power: light.intensity(),
+                    });
+                }
+                any_authored = true;
+            }
         }
     }
     any_authored.then_some(lighting)
+}
+
+/// How opaque a light's pane is drawn: enough to read as a lit face, thin enough to see through.
+///
+/// A window is a hole in the wall authored as a light, so the model behind it must stay readable:
+/// the pane tints what it covers and its outline says where it ends (L2).
+const PANE_ALPHA: f32 = 0.22;
+
+/// The panes the rectangular lights draw: one translucent face and one outline each.
+///
+/// The face is a source ([`scene::Drawable::as_source`]), so the viewport draws its colour unlit and
+/// blended and the final render never sees it as geometry — the tracer samples the rectangle from
+/// [`Lighting::areas`] instead (L2). The outline is the chain the person picks and the line the eye
+/// follows; it carries no colour of its own, so a theme switch repaints it without a rebuild.
+fn add_light_panes(frame: &mut SceneFrame, project: &Project, flags: &ViewFlags) {
+    for id in project.query(&NodeQuery::any().with_kind(StructuralKind::Light)) {
+        let Some(light) = project.light(id) else {
+            continue;
+        };
+        if !light.kind().has_area() || flags.hides(project, id) {
+            continue;
+        }
+        let Some(world) = project.world_placement(id) else {
+            continue;
+        };
+        let size = light.size();
+        let (half_width, half_height) = (size.width().millimetres_f64() * 0.5, size.height().millimetres_f64() * 0.5);
+        // The face in the light's own plane, its ring counter-clockwise seen from the side it emits
+        // from, which is the order `AreaLight::corners` writes.
+        let corners = [
+            [-half_width, -half_height],
+            [-half_width, half_height],
+            [half_width, half_height],
+            [half_width, -half_height],
+        ];
+        let positions: Vec<[f32; 3]> = corners.iter().map(|[x, y]| [*x as f32, *y as f32, 0.0]).collect();
+        let normals = vec![[0.0, 0.0, -1.0]; corners.len()];
+        let indices = vec![0, 1, 2, 0, 2, 3];
+        let mesh = Arc::new(geom::MeshData { positions, normals, indices });
+        let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
+        let colour = light.color();
+        let pane = Drawable::new(id, mesh, transform, [colour[0], colour[1], colour[2], PANE_ALPHA]).as_source();
+        frame.push(pane);
+        let ring: Arc<[DVec3]> =
+            Arc::from(corners.iter().chain(corners.first()).map(|[x, y]| DVec3::new(*x, *y, 0.0)).collect::<Vec<_>>());
+        frame.polylines.push(Polyline::in_ink(id, ring, transform));
+    }
 }
 
 /// The tolerance a footprint's arcs are flattened with, in millimetres.
@@ -461,6 +649,8 @@ struct Evaluation<'a> {
     levels: Vec<LevelBounds>,
     /// The nodes this pass could not build, with the sentence each one reports.
     failures: Vec<SceneFailure>,
+    /// The materials every drawable is painted from (Y7).
+    materials: FrameMaterials<'a>,
     palette_index: usize,
 }
 
@@ -471,6 +661,7 @@ impl<'a> Evaluation<'a> {
         session: &'a Session,
         flags: &'a ViewFlags,
         open_product: Option<Id>,
+        materials: FrameMaterials<'a>,
     ) -> Self {
         Self {
             cache,
@@ -482,6 +673,7 @@ impl<'a> Evaluation<'a> {
             frame: SceneFrame::default(),
             levels: Vec::new(),
             failures: Vec::new(),
+            materials,
             palette_index: 0,
         }
     }
@@ -577,18 +769,32 @@ impl<'a> Evaluation<'a> {
         let request = PanelEval::new(panel, &geometry, world, &[], &band_profile);
         let evaluated = self.cache.panel(revision, &request, self.kernel, &self.options).map_err(describe)?;
         let transform = DMat4::from_rotation_translation(world.rotation(), world.translation());
-        let color = PANEL_COLORS[self.palette_index % PANEL_COLORS.len()];
+        let placeholder = PANEL_COLORS[self.palette_index % PANEL_COLORS.len()];
         self.palette_index = self.palette_index.saturating_add(1);
+        // One material for the whole board — both faces, the edges and every band — which is what a
+        // 3D object carries (Y7). A panel that names none keeps the placeholder tone, so a shop
+        // that has not filled its library still sees a board and not a black rectangle.
+        let reference = panel.render_material();
+        let paint = self.materials.paint_of(reference);
+        let color = paint.map_or(placeholder, |paint| paint.color);
+        let surface = paint.map_or(Surface::MATTE, |paint| paint.surface);
+        let band_color = paint.map_or(EDGE_BAND_COLOR, |paint| paint.color);
+        let decor = self.materials.decor_of(reference);
+        let mapping = panel.decor();
         let mut bounds = Bounds::empty();
         if let Some(body) = evaluated.body() {
             include_body(&mut bounds, evaluated.body_bounds(), transform);
-            let drawable = Drawable::with_box(panel.id(), Arc::clone(body), transform, color, evaluated.body_bounds());
+            let drawable = Drawable::with_box(panel.id(), Arc::clone(body), transform, color, evaluated.body_bounds())
+                .with_surface(surface);
+            let drawable = faced(drawable, decor.as_ref(), mapping);
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
         }
         for (index, mesh) in evaluated.bands().iter().enumerate() {
             let band_bounds = evaluated.band_bounds().get(index).copied().flatten();
             include_body(&mut bounds, band_bounds, transform);
-            let drawable = Drawable::with_box(panel.id(), Arc::clone(mesh), transform, EDGE_BAND_COLOR, band_bounds);
+            let drawable = Drawable::with_box(panel.id(), Arc::clone(mesh), transform, band_color, band_bounds)
+                .with_surface(surface);
+            let drawable = faced(drawable, decor.as_ref(), mapping);
             self.frame.push(with_cached_edges(
                 drawable,
                 evaluated.band_edges().get(index),
@@ -631,13 +837,43 @@ impl<'a> Evaluation<'a> {
         }
         if let Some(mesh) = evaluated.body() {
             include_body(&mut bounds, evaluated.body_bounds(), transform);
-            let drawable =
-                Drawable::with_box(object.id(), Arc::clone(mesh), transform, OBJECT_COLOR, evaluated.body_bounds());
+            let paint = self.materials.paint_of(object.render_material());
+            let color = paint.map_or(OBJECT_COLOR, |paint| paint.color);
+            let surface = paint.map_or(Surface::MATTE, |paint| paint.surface);
+            let decor = self.materials.decor_of(object.render_material());
+            let drawable = Drawable::with_box(object.id(), Arc::clone(mesh), transform, color, evaluated.body_bounds())
+                .with_surface(surface);
+            let drawable = faced(drawable, decor.as_ref(), object.decor());
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
             return Ok(bounds);
         }
         Err(format!("{}: the object has no drawable geometry", object.name()))
     }
+}
+
+/// Attaches a material's decor and the node's own placement of it to a drawable.
+///
+/// A node with no material, or with a record that names no picture, keeps the flat colour it was
+/// given; a node that carries no mapping draws the record's own coverage and turn (Y15).
+fn faced(drawable: Drawable, decor: Option<&Decor>, mapping: Option<model::DecorMapping>) -> Drawable {
+    let Some(decor) = decor else {
+        return drawable;
+    };
+    let drawable = drawable.with_decor(decor.clone());
+    match mapping {
+        Some(mapping) => drawable.with_decor_mapping(frame_mapping(mapping)),
+        None => drawable,
+    }
+}
+
+/// The document's mapping in the frame's own terms.
+///
+/// `scene` never reads a `model` type, so the one place the two meet converts the three numbers: the
+/// document's quarter count and the frame's are both a count of quarter turns, and both are lengths
+/// in exact micrometres.
+fn frame_mapping(mapping: model::DecorMapping) -> scene::DecorMapping {
+    let offset = mapping.offset();
+    scene::DecorMapping::new(mapping.scale(), offset, scene::Turns::new(mapping.turns().get()))
 }
 
 /// Attaches the cached form edges and the full triangulation edges to a drawable.
@@ -687,8 +923,12 @@ pub fn authored_camera(project: &Project) -> Option<Camera> {
     let up = rotation * DVec3::Y;
     let forward = rotation * -DVec3::Z;
     let target = eye + forward * AUTHORED_CAMERA_DISTANCE_MM;
+    // The lens is the camera's own, saved with it (Y11, ADR 0249): the frame the tracer reads carries
+    // the aperture and the focus the document does, so every door renders one picture.
+    let lens = project.camera(id)?.lens();
     Camera::new(target, AUTHORED_CAMERA_DISTANCE_MM)
         .ok()
+        .and_then(|camera| camera.with_lens(lens.aperture().millimetres_f64(), lens.focus().millimetres_f64()).ok())
         .map(|camera| camera.looked_from(eye, right, up, forward).with_projection(projection))
 }
 
@@ -751,7 +991,7 @@ mod tests {
 
     use super::*;
     use model::{ClassCode, ContourSegment, Geometry, Path, Revision};
-    use testkit::sample_project;
+    use testkit::{sample_catalog, sample_project};
 
     fn panels_in<'a>(children: &'a [Node], panels: &mut Vec<&'a Panel>) {
         for child in children {
@@ -836,13 +1076,40 @@ mod tests {
     }
 
     #[test]
+    fn an_authored_camera_carries_its_lens_into_the_frame() {
+        // The clause about the document: the lens is saved with the camera and reaches the picture
+        // through the frame, so a scene renders what its author framed from every door (Y11).
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let camera =
+            project.add_camera(root, "Presentation", Placement::IDENTITY, CameraProjection::DEFAULT).expect("camera");
+        project.set_active_camera(Some(camera)).expect("active camera");
+        let plain = authored_camera(&project).expect("the authored camera");
+        assert!(plain.is_pinhole(), "a camera without a lens is a pinhole");
+        assert_eq!(plain.focus(), model::CameraNode::DEFAULT_FOCUS.millimetres_f64());
+
+        let lens = model::CameraLens::new(millimetres(45).expect("a radius"), millimetres(2_000).expect("a focus"))
+            .expect("a lens");
+        project.set_camera_lens(camera, lens).expect("the camera's lens");
+        let lensed = authored_camera(&project).expect("the authored camera");
+        assert_eq!(lensed.aperture(), 45.0);
+        assert_eq!(lensed.focus(), 2_000.0);
+        assert!(!lensed.is_pinhole(), "the frame carries the aperture the document holds");
+        // The lens is the picture's and never the framing's: the eye and the basis are untouched.
+        assert_eq!(lensed.eye(), plain.eye());
+        assert_eq!(lensed.forward(), plain.forward());
+        assert_eq!(lensed.projection(), plain.projection());
+    }
+
+    #[test]
     fn an_authored_sun_lights_the_frame_through_its_world_rotation() {
         // A scene without a light keeps the built-in key light; a point light adds to that key.
         let mut project = sample_project();
         assert_eq!(authored_lighting(&project), None);
         let root = project.root().id();
         project
-            .add_light(root, "Fill", Placement::IDENTITY, LightKind::Point, [0.2, 0.3, 0.4], 1000.0)
+            .add_light(root, "Fill", Placement::IDENTITY, LightSpec::point([0.2, 0.3, 0.4], 1000.0))
             .expect("point light");
         let lighting = authored_lighting(&project).expect("a point light lights the frame");
         assert_eq!(lighting.key_color, Lighting::default().key_color, "a point-only scene keeps the built-in key");
@@ -852,7 +1119,7 @@ mod tests {
 
         let spin = DQuat::from_rotation_y(FRAC_PI_2);
         let placement = Placement::new(DVec3::new(10.0, 20.0, 30.0), spin).expect("placement");
-        project.add_light(root, "Sun", placement, LightKind::Sun, [1.0, 0.5, 0.25], 2.0).expect("sun");
+        project.add_light(root, "Sun", placement, LightSpec::sun([1.0, 0.5, 0.25], 2.0)).expect("sun");
         let lighting = authored_lighting(&project).expect("the sun lights the frame");
         assert!(
             lighting.key_direction.dot(DVec3::X) > 1.0 - 1.0e-9,
@@ -871,7 +1138,7 @@ mod tests {
         let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, vec![Node::Container(group)]);
         let mut nested = Project::new(root).expect("project");
         nested
-            .add_light(id(2).expect("id"), "Sun", placement, LightKind::Sun, [1.0, 1.0, 1.0], 1.0)
+            .add_light(id(2).expect("id"), "Sun", placement, LightSpec::sun([1.0, 1.0, 1.0], 1.0))
             .expect("nested sun");
         let lighting = authored_lighting(&nested).expect("the nested sun lights the frame");
         assert!(
@@ -888,7 +1155,7 @@ mod tests {
             let placement =
                 Placement::new(DVec3::new(index as f64 * 100.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement");
             project
-                .add_light(root, format!("Point {index}"), placement, LightKind::Point, [1.0; 3], 1000.0)
+                .add_light(root, format!("Point {index}"), placement, LightSpec::point([1.0; 3], 1000.0))
                 .expect("point light");
         }
 
@@ -915,9 +1182,7 @@ mod tests {
                 id(2).expect("id"),
                 "Fill",
                 Placement::new(DVec3::new(10.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("nested point light");
 
@@ -934,9 +1199,7 @@ mod tests {
                 root,
                 "Sun",
                 Placement::new(DVec3::ZERO, DQuat::IDENTITY).expect("placement"),
-                LightKind::Sun,
-                [1.0; 3],
-                1.0,
+                LightSpec::sun([1.0; 3], 1.0),
             )
             .expect("sun");
         let point = project
@@ -944,9 +1207,7 @@ mod tests {
                 root,
                 "Fill",
                 Placement::new(DVec3::new(100.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("point light");
 
@@ -961,6 +1222,66 @@ mod tests {
         assert!(previewed.key_direction.dot(DVec3::Y) > 1.0 - 1.0e-9, "the previewed sun lights from +Y");
         assert_eq!(previewed.points[0].position, DVec3::new(300.0, 40.0, 0.0));
         assert_eq!(previewed.points[0].power, 1000.0, "a preview does not change the power");
+    }
+
+    #[test]
+    fn a_window_reaches_the_frame_as_a_face_and_as_a_pane() {
+        // A window is a rectangle the tracer samples and a pane the viewport draws: the same object,
+        // two readings of one placement (L2, ADR 0247).
+        let mut project = sample_project();
+        let root = project.root().id();
+        let size = model::LightSize::new(millimetres(1_200).expect("a side"), millimetres(1_400).expect("a side"))
+            .expect("a window");
+        let placement = Placement::new(DVec3::new(0.0, 500.0, 2_000.0), DQuat::IDENTITY).expect("placement");
+        let window = project
+            .add_light(root, "Window", placement, LightSpec::area([1.0, 0.98, 0.9], 40.0, size))
+            .expect("the window");
+
+        let lighting = authored_lighting(&project).expect("the window lights the frame");
+        assert_eq!(lighting.areas.len(), 1);
+        let face = lighting.areas[0];
+        assert_eq!(face.origin, DVec3::new(0.0, 500.0, 2_000.0));
+        assert_eq!(face.half_width, DVec3::new(600.0, 0.0, 0.0));
+        assert_eq!(face.half_height, DVec3::new(0.0, 700.0, 0.0));
+        assert!(
+            face.normal().dot(-DVec3::Z) > 1.0 - 1.0e-9,
+            "a light emits from the side it faces: {:?}",
+            face.normal()
+        );
+        assert_eq!(face.power, 40.0);
+        // The viewport has no area shading, so it lights from the middle of the face at the same
+        // power: an approximation of the softness, never of the watts.
+        assert_eq!(lighting.points.len(), 1);
+        assert_eq!(lighting.points[0].position, DVec3::new(0.0, 500.0, 2_000.0));
+        assert_eq!(lighting.points[0].power, 40.0);
+        assert_eq!(lighting.key_color, Lighting::default().key_color, "a window is not the key light");
+
+        // The frame carries the pane and its outline under the light's own id, so the viewport draws
+        // it and a click picks it.
+        let session = Session::with_directory(project, sample_catalog());
+        let mut cache = EvaluationCache::new();
+        let mut kernel = TruckKernel::new();
+        let mut decors = Decors::new();
+        let materials = FrameMaterials::new(session.materials(), None, &mut decors);
+        let evaluated = evaluate_with(&mut cache, &mut kernel, &session, &ViewFlags::default(), None, materials)
+            .expect("the scene evaluates");
+        let frame = evaluated.frame;
+        let pane = frame.drawables().iter().find(|drawable| drawable.id == window).expect("the pane");
+        assert_eq!(pane.faces, scene::FaceShading::Source, "a source is drawn unlit and blended");
+        assert!(pane.color[3] < 1.0, "a pane is translucent: {}", pane.color[3]);
+        assert_eq!(pane.mesh.triangle_count(), 2);
+        let outline = frame.polylines().iter().find(|line| line.id == window).expect("the outline");
+        assert_eq!(outline.points.len(), 5, "a closed ring of four corners");
+
+        // A click on the pane picks the light: the ray meets the face and answers the node it belongs
+        // to, which is what makes a window selectable without a second picking rule (L2).
+        // From in front of the face, straight at it: the pane is the nearest thing on the way down.
+        let eye = DVec3::new(0.0, 500.0, 3_000.0);
+        let ray = scene::Ray::new(eye, -DVec3::Z).expect("a ray at the pane");
+        assert_eq!(frame.pick_surface(ray, 1_000.0), Some(window), "the pane answers the light's id");
+        // A ray past the face's edge meets something else, or nothing: the pane is its own rectangle.
+        let beside = scene::Ray::new(DVec3::new(2_000.0, 500.0, 3_000.0), -DVec3::Z).expect("a ray beside it");
+        assert_ne!(frame.pick_surface(beside, 1_000.0), Some(window), "the pane is only its own face");
     }
 
     #[test]
@@ -1735,7 +2056,7 @@ mod tests {
         let mut project = sample_project();
         let root = project.root().id();
         let group = project.add_component(root, "Lamp", Placement::IDENTITY).expect("container");
-        let sun = project.add_light(group, "Sun", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("sun");
+        let sun = project.add_light(group, "Sun", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("sun");
         assert!(authored_lighting(&project).is_some(), "an authored sun is the key light");
 
         let mut flags = ViewFlags::default();
@@ -1999,5 +2320,296 @@ mod tests {
             "outside the inner piece is the outer"
         );
         assert_ne!(inner, outer);
+    }
+
+    // The render's materials: a node names one record of the workshop's library, and the frame
+    // paints every surface of that node from it (Y7). The catalogue is nowhere in this path.
+
+    /// Writes `width` x `height` RGBA texels as a PNG at `path`, creating the textures folder.
+    fn write_png(path: &std::path::Path, width: u32, height: u32, texels: &[[u8; 4]]) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("the textures folder");
+        }
+        let file = std::fs::File::create(path).expect("a fresh file");
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("a PNG header");
+        let bytes: Vec<u8> = texels.iter().flatten().copied().collect();
+        writer.write_image_data(&bytes).expect("the texels");
+    }
+
+    /// A workshop folder with one record per row, written where its decor names its picture.
+    fn store_of(name: &str, records: [Material; 1]) -> (Store, Library) {
+        let store = Store::at(testkit::scratch_dir(name));
+        let library = Library::new(records).expect("distinct ids");
+        store.write(&library).expect("the library file");
+        (store, library)
+    }
+
+    /// A matte board of `colour` faced with `decor`, under `id`.
+    fn board(id: u32, colour: [f32; 3], decor: Option<materials::Decor>) -> Material {
+        let base = materials::Base::new(colour, decor, 1.0, 0.0, 1.5, 0.0, [0.0; 3]).expect("a matte board");
+        Material::of_base(MaterialId::new(id).expect("a non-zero id"), format!("Record {id}"), base).expect("a record")
+    }
+
+    fn material(value: u32) -> MaterialRef {
+        MaterialRef::new(value).expect("a non-zero material")
+    }
+
+    /// A session of one shelf wearing `slot`, with `library` in the session's hand.
+    fn shelf_session(slot: Option<MaterialRef>, library: Library) -> Session {
+        shelf_session_placed(slot, library, None)
+    }
+
+    /// A session of one shelf wearing `slot` and, when it has one, its own decor mapping.
+    fn shelf_session_placed(
+        slot: Option<MaterialRef>,
+        library: Library,
+        mapping: Option<model::DecorMapping>,
+    ) -> Session {
+        let root = Container::new(id(1).expect("root"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("a project");
+        let root = project.root().id();
+        let size = PanelNominalSize::new(millimetres(600).expect("length"), millimetres(400).expect("length"))
+            .expect("a size");
+        let shelf = project
+            .add_panel(root, "Shelf", size, None, millimetres(18).expect("thickness"), Placement::IDENTITY)
+            .expect("a shelf");
+        project.set_node_material(shelf, slot).expect("the material slot");
+        project.set_node_decor(shelf, mapping).expect("the picture's placement");
+        Session::new(project).with_materials(library)
+    }
+
+    /// A session of one ball wearing `slot`, with `library` in the session's hand.
+    fn ball_session(slot: Option<MaterialRef>, library: Library) -> Session {
+        let root = Container::new(id(1).expect("root"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("a project");
+        let root = project.root().id();
+        let sphere = model::Primitive::sphere(millimetres(40).expect("radius"), 16, 8).expect("a sphere");
+        let ball = project.add_object(root, "Ball", Placement::IDENTITY, Geometry::Primitive(sphere)).expect("a ball");
+        project.set_node_material(ball, slot).expect("the material slot");
+        Session::new(project).with_materials(library)
+    }
+
+    /// Evaluates `session` with the workshop folder `store`, the way the shell's tab does.
+    fn paint(session: &Session, store: &Store) -> EvaluatedScene {
+        let mut cache = EvaluationCache::new();
+        let mut kernel = TruckKernel::new();
+        let mut decors = Decors::new();
+        decors.follow(session.materials_version());
+        let materials = FrameMaterials::new(session.materials(), Some(store), &mut decors);
+        evaluate_with(&mut cache, &mut kernel, session, &ViewFlags::default(), None, materials).expect("a frame")
+    }
+
+    #[test]
+    fn a_boards_decor_reaches_the_frame_with_the_runs_its_record_names() {
+        // A scan whose left half is red and right half blue: the stripes run along the picture's
+        // width, so the record's turn decides which way they run on the board.
+        let decor =
+            materials::Decor::new("textures/stripes.png", millimetres(600).expect("covers"), materials::Turns::ACROSS)
+                .expect("a decor");
+        let (store, library) = store_of("scene-build-decor", [board(1, [0.6, 0.45, 0.25], Some(decor))]);
+        write_png(&store.textures().join("stripes.png"), 2, 1, &[[255, 0, 0, 255], [0, 0, 255, 255]]);
+        let session = shelf_session(Some(material(1)), library);
+        let scene = paint(&session, &store);
+
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        assert_eq!(drawable.color, [0.6, 0.45, 0.25, 1.0], "the record's own colour, never the placeholder");
+        let decor = drawable.decor.as_ref().expect("the record names a picture");
+        assert_eq!(decor.covers(), millimetres(600).expect("covers"), "the picture keeps the size the record names");
+        assert_eq!(decor.turns(), Turns::ACROSS, "and the way its grain runs");
+        assert_eq!(decor.image().texel(0, 0), Some([255, 0, 0, 255]), "the left stripe is the scan's left half");
+        assert_eq!(decor.image().texel(1, 0), Some([0, 0, 255, 255]), "and the right stripe the other half");
+        // The projection is the one both consumers call, so a quarter turn is the picture's width
+        // running along the board's +Y instead of its +X.
+        let along = Turns::ALONG;
+        let turned = Turns::ACROSS;
+        assert_ne!(along.get(), turned.get(), "the two runs are different values");
+        assert!(decor.id().get() > 0, "the frame allocates the id the device keeps the texture under");
+        let across = decor.uv(geom::DVec2::new(0.0, 300.0), None);
+        let down = decor.uv(geom::DVec2::new(300.0, 0.0), None);
+        assert_ne!(across, down, "a turned grain reads the two board axes differently");
+        assert!(across[0].abs() > down[0].abs(), "the turned picture's width runs along the board's Y");
+    }
+
+    #[test]
+    fn a_nodes_own_mapping_places_the_picture_its_record_gave() {
+        // The record's picture covers 600 mm and runs along the board; the shelf says 300 mm, shifts
+        // it and turns it, and every surface of that shelf follows — the frame composes the two in one
+        // place, so the viewport and the tracer still read one `scene::Decor` (Y15).
+        let decor =
+            materials::Decor::new("textures/stripes.png", millimetres(600).expect("covers"), materials::Turns::ALONG)
+                .expect("a decor");
+        let (store, library) = store_of("scene-build-decor-placement", [board(1, [0.6, 0.45, 0.25], Some(decor))]);
+        write_png(&store.textures().join("stripes.png"), 2, 1, &[[255, 0, 0, 255], [0, 0, 255, 255]]);
+        let mapping = model::DecorMapping::new(
+            millimetres(300).expect("a scale"),
+            [millimetres(40).expect("an offset"), Length::ZERO],
+            model::Turns::ACROSS,
+        )
+        .expect("a mapping");
+
+        let quiet = paint(&shelf_session(Some(material(1)), library.clone()), &store);
+        let placed = paint(&shelf_session_placed(Some(material(1)), library, Some(mapping)), &store);
+        let point = geom::DVec2::new(200.0, 90.0);
+        assert_eq!(
+            quiet.frame.drawables[0].faced().and_then(|faced| faced.mapping()),
+            None,
+            "a node that says nothing draws the record's own numbers"
+        );
+        let framed = placed.frame.drawables[0].faced().expect("the shelf is faced");
+        assert_eq!(
+            framed.mapping(),
+            Some(scene::DecorMapping::new(
+                millimetres(300).expect("a scale"),
+                [millimetres(40).expect("an offset"), Length::ZERO],
+                Turns::ACROSS,
+            )),
+            "the node's three numbers reach the frame"
+        );
+        assert_ne!(
+            placed.frame.drawables[0].uv(point),
+            quiet.frame.drawables[0].uv(point),
+            "and they move the coordinate the viewport and the tracer read"
+        );
+        assert_eq!(
+            framed.decor().id(),
+            quiet.frame.drawables[0].decor.as_ref().expect("the record's picture").id(),
+            "one picture however many boards place it differently"
+        );
+    }
+
+    #[test]
+    fn a_node_that_names_no_material_keeps_its_placeholder_tone() {
+        let (store, library) = store_of("scene-build-placeholder", [board(1, [0.6, 0.45, 0.25], None)]);
+        let scene = paint(&shelf_session(None, library.clone()), &store);
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        assert_eq!(drawable.color, PANEL_COLORS[0], "a shop that has not named a material still sees a board");
+        assert_eq!(drawable.surface, Surface::MATTE, "and it is the matte paint every drawable was");
+        assert!(drawable.decor.is_none());
+
+        // A reference the library does not hold is the same quiet answer, never a black rectangle.
+        let scene = paint(&shelf_session(Some(material(9)), library), &store);
+        assert_eq!(scene.frame.drawables.first().expect("the shelf draws").color, PANEL_COLORS[0]);
+    }
+
+    #[test]
+    fn a_records_gloss_becomes_the_width_the_tracer_reads() {
+        // ADR 0243: the catalogue stores the gloss a workshop says and the frame carries the width the
+        // tracer draws, and the mapping happens once, here. A lacquer on a board is one record and one
+        // surface, never a second drawable.
+        let board = materials::Base::new([0.6, 0.45, 0.25], None, 0.8, 0.0, 1.5, 0.0, [0.0; 3]).expect("a veneer");
+        let coat = materials::Coat::glossed(90.0).expect("a lacquer");
+        let record = Material::new(MaterialId::new(1).expect("id"), "Oak, lacquered", Some(board), Some(coat))
+            .expect("a record");
+        let store = Store::at(testkit::scratch_dir("scene-build-coat"));
+        let library = Library::new([record]).expect("distinct ids");
+        store.write(&library).expect("the library file");
+
+        let scene = paint(&shelf_session(Some(material(1)), library), &store);
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        let painted = drawable.surface.coat;
+        assert_eq!(painted.weight, 1.0, "a full coat covers the board");
+        assert_eq!(painted.ior, scene::Coat::IOR, "and is a clear lacquer");
+        assert!((painted.alpha - 0.01).abs() < 1.0e-6, "90 % gloss is a hundredth of an alpha: {}", painted.alpha);
+        assert_eq!(drawable.surface.roughness, 0.8, "the base keeps its own roughness under the layer");
+    }
+
+    #[test]
+    fn a_metal_and_a_glass_record_reach_the_surface_of_an_object() {
+        let metal = materials::Base::new([0.9, 0.9, 0.9], None, 0.25, 1.0, 2.5, 0.0, [0.0; 3]).expect("a conductor");
+        let glass =
+            materials::Base::new([0.85, 0.92, 0.9], None, 0.05, 0.0, 1.5, 1.0, [0.4, 0.1, 0.1]).expect("a pane");
+        let records = [
+            Material::of_base(MaterialId::new(1).expect("id"), "Brass", metal).expect("a record"),
+            Material::of_base(MaterialId::new(2).expect("id"), "Glass", glass).expect("a record"),
+        ];
+        let store = Store::at(testkit::scratch_dir("scene-build-metal"));
+        let library = Library::new(records).expect("distinct ids");
+        store.write(&library).expect("the library file");
+
+        let scene = paint(&ball_session(Some(material(1)), library.clone()), &store);
+        let drawable = scene.frame.drawables.first().expect("the ball draws");
+        assert_eq!(drawable.surface.metallic, 1.0, "a handle is a conductor");
+        assert_eq!(drawable.surface.roughness, 0.25, "with its finish's roughness");
+        assert_eq!(drawable.color, [0.9, 0.9, 0.9, 1.0]);
+
+        let scene = paint(&ball_session(Some(material(2)), library), &store);
+        let drawable = scene.frame.drawables.first().expect("the ball draws");
+        assert_eq!(drawable.surface.transmission, 1.0, "a glass front is a pane");
+        assert_eq!(drawable.surface.absorption, [0.4, 0.1, 0.1], "and carries the tint its record names");
+    }
+
+    #[test]
+    fn a_record_with_no_base_and_a_picture_that_cannot_be_read_keep_the_flat_colour() {
+        // A finish alone (a lacquer) paints nothing: a layer has no base to be seen through, and the
+        // catalogue's composition of the two is O18's, not this frame's.
+        let coat = materials::Coat::glossed(90.0).expect("a lacquer");
+        let lacquer = Material::new(MaterialId::new(1).expect("id"), "Lacquer", None, Some(coat)).expect("a record");
+        let store = Store::at(testkit::scratch_dir("scene-build-finish"));
+        let library = Library::new([lacquer]).expect("one record");
+        store.write(&library).expect("the library file");
+        let scene = paint(&shelf_session(Some(material(1)), library), &store);
+        assert_eq!(scene.frame.drawables.first().expect("the shelf draws").color, PANEL_COLORS[0]);
+
+        // A record that names a picture that is not there is its own colour, and the refusal names
+        // the record and the file instead of drawing black.
+        let missing =
+            materials::Decor::new("textures/gone.png", millimetres(600).expect("covers"), materials::Turns::ALONG)
+                .expect("a decor");
+        let (store, library) = store_of("scene-build-missing", [board(1, [0.2, 0.7, 0.3], Some(missing))]);
+        let scene = paint(&shelf_session(Some(material(1)), library), &store);
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        assert_eq!(drawable.color, [0.2, 0.7, 0.3, 1.0], "the flat colour the record names");
+        assert!(drawable.decor.is_none(), "a picture that could not be read is no picture");
+    }
+
+    #[test]
+    fn the_tracer_flattens_the_same_material_the_viewport_draws() {
+        let decor =
+            materials::Decor::new("textures/stripes.png", millimetres(600).expect("covers"), materials::Turns::ACROSS)
+                .expect("a decor");
+        let metal = materials::Base::new([0.9, 0.9, 0.9], Some(decor), 0.25, 1.0, 2.5, 0.0, [0.0; 3])
+            .expect("a faced conductor");
+        let record = Material::of_base(MaterialId::new(1).expect("id"), "Faced brass", metal).expect("a record");
+        let store = Store::at(testkit::scratch_dir("scene-build-tracer"));
+        let library = Library::new([record]).expect("one record");
+        store.write(&library).expect("the library file");
+        write_png(&store.textures().join("stripes.png"), 2, 1, &[[255, 0, 0, 255], [0, 0, 255, 255]]);
+
+        let scene = paint(&ball_session(Some(material(1)), library), &store);
+        // The tracer is handed the frame the viewport draws: one set of faces, the record's colour
+        // and finish on every one of them, and its picture travelling once (Y3, Y7).
+        let soup = r#final::faces_of(&scene.frame).expect("the frame flattens");
+        assert!(!soup.faces.is_empty(), "the ball draws faces");
+        assert!(soup.faces.iter().all(|face| face.colour == [0.9, 0.9, 0.9]), "the record's albedo on every face");
+        assert!(soup.faces.iter().all(|face| face.surface.metallic == 1.0), "and its conductor on every face");
+        assert_eq!(soup.decors.len(), 1, "one record is one picture in the tracer");
+        assert!(soup.faces.iter().all(|face| face.decor == Some(0)), "every face of the ball is faced with it");
+        let first = soup.faces.first().expect("a face");
+        assert_ne!(first.uv[0], first.uv[1], "the corners carry the projection, not one coordinate");
+    }
+
+    #[test]
+    fn two_panels_of_one_record_share_one_decoded_picture() {
+        let decor =
+            materials::Decor::new("textures/oak.png", millimetres(600).expect("covers"), materials::Turns::ALONG)
+                .expect("a decor");
+        let (store, library) = store_of("scene-build-shared", [board(1, [0.6, 0.45, 0.25], Some(decor))]);
+        write_png(&store.textures().join("oak.png"), 1, 1, &[[200, 100, 50, 255]]);
+        let slot = Some(material(1));
+        let session = shelf_session(slot, library);
+
+        let mut cache = EvaluationCache::new();
+        let mut kernel = TruckKernel::new();
+        let mut decors = Decors::new();
+        let materials = FrameMaterials::new(session.materials(), Some(&store), &mut decors);
+        let scene =
+            evaluate_with(&mut cache, &mut kernel, &session, &ViewFlags::default(), None, materials).expect("a frame");
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        let first = drawable.decor.as_ref().expect("a decor");
+        assert_eq!(first.image().texel(0, 0), Some([200, 100, 50, 255]));
+        assert_eq!(decors.len(), 1, "one record is one decoded picture per frame");
     }
 }

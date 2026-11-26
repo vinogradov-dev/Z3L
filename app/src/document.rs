@@ -32,6 +32,7 @@ use mesh::{EvaluationCache, object_mesh};
 use model::{ClassCode, CornerMove, Geometry, Id, NodeQuery, Placement, Project, Revision, StructuralKind};
 use project::SceneFile;
 use render::{ViewSpec, ViewportRenderer};
+use scene::decor::Decors;
 use scene::{Camera, Lighting, Polyline, Projection, SceneColors, SceneFrame};
 use text::Lang;
 use ui::settings::{Settings, ViewportSettings};
@@ -59,7 +60,7 @@ use crate::open_frame;
 use crate::osd;
 use crate::points_gizmo::{PointsAction, PointsGizmo, PointsInput, PointsModifiers};
 use crate::rotate_gizmo::RotateGizmo;
-use crate::scene_build::{Bounds, LevelBounds, evaluate, home_camera};
+use crate::scene_build::{Bounds, LevelBounds, home_camera};
 use crate::scene_gizmo;
 use crate::scene_writer::SceneWriter;
 use crate::shortcuts::{DraftKey, Shortcuts, drawing_key, take_drawing_shortcut};
@@ -418,6 +419,18 @@ pub(crate) struct Document {
     /// watches the session's own counter instead, so a board whose thickness changed re-derives its
     /// panels without a restart and without pretending the person edited anything.
     scene_directory: u64,
+    /// The session's render material library version the frame was built from.
+    ///
+    /// Like the directory, the library is not the document: a reload moves no revision, so the
+    /// rebuild watches the session's own counter, and a picture a shop replaced reaches the frame
+    /// without a restart (Y8).
+    scene_materials: u64,
+    /// The workshop's material folder, when the shell has one: where a record's decor picture is
+    /// read. A tab without it paints every surface its flat colour (Y7).
+    pictures: Option<materials::Store>,
+    /// The decor pictures this tab decoded, one per material, so a board pays one decode and every
+    /// panel cut from the same record shares the texels (Y8, Y7).
+    decors: Decors,
     /// How the last rebuild cost, so a scene that takes more than a frame announces the next one.
     rebuild: Rebuild,
     /// The frame meter the on-screen display prints: the smoothed frame time and the last rebuild,
@@ -593,10 +606,22 @@ impl Document {
         shell: &Shell,
         session: Session,
         extra: PreservedSections,
+        pictures: Option<materials::Store>,
     ) -> Result<Self, String> {
         let mut kernel = TruckKernel::new();
         let mut cache = EvaluationCache::new();
-        let evaluated = evaluate(&mut cache, &mut kernel, &session, &ViewFlags::default(), session.active_product())?;
+        // The folder is known at construction, so the first frame already shows the decors a scene
+        // names instead of painting them once and rebuilding them a frame later (Y7).
+        let mut decors = Decors::new();
+        let materials = crate::scene_build::FrameMaterials::new(session.materials(), pictures.as_ref(), &mut decors);
+        let evaluated = crate::scene_build::evaluate_with(
+            &mut cache,
+            &mut kernel,
+            &session,
+            &ViewFlags::default(),
+            session.active_product(),
+            materials,
+        )?;
         let scene_bounds = evaluated.bounds;
         let level_bounds = evaluated.levels;
         // A node the kernel refuses is reported from the first frame, exactly as it is from every
@@ -628,6 +653,9 @@ impl Document {
             scene_preview: session.preview_version(),
             scene_product: session.active_product(),
             scene_directory: session.directory_version(),
+            scene_materials: session.materials_version(),
+            pictures,
+            decors,
             rebuild: Rebuild::default(),
             osd: osd::Meter::default(),
             tool_card_rect: None,
@@ -699,13 +727,17 @@ impl Document {
         shell: &Shell,
         path: &Path,
         directory: Arc<catalog::Directory>,
+        library: Arc<materials::Library>,
+        pictures: Option<materials::Store>,
     ) -> Result<Self, String> {
         let scene = SceneFile::read(path).map_err(|error| error.to_string())?;
         let extra = scene.extra().clone();
         let scene_settings = scene.settings();
         let project = scene.into_document();
-        let session = Session::with_directory(project, directory).with_contact(crate::scene_build::contact_engine());
-        let mut document = Self::new(render_state, settings, shell, session, extra)?;
+        let session = Session::with_directory(project, directory)
+            .with_materials(library)
+            .with_contact(crate::scene_build::contact_engine());
+        let mut document = Self::new(render_state, settings, shell, session, extra, pictures)?;
         document.settings = scene_settings;
         document.file.set_path(Some(path.to_owned()));
         Ok(document)
@@ -1170,6 +1202,7 @@ impl Document {
             || self.session.preview_version() != self.scene_preview
             || self.session.active_product() != self.scene_product
             || self.session.directory_version() != self.scene_directory
+            || self.session.materials_version() != self.scene_materials
     }
 
     /// Installs a newer snapshot of the workshop's directory in this tab's session.
@@ -1181,6 +1214,16 @@ impl Document {
     /// touches (ADR 0148, `docs/domain/nomenclature.md` §13).
     pub(crate) fn set_directory(&mut self, directory: Arc<catalog::Directory>) {
         self.session.set_directory(directory);
+    }
+
+    /// Installs a newer snapshot of the workshop's render material library in this tab's session.
+    ///
+    /// The tab keeps nothing else: the frame is re-derived on the next [`Document::sync_scene`]
+    /// because the session's library version moved, and a replaced decor picture is read again
+    /// there. The document, its revision, the selection and the undo history are untouched, because
+    /// a material is not the document (`AGENTS.md` §4.2).
+    pub(crate) fn set_materials(&mut self, library: Arc<materials::Library>) {
+        self.session.set_materials(library);
     }
 
     /// Takes the window's display state and rebuilds the frame when the document moved.
@@ -1303,11 +1346,13 @@ impl Document {
         let preview = self.session.preview_version();
         let product = self.session.active_product();
         let directory = self.session.directory_version();
+        let materials = self.session.materials_version();
         if revision == self.scene_revision
             && visibility == self.scene_visibility
             && preview == self.scene_preview
             && product == self.scene_product
             && directory == self.scene_directory
+            && materials == self.scene_materials
         {
             return Ok(());
         }
@@ -1316,7 +1361,19 @@ impl Document {
         self.editor.retain_flags(self.session.project());
         let visibility = self.editor.visibility_revision();
         let started = Instant::now();
-        let evaluated = evaluate(&mut self.cache, &mut self.kernel, &self.session, self.editor.flags(), product)?;
+        // A moved library drops the pictures this tab decoded, so a scan a shop replaced reaches
+        // the frame under a new id (Y8), and every drawable is painted from its node's material.
+        self.decors.follow(materials);
+        let materials_source =
+            crate::scene_build::FrameMaterials::new(self.session.materials(), self.pictures.as_ref(), &mut self.decors);
+        let evaluated = crate::scene_build::evaluate_with(
+            &mut self.cache,
+            &mut self.kernel,
+            &self.session,
+            self.editor.flags(),
+            product,
+            materials_source,
+        )?;
         self.scene_bounds = evaluated.bounds;
         self.level_bounds = evaluated.levels;
         self.note_scene_failures(evaluated.failures);
@@ -1330,6 +1387,7 @@ impl Document {
         self.scene_preview = preview;
         self.scene_product = product;
         self.scene_directory = directory;
+        self.scene_materials = materials;
         let uploaded = self.upload_scene();
         let elapsed = started.elapsed();
         self.rebuild.record(elapsed);
@@ -4266,6 +4324,11 @@ impl Document {
         // reads one uniform, so a sun direction or a point-light position updates without a mesh
         // rebuild. With no moved light the base lighting is already correct.
         //
+        // One pass per view into the same target: the camera comes from the view, the region from its
+        // rectangle, and the aspect ratio from the region, so a narrow view is not stretched by the
+        // workspace's shape.
+        let views = self.view_specs(area, &regions, points_per_pixel, settings.viewport.shadow_strength);
+        //
         // The passes and the image are the only part of the frame that needs a GPU. A headless
         // application draws the window's own background in their place, so the scene rectangle, the
         // layers and the overlays are still exactly what the window would draw (U77).
@@ -4277,25 +4340,6 @@ impl Document {
                     crate::scene_build::authored_lighting_with(self.session.project(), &previewed, self.editor.flags())
                         .unwrap_or_else(|| self.scene.lighting.clone())
                 };
-                // One pass per view into the same target: the camera comes from the view, the region
-                // from its rectangle, and the aspect ratio from the region, so a narrow view is not
-                // stretched by the workspace's shape.
-                let views: Vec<ViewSpec> = regions
-                    .iter()
-                    .filter_map(|(leaf, view_rect)| {
-                        let leaf = self.layout.leaf(*leaf)?;
-                        let camera = crate::scene_build::scene_camera(self.session.project(), leaf.camera());
-                        Some(ViewSpec {
-                            camera,
-                            region: view_region(area, *view_rect, points_per_pixel),
-                            shading: leaf.style(),
-                            // The strength and the colour are the workspace's; the switch is this
-                            // view's, so one cell of a split draws the shadow and its neighbour does
-                            // not (U107).
-                            shadows: ui::display::contact_shadows(settings.viewport.shadow_strength, leaf.shadows()),
-                        })
-                    })
-                    .collect();
                 target.render(&self.scene, &lighting, &views);
                 ui.painter().with_clip_rect(area).image(
                     target.texture_id,
@@ -4857,8 +4901,10 @@ impl Document {
             snaps: self.snaps(),
             snap_mode: self.snap_mode(),
             // The shadow switch is the active view's; its intensity is the workspace's and has no
-            // control in the ribbon (U107, U110).
+            // control in the ribbon (U107, U110). The tiling grid is the second switch of the same
+            // kind, and both are read per view when the frame is drawn (Y16).
             shadows: self.layout.active_shadows(),
+            decor_grid: self.layout.active_decor_grid(),
         };
         let mut outcome = None;
         // Whether the ruler or the niche owned the pointer before this frame, so a cell that armed
@@ -4954,6 +5000,7 @@ impl Document {
                 Some(ui::RibbonViewAction::ToggleSnapAll) => self.set_all_snaps(!self.snaps.all_on()),
                 Some(ui::RibbonViewAction::ToggleSnapMode) => self.toggle_snap_mode(),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
+                Some(ui::RibbonViewAction::ToggleDecorGrid) => self.toggle_decor_grid(),
                 None => {}
             }
         }
@@ -4968,6 +5015,50 @@ impl Document {
     pub(crate) fn toggle_shadows(&mut self) {
         self.layout.toggle_active_shadows();
         self.layout.apply_frame_display(&mut self.scene);
+    }
+
+    /// Turns the tiling grid of the active view on or off (Y16).
+    ///
+    /// The switch is the view's, like the shadow's beside it: the neighbour keeps drawing what it
+    /// drew, the per-view specs are built from each leaf at draw time, and the change costs no upload
+    /// and no revision — a grid says where a picture repeats, it never touches the document.
+    pub(crate) fn toggle_decor_grid(&mut self) {
+        self.layout.toggle_active_decor_grid();
+    }
+
+    /// The per-view specs one frame is drawn with, in the order the layout divides the area.
+    ///
+    /// One view's pass is its camera, its rectangle, its display style, its shadow switch and its
+    /// tiling grid, so a split workspace draws four different views into one target without a second
+    /// texture. The strength of the shadow is the workspace's and the switch is the view's (U107);
+    /// the grid is the same pair the other way round — the theme's weight and ink are the
+    /// workspace's, the switch is the leaf's, and the screen says how many pixels a point is (Y16).
+    fn view_specs(
+        &self,
+        area: egui::Rect,
+        regions: &[(crate::view_layout::LeafId, egui::Rect)],
+        points_per_pixel: f32,
+        shadow_strength: u32,
+    ) -> Vec<ViewSpec> {
+        regions
+            .iter()
+            .filter_map(|(leaf, view_rect)| {
+                let leaf = self.layout.leaf(*leaf)?;
+                let camera = crate::scene_build::scene_camera(self.session.project(), leaf.camera());
+                Some(ViewSpec {
+                    camera,
+                    region: view_region(area, *view_rect, points_per_pixel),
+                    shading: leaf.style(),
+                    shadows: ui::display::contact_shadows(shadow_strength, leaf.shadows()),
+                    decor_grid: leaf.decor_grid().then(|| {
+                        render::DecorGrid::new(
+                            ui::theme::DECOR_GRID_STROKE * points_per_pixel,
+                            ui::display::guide_ink(self.scene.helper),
+                        )
+                    }),
+                })
+            })
+            .collect()
     }
 
     /// Reads the keys a running tool owns and leaves the rest to the shell.
@@ -5631,12 +5722,13 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use geom::{DMat4, DQuat, DVec3};
-    use model::{CameraProjection, ClassCode, Container, Envelope, LightKind};
+    use model::{CameraProjection, ClassCode, Container, Envelope, LightSpec};
     use scene::Projection;
     use testkit::{millimetres, sample_project};
 
     use super::*;
     use crate::icons;
+    use crate::scene_build::evaluate;
     use crate::view_cluster::projection_button;
 
     #[test]
@@ -5787,9 +5879,7 @@ mod tests {
                 rig,
                 "Fill",
                 Placement::new(DVec3::new(0.0, 0.0, 30.0), DQuat::IDENTITY).expect("placement"),
-                LightKind::Point,
-                [1.0; 3],
-                1000.0,
+                LightSpec::point([1.0; 3], 1000.0),
             )
             .expect("light");
         Fixture { project, rig, camera, light }
@@ -5890,8 +5980,8 @@ mod tests {
         let revision = session.project().revision();
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         document.layout.set_kind(crate::view_layout::LayoutKind::TwoColumns);
         let regions = document.layout.regions(area);
@@ -5908,6 +5998,47 @@ mod tests {
         document.toggle_shadows();
         assert!(!document.layout.leaf(second).expect("second").shadows());
         assert_eq!(document.session.project().revision(), revision, "a view switch is never an edit");
+    }
+
+    #[test]
+    fn the_tiling_grid_is_off_until_a_view_asks_for_it_and_the_tab_keeps_its_answer() {
+        // Y16: the grid says where a material's picture repeats, which is a question about the
+        // material, so it is view state like the shadow's switch beside it — off until asked for, one
+        // leaf's answer, no revision, and the tab carries it across a switch of documents.
+        let settings = Settings::default();
+        let shell = Shell::default();
+        let open = || {
+            let session = crate::scene_build::demo_session().expect("the sample scene");
+            Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+                .expect("a headless document")
+        };
+        let mut tabs = crate::tabs::Tabs::new(open());
+        let first_tab = tabs.active_id();
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        tabs.active_mut().layout.set_kind(crate::view_layout::LayoutKind::TwoColumns);
+        let regions = tabs.active().layout.regions(area);
+        let (left, right) = (regions[0].0, regions[1].0);
+        assert!(!tabs.active().layout.leaf(left).expect("left").decor_grid(), "a fresh view draws no grid");
+        let revision = tabs.active().session.project().revision();
+
+        tabs.active_mut().toggle_decor_grid();
+        assert!(tabs.active().layout.leaf(left).expect("left").decor_grid(), "the active view shows the tiling");
+        assert!(!tabs.active().layout.leaf(right).expect("right").decor_grid(), "its neighbour does not");
+        assert_eq!(tabs.active().session.project().revision(), revision, "a view switch is never an edit");
+        // The spec the renderer receives is per view: the one leaf that asked for the grid carries
+        // the theme's weight in the screen's own pixels, and the other carries nothing at all.
+        let specs = tabs.active().view_specs(area, &regions, 2.0, settings.viewport.shadow_strength);
+        assert_eq!(specs.len(), 2);
+        let grid = specs[0].decor_grid.expect("the active view hands the renderer a grid");
+        assert_eq!(grid.half_width(), ui::theme::DECOR_GRID_STROKE, "one and a half points at two pixels a point");
+        assert_eq!(specs[1].decor_grid, None, "the neighbour hands the renderer none");
+
+        // A second document opens with its own workspace, and switching back finds the grid on.
+        let second_tab = tabs.add(open());
+        tabs.activate(second_tab);
+        assert!(!tabs.active().layout.active_decor_grid(), "a new document starts with the guide off");
+        tabs.activate(first_tab);
+        assert!(tabs.active().layout.leaf(left).expect("left").decor_grid(), "the tab kept its answer");
     }
 
     #[test]
@@ -5960,8 +6091,8 @@ mod tests {
         let session = crate::scene_build::demo_session().expect("the sample scene");
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
 
         document.toggle_view_projection();
         assert!(matches!(document.camera().projection(), Projection::Orthographic { .. }), "the view is orthographic");
@@ -5997,8 +6128,8 @@ mod tests {
         let revision = session.project().revision();
         let settings = Settings::default();
         let shell = Shell::default();
-        let mut document =
-            Document::new(None, &settings, &shell, session, PreservedSections::new()).expect("a headless document");
+        let mut document = Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+            .expect("a headless document");
         let active = document.layout.active();
         let wide = document.layout.active_camera().with_projection(Projection::Orthographic { height: 2_200_000.0 });
         document.layout.leaf_mut(active).expect("the active leaf").set_camera(wide);

@@ -214,7 +214,9 @@ fn light_icon(
                 Some(arrow_tip)
             })
         }
-        LightKind::Point => None,
+        // A window's glyph is its own pane and outline, which the frame carries: a circle on its
+        // centre would be a second mark for one object and would hide the face's extent (L2).
+        LightKind::Point | LightKind::Area => None,
     };
 
     Some(SceneIcon { id, kind: IconKind::Light, position, tip, body: None, circle: Some(LIGHT_RADIUS), segments })
@@ -347,7 +349,7 @@ mod tests {
     use eframe::egui;
     use egui::{Pos2, Rect, Vec2};
     use geom::{DQuat, DVec3};
-    use model::{CameraProjection, LightKind, Placement};
+    use model::{CameraProjection, LightSpec, Placement};
     use testkit::sample_project;
 
     use super::*;
@@ -372,7 +374,7 @@ mod tests {
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("camera");
         let away = Placement::new(DVec3::new(200.0, 0.0, 0.0), DQuat::IDENTITY).expect("placement");
-        let light = project.add_light(root, "Key", away, LightKind::Sun, [1.0; 3], 1.0).expect("light");
+        let light = project.add_light(root, "Key", away, LightSpec::sun([1.0; 3], 1.0)).expect("light");
         (project, camera, light)
     }
 
@@ -497,9 +499,9 @@ mod tests {
         let root = project.root().id();
         let turn = DQuat::from_rotation_y(std::f64::consts::FRAC_PI_2);
         let placement = Placement::new(DVec3::ZERO, turn).expect("placement");
-        let sun = project.add_light(root, "Sun", placement, LightKind::Sun, [1.0; 3], 1.0).expect("sun");
+        let sun = project.add_light(root, "Sun", placement, LightSpec::sun([1.0; 3], 1.0)).expect("sun");
         let point =
-            project.add_light(root, "Fill", Placement::IDENTITY, LightKind::Point, [1.0; 3], 1.0).expect("point light");
+            project.add_light(root, "Fill", Placement::IDENTITY, LightSpec::point([1.0; 3], 1.0)).expect("point light");
 
         let icons = icons(camera(), viewport(), &project, &[], &ViewFlags::default());
         let sun_icon = icons.iter().find(|icon| icon.id == sun).expect("sun icon");

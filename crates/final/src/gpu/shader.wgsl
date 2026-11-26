@@ -1,4 +1,4 @@
-// The final render's integrator: a path tracer with three lobes, next-event estimation and a
+// The final render's integrator: a path tracer with four lobes, next-event estimation and a
 // stratified sampler.
 //
 // This file is the transcription of the Rust beside it and nothing more: `sampler.rs` owns the
@@ -34,9 +34,13 @@
 
 const PI: f32 = 3.141592653589793;
 const MAX_POINT_LIGHTS: u32 = 8u;
+const MAX_AREA_LIGHTS: u32 = 4u;
 const MAX_STACK: u32 = 64u;
 // How far a ray must travel before it may hit anything: the camera's near plane, in millimetres.
 const T_MIN: f32 = 0.05;
+// How far a ray may travel before it hits nothing, which is also the distance a background pixel's
+// guide reports (`crate::denoise::FAR_AWAY`).
+const FAR_AWAY: f32 = 1.0e7;
 // How far off a surface a secondary ray starts, so it does not meet the face it left.
 const SURFACE_BIAS: f32 = 0.1;
 const TILE: u32 = 8u;
@@ -47,7 +51,7 @@ const RR_DEPTH: u32 = 3u;
 // The hard stop: a pane between two mirrors is a path that never ends.
 const MAX_BOUNCES: u32 = 24u;
 // The dimensions the Sobol generator carries, which is `sampler::DIMENSIONS`.
-const DIMENSIONS: u32 = 4u;
+const DIMENSIONS: u32 = 8u;
 // The energy table's resolution, which is `bsdf::ENERGY_STEPS`.
 const ENERGY_STEPS: u32 = 16u;
 // The smallest roughness the lobes are evaluated at, which is `bsdf::MIN_ROUGHNESS`.
@@ -59,14 +63,15 @@ struct Face {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<f32>,
+    // rgb: linear albedo; w: the coat's weight, the share of the surface its layer covers.
     colour: vec4<f32>,
     // x: roughness, y: metallic, z: the index of refraction, w: transmission.
     finish: vec4<f32>,
-    // rgb: Beer-Lambert extinction per millimetre.
+    // rgb: Beer-Lambert extinction per millimetre; w: the coat's GGX alpha.
     tint: vec4<f32>,
     // The decor's coordinate at the first two corners: xy the first, zw the second.
     uv_a: vec4<f32>,
-    // The third corner's coordinate in xy.
+    // The third corner's coordinate in xy; z: the coat's index of refraction.
     uv_b: vec4<f32>,
     // x: the picture's index plus one, or zero for a surface with no decor.
     decor: vec4<u32>,
@@ -85,6 +90,23 @@ struct Node {
     info: vec4<u32>,
 };
 
+// One pixel of a strip: its samples' sums and what its primary ray met.
+//
+// It is one buffer because a compute shader has eight storage bindings in a stage and the frame takes
+// six, and because one sample writes all four vectors anyway. The sums and the guide die with the
+// strip: the host reads them once, averages them, filters them, and keeps only the picture.
+struct Pixel {
+    // xyz: the sum of the samples' radiance; w: how many samples there are.
+    sum: vec4<f32>,
+    // xyz: the sum of the squares of those samples, which is the variance's numerator.
+    squares: vec4<f32>,
+    // xyz: the linear albedo of the face the ray met, or the studio where it met nothing;
+    // w: how far the ray travelled in millimetres, or FAR_AWAY.
+    albedo: vec4<f32>,
+    // xyz: the shading normal that faced the ray, or the ray's own direction where it met nothing.
+    normal: vec4<f32>,
+};
+
 struct Uniform {
     eye: vec4<f32>,
     right: vec4<f32>,
@@ -95,8 +117,12 @@ struct Uniform {
     view: vec4<f32>,
     // x: the face count; y: the node count; z: the sample index; w: the point-light count.
     counts: vec4<u32>,
-    // x: the first image row of this strip; y: its row count.
+    // x: the first image row of this strip; y: its row count; z and w: unused.
     strip: vec4<u32>,
+    // x: the fewest samples a pixel takes before it may retire; y: the relative error a finished image
+    // is held to; z: the dimmest light a relative error is measured against (`crate::denoise::MIN_SAMPLES`,
+    // `TARGET_RELATIVE_ERROR` and `LIGHT_FLOOR`); w: unused.
+    denoise: vec4<f32>,
     // xyz: the key light's irradiance; w: one when it exists.
     key: vec4<f32>,
     key_direction: vec4<f32>,
@@ -111,6 +137,22 @@ struct Uniform {
     point_alias: array<vec4<u32>, 2>,
     // The share of the light each point light carries, which is the density of a pick.
     point_share: array<vec4<f32>, 2>,
+    // The rectangular lights: a window, a softbox or a strip (L2). `xyz` is the centre of the face and
+    // the two half-edges lie in its own plane, so a corner is `origin +- half_width +- half_height`.
+    area_origin: array<vec4<f32>, 4>,
+    area_half_width: array<vec4<f32>, 4>,
+    area_half_height: array<vec4<f32>, 4>,
+    // xyz: the radiance the face emits; w: its area in square millimetres.
+    area_radiance: array<vec4<f32>, 4>,
+    // x: how many rectangular lights the frame carries.
+    area_count: vec4<u32>,
+    // The alias table of the rectangles, by emitted power, in the point lights' own shape.
+    area_probability: vec4<f32>,
+    area_alias: vec4<u32>,
+    area_share: vec4<f32>,
+    // x: the lens radius in millimetres; y: the distance it focuses at; z: one when this view has a
+    // lens at all, which an orthographic view never does (Y5).
+    lens: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Uniform;
@@ -127,8 +169,8 @@ struct Uniform {
 // same arithmetic instead of trusting two views of it to agree.
 @group(0) @binding(5) var<storage, read> decor_texels: array<u32>;
 @group(0) @binding(6) var<storage, read> decor_entries: array<Decor>;
-// The accumulator: one `vec4` per pixel, summed over samples and divided by the count in `crate::image`.
-@group(1) @binding(0) var<storage, read_write> accum: array<vec4<f32>>;
+// One strip's pixels: their sums, their second moment and their guide, in one buffer.
+@group(1) @binding(0) var<storage, read_write> pixels: array<Pixel>;
 
 struct Ray {
     origin: vec3<f32>,
@@ -151,6 +193,10 @@ struct Material {
     ior: f32,
     transmission: f32,
     absorption: vec3<f32>,
+    // The clear layer over the base (ADR 0243): its coverage, its GGX alpha and its own index.
+    coat_weight: f32,
+    coat_alpha: f32,
+    coat_ior: f32,
 };
 
 // The probability each lobe of one scattering event is drawn with, which adds up to one.
@@ -158,6 +204,7 @@ struct Probabilities {
     diffuse: f32,
     specular: f32,
     completion: f32,
+    coat: f32,
     transmitted: f32,
 };
 
@@ -511,7 +558,28 @@ fn material_of(face: Face, point: vec3<f32>) -> Material {
     material.ior = max(face.finish.z, 1.0);
     material.transmission = clamp(face.finish.w, 0.0, 1.0);
     material.absorption = max(face.tint.rgb, vec3<f32>(0.0));
+    // The layer rides in the channels the face had spare, so a face keeps its 144 bytes.
+    material.coat_weight = clamp(face.colour.w, 0.0, 1.0);
+    material.coat_alpha = clamp(face.tint.w, 0.0, 1.0);
+    material.coat_ior = max(face.uv_b.z, 1.0);
     return material;
+}
+
+// The coat's GGX width, which is never a Dirac delta. `Coat::alpha` in `bsdf.rs`.
+fn coat_alpha_of(material: Material) -> f32 {
+    return max(material.coat_alpha, MIN_ROUGHNESS);
+}
+
+// The Fresnel reflectance of the layer at `cos`, times the share of the surface it covers, which is
+// `bsdf::Coat::reflectance`. One number serves the layer's lobe and the base's transmittance (ADR
+// 0243): what the coat reflects is what the base does not see.
+fn coat_reflectance(material: Material, cos: f32) -> f32 {
+    return material.coat_weight * fresnel_dielectric(cos, material.coat_ior);
+}
+
+// The share of the base's light the coat passes at `cos`, `1 - weight * F`, as `Material::transmittance`.
+fn coat_transmittance(material: Material, cos: f32) -> f32 {
+    return clamp(1.0 - coat_reflectance(material, cos), 0.0, 1.0);
 }
 
 fn alpha_of(material: Material) -> f32 {
@@ -533,7 +601,9 @@ fn distribution(cos_h: f32, alpha: f32) -> f32 {
 }
 
 fn lambda_(cos: f32, alpha: f32) -> f32 {
-    let c = clamp(cos, 1.0e-6, 1.0);
+    // The term is a function of the angle from the normal, so a transmitted direction enters it with
+    // the magnitude of its cosine: `bsdf::lambda`.
+    let c = clamp(abs(cos), 1.0e-6, 1.0);
     let tan2 = (1.0 - c * c) / (c * c);
     let root = 1.0 + alpha * alpha * tan2;
     if (!(root < 1.0e30)) {
@@ -571,10 +641,53 @@ fn fresnel_dielectric(cos_i_in: f32, eta: f32) -> f32 {
 }
 
 fn refract(wo: vec3<f32>, eta: f32) -> vec3<f32> {
-    let cos_i = clamp(wo.z, 0.0, 1.0);
+    return refract_about(wo, vec3<f32>(0.0, 0.0, 1.0), eta);
+}
+
+// The transmitted direction through a microfacet faced by `h`: Snell's law at the microsurface, which
+// is `bsdf::refract_about`. An invalid direction is the caller's rejection, `safe_normalize`'s zero.
+fn refract_about(wo: vec3<f32>, h: vec3<f32>, eta: f32) -> vec3<f32> {
+    let cos_i = clamp(dot(wo, h), 0.0, 1.0);
     let sin2_t = (1.0 - cos_i * cos_i) / (eta * eta);
+    if (sin2_t >= 1.0) {
+        // Total internal reflection at this microfacet: nothing crosses it, and the zero direction is
+        // how the caller reads the refusal.
+        return vec3<f32>(0.0);
+    }
     let cos_t = sqrt(max(0.0, 1.0 - sin2_t));
-    return vec3<f32>(-wo.x / eta, -wo.y / eta, -cos_t);
+    return safe_normalize(-wo / eta + h * (cos_i / eta - cos_t));
+}
+
+// The microfacet that refracts `wo` towards `wi`, which is `bsdf::transmissive_normal`.
+fn transmissive_normal(wo: vec3<f32>, wi: vec3<f32>, eta: f32) -> vec3<f32> {
+    let sum = safe_normalize(wo + wi * eta);
+    let h = select(sum, -sum, eta > 1.0);
+    if (h.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    return h;
+}
+
+// The density of one transmitted direction under visible-normal sampling, which is
+// `bsdf::transmission_pdf`: the density of the normal times the Jacobian of the refraction.
+fn transmission_pdf(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, eta: f32) -> f32 {
+    if (wo.z <= 0.0 || wi.z >= 0.0) {
+        return 0.0;
+    }
+    let h = transmissive_normal(wo, wi, eta);
+    let cos_h = dot(wo, h);
+    let length_squared = dot(wo + wi * eta, wo + wi * eta);
+    if (cos_h <= 0.0 || !(length_squared > 0.0)) {
+        return 0.0;
+    }
+    let g1 = 1.0 / (1.0 + lambda_(wo.z, alpha));
+    let density = distribution(h.z, alpha) * g1 * cos_h / wo.z;
+    let jacobian = eta * eta * abs(dot(wi, h)) / length_squared;
+    let value = density * jacobian;
+    if (!(value > 0.0)) {
+        return 0.0;
+    }
+    return value;
 }
 
 // Heitz's visible-normal sampling, with the warp that makes it the visible distribution rather than a
@@ -627,6 +740,25 @@ fn ggx_eval(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, f0: vec3<f32>) -> vec3<f32
     let g = masking(wo.z, wi.z, alpha);
     let f = fresnel_schlick(clamp(dot(wo, h), 0.0, 1.0), f0);
     return f * (d * g / (4.0 * wo.z * wi.z));
+}
+
+// The GGX lobe's value with one reflectance for the whole event, which is the coat's lobe: the layer's
+// Fresnel is the split of the beam and not a function of the half angle (ADR 0243), so the weight a
+// coat draw is taken with is the microfacet's own `G2 / G1` and a lacquer draws no fireflies.
+fn ggx_eval_constant(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, reflectance: vec3<f32>) -> vec3<f32> {
+    if (wo.z <= 0.0 || wi.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = safe_normalize(wo + wi);
+    if (h.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let d = distribution(h.z, alpha);
+    if (d <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let g = masking(wo.z, wi.z, alpha);
+    return reflectance * (d * g / (4.0 * wo.z * wi.z));
 }
 
 fn ggx_eval_dielectric(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, eta: f32) -> vec3<f32> {
@@ -737,6 +869,8 @@ fn probabilities_of(material: Material, wo: vec3<f32>, inside: bool) -> Probabil
     probabilities.completion = 0.0;
     probabilities.transmitted = 0.0;
     if (is_pane(material)) {
+        // A pane is its own interface and is never a coat (ADR 0243): what is not reflected is crossed,
+        // smoothly at zero roughness and about the visible normal above it.
         let reflectance = fresnel_dielectric(wo.z, interface_ratio(material, inside));
         probabilities.specular = reflectance;
         probabilities.transmitted = 1.0 - reflectance;
@@ -747,9 +881,13 @@ fn probabilities_of(material: Material, wo: vec3<f32>, inside: bool) -> Probabil
     if (metal > 0.0) {
         multiple = multiple_scatter_probability(material.albedo, material.roughness);
     }
-    probabilities.diffuse = 1.0 - metal;
-    probabilities.specular = metal * (1.0 - multiple);
-    probabilities.completion = metal * multiple;
+    // The coat takes the share of the draws its own reflectance names and leaves the base the rest.
+    let coat = coat_reflectance(material, wo.z);
+    let base = 1.0 - coat;
+    probabilities.diffuse = (1.0 - metal) * base;
+    probabilities.specular = metal * (1.0 - multiple) * base;
+    probabilities.completion = metal * multiple * base;
+    probabilities.coat = coat;
     return probabilities;
 }
 
@@ -762,15 +900,45 @@ fn bsdf_eval(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> 
         return ggx_eval_dielectric(wo, wi, alpha, interface_ratio(material, inside));
     }
     let metal = material.metallic;
+    // The base is seen through the coat, so every base term carries the layer's transmittance.
+    let transmittance = coat_transmittance(material, wo.z);
     var total = vec3<f32>(0.0);
     if (metal > 0.0) {
-        total = total + ggx_eval(wo, wi, alpha, material.albedo) * metal;
-        total = total + multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness) * metal;
+        total = total + ggx_eval(wo, wi, alpha, material.albedo) * (metal * transmittance);
+        total = total + multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness) * (metal * transmittance);
     }
     if (metal < 1.0) {
-        total = total + material.albedo * ((1.0 - metal) / PI);
+        total = total + material.albedo * ((1.0 - metal) * transmittance / PI);
+    }
+    // The coat's own reflection, at its own width and with one Fresnel for the whole event.
+    if (material.coat_weight > 0.0) {
+        let reflectance = vec3<f32>(coat_reflectance(material, wo.z));
+        total = total + ggx_eval_constant(wo, wi, coat_alpha_of(material), reflectance);
     }
     return total;
+}
+
+// The mixture density of the surface's continuous lobes at `(wo, wi)`, which is `bsdf::pdf`.
+//
+// A light sample is taken with this weight: the path it finds could also have been found by a sample
+// of the surface, so the two strategies share it instead of counting it twice. Only the lobes above the
+// surface are in the sum: a pane's transmitted beam crosses below, and the density of the direction
+// `sample_bsdf` draws there is what the scatter carries.
+fn bsdf_pdf(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> f32 {
+    if (wo.z <= 0.0 || wi.z <= 0.0) {
+        return 0.0;
+    }
+    let alpha = alpha_of(material);
+    let probabilities = probabilities_of(material, wo, inside);
+    let cosine = (probabilities.diffuse + probabilities.completion) * wi.z / PI;
+    // The coat's lobe has its own width, so its density is not the conductor's.
+    let density = probabilities.specular * ggx_pdf(wo, wi, alpha)
+        + probabilities.coat * ggx_pdf(wo, wi, coat_alpha_of(material))
+        + cosine;
+    if (!(density > 0.0)) {
+        return 0.0;
+    }
+    return density;
 }
 
 fn sample_cosine(u: vec2<f32>) -> vec3<f32> {
@@ -814,15 +982,50 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
         if (probabilities.transmitted <= 0.0) {
             return scatter;
         }
-        let wi = refract(wo, ratio);
+        // A clear pane keeps the smooth beam it always had: a roughness of zero draws no normal, so the
+        // picture is yesterday's, sample for sample (ADR 0243 keeps a pane off the coat's path).
+        if (material.roughness <= 0.0) {
+            let wi = refract(wo, ratio);
+            scatter.valid = true;
+            scatter.direction = wi;
+            scatter.weight = vec3<f32>(material.transmission * ratio * ratio);
+            scatter.pdf = max(probabilities.transmitted, 1.0e-9);
+            scatter.transmitted = true;
+            return scatter;
+        }
+        // A frosted pane meets the same visible normal the reflection lobe draws and refracts about it
+        // (Walter et al. 2007, §4): the weight is the face's Fresnel over the split's own, its `eta²`
+        // radiance gain and the microfacet's `G2 / G1`, because the Jacobian of the refraction cancels
+        // against the density the normal is drawn with. A facet past the critical angle crosses nothing.
+        let h = sample_visible_normal(wo, alpha, u);
+        let cos_h = dot(wo, h);
+        if (cos_h <= 0.0) {
+            return scatter;
+        }
+        let wi = refract_about(wo, h, ratio);
+        if (dot(wi, wi) <= 0.0 || wi.z >= 0.0) {
+            return scatter;
+        }
+        let crossing = 1.0 - fresnel_dielectric(clamp(cos_h, 0.0, 1.0), ratio);
+        if (!(crossing > 0.0)) {
+            return scatter;
+        }
+        let keep = masking(wo.z, wi.z, alpha) * (1.0 + lambda_(wo.z, alpha));
         scatter.valid = true;
         scatter.direction = wi;
-        scatter.weight = vec3<f32>(material.transmission * ratio * ratio);
-        scatter.pdf = max(probabilities.transmitted, 1.0e-9);
+        scatter.weight = vec3<f32>(material.transmission * crossing * ratio * ratio * keep / max(probabilities.transmitted, 1.0e-9));
+        scatter.pdf = probabilities.transmitted * transmission_pdf(wo, wi, alpha, ratio);
         scatter.transmitted = true;
         return scatter;
     }
     let metal = material.metallic;
+    // The shares the base lobes are drawn from before the coat takes its own: the transmittance
+    // scales a lobe's value and its draw probability alike, so it cancels out of `f |cos| / pdf`
+    // and only decides how often the lobe is drawn.
+    var multiple = 0.0;
+    if (metal > 0.0) {
+        multiple = multiple_scatter_probability(material.albedo, material.roughness);
+    }
     if (pick < probabilities.diffuse) {
         let wi = sample_cosine(u);
         scatter.valid = true;
@@ -834,10 +1037,33 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
     if (pick < probabilities.diffuse + probabilities.completion) {
         let wi = sample_cosine(u);
         let value = multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness);
+        let share = metal * multiple;
         scatter.valid = true;
         scatter.direction = wi;
-        scatter.weight = value * (PI / max(probabilities.completion, 1.0e-9));
+        scatter.weight = value * (PI / max(share, 1.0e-9));
         scatter.pdf = probabilities.completion * wi.z / PI;
+        return scatter;
+    }
+    let coat_turn = probabilities.diffuse + probabilities.completion + probabilities.specular;
+    if (probabilities.coat > 0.0 && pick >= coat_turn) {
+        // The layer's own reflection, at its own width: the same visible-normal draw and the same
+        // masking the conductor uses, weighted by the layer's Fresnel and the share it covers.
+        let coat_alpha = coat_alpha_of(material);
+        let h = sample_visible_normal(wo, coat_alpha, u);
+        let dot_oh = dot(wo, h);
+        if (dot_oh <= 0.0) {
+            return scatter;
+        }
+        let wi = h * (2.0 * dot_oh) - wo;
+        if (wi.z <= 0.0) {
+            return scatter;
+        }
+        let keep = masking(wo.z, wi.z, coat_alpha) * (1.0 + lambda_(wo.z, coat_alpha));
+        let reflectance = coat_reflectance(material, wo.z);
+        scatter.valid = true;
+        scatter.direction = wi;
+        scatter.weight = vec3<f32>(reflectance * keep / max(probabilities.coat, 1.0e-9));
+        scatter.pdf = probabilities.coat * ggx_pdf(wo, wi, coat_alpha);
         return scatter;
     }
     let h = sample_visible_normal(wo, alpha, u);
@@ -851,9 +1077,10 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
     }
     let fresnel = fresnel_schlick(clamp(dot_oh, 0.0, 1.0), material.albedo);
     let keep = masking(wo.z, wi.z, alpha) * (1.0 + lambda_(wo.z, alpha));
+    let base = metal * (1.0 - multiple);
     scatter.valid = true;
     scatter.direction = wi;
-    scatter.weight = fresnel * (keep * metal / max(probabilities.specular, 1.0e-9));
+    scatter.weight = fresnel * (keep * metal / max(base, 1.0e-9));
     scatter.pdf = probabilities.specular * ggx_pdf(wo, wi, alpha);
     return scatter;
 }
@@ -901,13 +1128,125 @@ fn balance(first: f32, second: f32) -> f32 {
     return clamp(a * a / squares, 0.0, 1.0);
 }
 
-// The direct light one vertex receives from the key light and one point light drawn by emitted power.
+// ---------------------------------------------------------------------------------------------------
+// The rectangular lights: a window is a face, and a face is sampled by solid angle.
+// ---------------------------------------------------------------------------------------------------
+
+fn area_threshold(index: u32) -> f32 {
+    return camera.area_probability[index % 4u];
+}
+
+fn area_alias_of(index: u32) -> u32 {
+    return camera.area_alias[index % 4u];
+}
+
+fn area_share_of(index: u32) -> f32 {
+    return camera.area_share[index % 4u];
+}
+
+// The same alias draw the point lights use, over the rectangles' emitted power.
+fn pick_area_light(u: vec2<f32>) -> u32 {
+    let count = camera.area_count.x;
+    if (count == 0u) {
+        return NO_LIGHT;
+    }
+    let scaled = clamp(u.x, 0.0, 1.0) * f32(count);
+    let column = min(u32(scaled), count - 1u);
+    if ((scaled - f32(column)) < area_threshold(column)) {
+        return column;
+    }
+    return area_alias_of(column);
+}
+
+// The unit normal of a rectangle's face, which points the way it emits.
+//
+// The ring the frame builds runs counter-clockwise seen from the emitting side, so its normal is the
+// cross of the *height* edge into the width edge — the order `AreaLight::corners` writes (L2). The
+// other order would make every window emit into the wall behind it.
+fn area_normal(index: u32) -> vec3<f32> {
+    return safe_normalize(cross(camera.area_half_height[index].xyz, camera.area_half_width[index].xyz));
+}
+
+// One point of the face, uniform over its area: `u` and `v` in `[0, 1)` are the two halves.
+fn area_point(index: u32, u: vec2<f32>) -> vec3<f32> {
+    let across = camera.area_half_width[index].xyz * (2.0 * u.x - 1.0);
+    let down = camera.area_half_height[index].xyz * (2.0 * u.y - 1.0);
+    return camera.area_origin[index].xyz + across + down;
+}
+
+// The density of one point of a face being drawn: uniform over the area, converted from square
+// millimetres to a solid angle at `seen_from`, divided by the cosine the face presents there.
+//
+// It is the density of the *face*, not of the strategy: a caller multiplies it by the share the alias
+// table gave the light, so both strategies price one path the same way (L2).
+fn area_pdf(index: u32, point: vec3<f32>, seen_from: vec3<f32>) -> f32 {
+    let area = camera.area_radiance[index].a;
+    if (!(area > 0.0)) {
+        return 0.0;
+    }
+    let to_light = point - seen_from;
+    let distance_squared = dot(to_light, to_light);
+    if (!(distance_squared > 0.0)) {
+        return 0.0;
+    }
+    let direction = to_light * inverseSqrt(distance_squared);
+    let cosine = abs(dot(area_normal(index), direction));
+    if (!(cosine > 1.0e-6)) {
+        return 0.0;
+    }
+    return distance_squared / (area * cosine);
+}
+
+// The distance to the face of rectangle `index` along `ray`, or -1 for no hit or a point outside it.
+fn intersect_area(ray: Ray, index: u32, t_max: f32) -> f32 {
+    let origin = camera.area_origin[index].xyz;
+    let normal = area_normal(index);
+    let denominator = dot(normal, ray.direction);
+    if (abs(denominator) <= 1.0e-9) {
+        return -1.0;
+    }
+    let t = dot(origin - ray.origin, normal) / denominator;
+    if (t <= T_MIN || t >= t_max) {
+        return -1.0;
+    }
+    let point = ray.origin + ray.direction * t;
+    let local = point - origin;
+    let across = camera.area_half_width[index].xyz;
+    let down = camera.area_half_height[index].xyz;
+    let a = dot(local, across) / max(dot(across, across), 1.0e-9);
+    let b = dot(local, down) / max(dot(down, down), 1.0e-9);
+    if (abs(a) > 1.0 || abs(b) > 1.0) {
+        return -1.0;
+    }
+    return t;
+}
+
+// The nearest face of any rectangle along the ray, or -1 for none. The index is the one the alias
+// table and the radiance array share.
+fn trace_area(ray: Ray, t_max: f32) -> i32 {
+    var best = t_max;
+    var found = -1;
+    let count = min(camera.area_count.x, MAX_AREA_LIGHTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let t = intersect_area(ray, index, best);
+        if (t > 0.0) {
+            best = t;
+            found = i32(index);
+        }
+    }
+    return found;
+}
+
+// The direct light one vertex receives from the key light, one point light drawn by emitted power,
+// and one rectangle drawn by emitted power and sampled by solid angle.
 fn direct_light(
     material: Material,
     frame: Frame,
     wo: vec3<f32>,
     position: vec3<f32>,
     u: vec2<f32>,
+    pick: vec2<f32>,
+    across_down: vec2<f32>,
     inside: bool,
 ) -> vec3<f32> {
     var radiance = vec3<f32>(0.0);
@@ -922,36 +1261,79 @@ fn direct_light(
             }
         }
     }
+    // One point light, drawn by emitted power. Every way out of this block is a *continue*, not a
+    // return: the rectangles below are a second strategy and must run whatever the draw landed on.
     let picked = pick_point_light(u);
-    if (picked == NO_LIGHT || picked >= camera.counts.w) {
-        return radiance;
+    if (picked != NO_LIGHT && picked < camera.counts.w) {
+        let share = point_share(picked);
+        let to_light = camera.point_position[picked].xyz - position;
+        let distance_squared = dot(to_light, to_light);
+        if (share > 0.0 && distance_squared > 0.0) {
+            let distance = sqrt(distance_squared);
+            let direction = to_light / distance;
+            let local = to_local(frame, direction);
+            let origin = position + frame.normal * SURFACE_BIAS;
+            if (local.z > 0.0 && !occluded(origin, direction, distance - SURFACE_BIAS)) {
+                let value = bsdf_eval(material, wo, local, inside);
+                // A point light's radiant power is watts: the irradiance it gives a surface is
+                // `power / (4 PI d^2)`, and it is never cut off at a range (ADR 0039).
+                let irradiance = camera.point_colour[picked].a / (4.0 * PI * distance_squared);
+                let mis = balance(1.0 / share, 0.0);
+                radiance = radiance + value * local.z * camera.point_colour[picked].rgb * irradiance * (mis / share);
+            }
+        }
     }
-    let share = point_share(picked);
+    return radiance + area_light(material, frame, wo, position, pick, across_down, inside);
+}
+
+// The light one rectangular emitter gives a vertex: a point on its face, the shadow ray to it, and
+// the two strategies' weights. The face is drawn by solid angle, so `pdf` is a per-steradian density
+// and the surface's own density for the same direction competes with it (L2).
+fn area_light(
+    material: Material,
+    frame: Frame,
+    wo: vec3<f32>,
+    position: vec3<f32>,
+    pick: vec2<f32>,
+    across_down: vec2<f32>,
+    inside: bool,
+) -> vec3<f32> {
+    let picked = pick_area_light(pick);
+    if (picked == NO_LIGHT || picked >= min(camera.area_count.x, MAX_AREA_LIGHTS)) {
+        return vec3<f32>(0.0);
+    }
+    let share = area_share_of(picked);
     if (!(share > 0.0)) {
-        return radiance;
+        return vec3<f32>(0.0);
     }
-    let to_light = camera.point_position[picked].xyz - position;
+    let point = area_point(picked, across_down);
+    let to_light = point - position;
     let distance_squared = dot(to_light, to_light);
-    if (distance_squared <= 0.0) {
-        return radiance;
+    if (!(distance_squared > 0.0)) {
+        return vec3<f32>(0.0);
     }
     let distance = sqrt(distance_squared);
     let direction = to_light / distance;
+    // The face emits from one side: a vertex behind it sees nothing.
+    if (dot(area_normal(picked), direction) >= 0.0) {
+        return vec3<f32>(0.0);
+    }
     let local = to_local(frame, direction);
     if (local.z <= 0.0) {
-        return radiance;
+        return vec3<f32>(0.0);
+    }
+    let density = area_pdf(picked, point, position);
+    if (!(density > 0.0)) {
+        return vec3<f32>(0.0);
     }
     let origin = position + frame.normal * SURFACE_BIAS;
     if (occluded(origin, direction, distance - SURFACE_BIAS)) {
-        return radiance;
+        return vec3<f32>(0.0);
     }
     let value = bsdf_eval(material, wo, local, inside);
-    // A point light's radiant power is watts: the irradiance it gives a surface is
-    // `power / (4 PI d^2)`, and it is never cut off at a range (ADR 0039).
-    let irradiance = camera.point_colour[picked].a / (4.0 * PI * distance_squared);
-    let mis = balance(1.0 / share, 0.0);
-    return radiance
-        + value * local.z * camera.point_colour[picked].rgb * irradiance * (mis / share);
+    let pdf = share * density;
+    let mis = balance(pdf, bsdf_pdf(material, wo, local, inside));
+    return value * local.z * camera.area_radiance[picked].rgb * (mis / pdf);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -961,7 +1343,11 @@ fn direct_light(
 // The camera ray of one sample, built the way `view::camera_ray` builds it: the sample is the pixel's
 // centre plus a jitter inside the pixel, the normalised coordinate grows upwards while the row index
 // grows downwards, and the projection is the viewport's own.
-fn camera_ray(sample_position: vec2<f32>) -> Ray {
+//
+// A lens bends the same ray: `lens_sample` is a point of the unit square, which becomes a point of the
+// lens disc, and the ray runs from there to the point of the focal plane the pinhole ray would have
+// met (`view::camera_ray_through`, Y5). A pinhole takes the pinhole branch and costs one comparison.
+fn camera_ray(sample_position: vec2<f32>, lens_sample: vec2<f32>) -> Ray {
     let width = camera.view.z;
     let height = camera.view.w;
     let x = clamp(sample_position.x / width * 2.0 - 1.0, -16.0, 16.0);
@@ -975,7 +1361,92 @@ fn camera_ray(sample_position: vec2<f32>) -> Ray {
     }
     let direction =
         camera.forward.xyz + camera.right.xyz * (x * half_height * aspect) + camera.up.xyz * (y * half_height);
+    if (camera.lens.z > 0.5 && camera.lens.x > 0.0) {
+        let cosine = dot(safe_normalize(direction), camera.forward.xyz);
+        if (cosine > 1.0e-9) {
+            let focal = camera.eye.xyz + direction * (camera.lens.y / cosine);
+            let disc = concentric_disc(lens_sample) * camera.lens.x;
+            let lens_point = camera.eye.xyz + camera.right.xyz * disc.x + camera.up.xyz * disc.y;
+            return make_ray(lens_point, focal - lens_point);
+        }
+    }
     return make_ray(camera.eye.xyz, direction);
+}
+
+// The concentric map of Shirley and Chiu, which is `sampler::concentric_disc`: a point of the unit
+// square becomes a point of the unit disc, uniform by area, with no seam running out of its middle.
+fn concentric_disc(u: vec2<f32>) -> vec2<f32> {
+    let x = 2.0 * u.x - 1.0;
+    let y = 2.0 * u.y - 1.0;
+    if (x == 0.0 && y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    var radius = x;
+    var angle = 0.7853981633974483 * (y / x);
+    if (abs(x) <= abs(y)) {
+        radius = y;
+        angle = 1.5707963267948966 - 0.7853981633974483 * (x / y);
+    }
+    return vec2<f32>(radius * cos(angle), radius * sin(angle));
+}
+
+// The variance of the mean of `count` samples, from their sum and their sum of squares, exactly as
+// `crate::denoise::variance_of_mean` writes it: the unbiased sample variance divided by the count
+// again. The two implementations are one formula, and the test that renders a shape whose variance is
+// known is what keeps them one.
+fn variance_of_mean(sum: vec3<f32>, squares: vec3<f32>, count: f32) -> vec3<f32> {
+    if (!(count > 1.0)) {
+        return vec3<f32>(0.0);
+    }
+    let denominator = count * (count - 1.0);
+    return max(vec3<f32>(0.0), (squares - sum * sum / count) / denominator);
+}
+
+// The luminance of a colour, Rec. 709's weights, as `crate::denoise::luminance` writes them.
+fn luminance_of(colour: vec3<f32>) -> f32 {
+    return dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Whether a pixel has taken enough samples and has a small enough error to stop being traced:
+// `crate::denoise::retires`, whose threshold arrives in `camera.denoise`.
+fn retires(pixel: u32) -> bool {
+    let count = pixels[pixel].sum.w;
+    if (count < camera.denoise.x) {
+        return false;
+    }
+    let mean = pixels[pixel].sum.xyz / count;
+    let variance = variance_of_mean(pixels[pixel].sum.xyz, pixels[pixel].squares.xyz, count);
+    let light = max(luminance_of(mean), camera.denoise.z);
+    let width = sqrt(max(luminance_of(variance), 0.0));
+    return width / light < camera.denoise.y;
+}
+
+// What the primary ray meets, as the filter reads it: the surface's albedo, the normal facing the ray
+// and the distance. One ray, from the pixel's centre, and the same three answers the path's first
+// bounce would give — a light's face, a body, or the studio (Y4, Y6).
+fn write_guide(pixel: u32, guide_ray: Ray) {
+    let hit = trace(guide_ray, FAR_AWAY);
+    let face_of_light = trace_area(guide_ray, select(FAR_AWAY, hit.t, hit.t > 0.0));
+    if (face_of_light >= 0) {
+        let index = u32(face_of_light);
+        let distance = intersect_area(guide_ray, index, FAR_AWAY);
+        let normal = area_normal(index);
+        let emitting = dot(normal, guide_ray.direction) < 0.0;
+        // The guide faces the ray, exactly as a body's hit normal does, so the filter compares two
+        // normals written the same way.
+        pixels[pixel].albedo = vec4<f32>(camera.area_radiance[index].rgb, distance);
+        pixels[pixel].normal = vec4<f32>(select(-normal, normal, emitting), 0.0);
+        return;
+    }
+    if (hit.t > 0.0) {
+        let point = guide_ray.origin + guide_ray.direction * hit.t;
+        let material = material_of(faces[hit.face], point);
+        pixels[pixel].albedo = vec4<f32>(material.albedo, hit.t);
+        pixels[pixel].normal = vec4<f32>(hit.normal, 0.0);
+        return;
+    }
+    pixels[pixel].albedo = vec4<f32>(camera.environment.xyz, FAR_AWAY);
+    pixels[pixel].normal = vec4<f32>(-guide_ray.direction, 0.0);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -985,15 +1456,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let pixel = id.y * width + id.x;
-    if (pixel >= arrayLength(&accum)) {
+    if (pixel >= arrayLength(&pixels)) {
+        return;
+    }
+    // A converged pixel costs nothing from here on: the sample it would take cannot move its mean
+    // further than the image tolerates, and the count it stops at is the divisor the host averages by.
+    if (retires(pixel)) {
         return;
     }
     let sample = camera.counts.z;
     let pixel_seed = hash(pixel * 0x9e3779b9u ^ (sample + 1u) * 0x85ebca6bu);
     let jitter = sample_pair(0u, sample, pixel_seed) - vec2<f32>(0.5);
+    // The lens of one sample is the sampler's second pair, which is the eye's own: the pixel's jitter
+    // and the point on the lens are the two draws a person notices first, so they keep the
+    // sequence's stratification (Y5).
+    let lens_sample = sample_pair(1u, sample, pixel_seed);
     // The row is the image's own row, not the strip's: the camera ray must not know about strips.
     let row = f32(camera.strip.x + id.y);
-    var ray = camera_ray(vec2<f32>(f32(id.x), row) + vec2<f32>(0.5) + jitter);
+    let centre = vec2<f32>(f32(id.x), row) + vec2<f32>(0.5);
+    // The guide is what the filter knows about this pixel, so it is the pixel's own centre ray and
+    // not the jittered sample: a guide taken through a random sub-pixel offset is noise of its own,
+    // and a board's grain is exactly what it has to stop the filter at (Y4, Y9).
+    if (sample == 0u) {
+        write_guide(pixel, camera_ray(centre, vec2<f32>(0.5, 0.5)));
+    }
+    var ray = camera_ray(centre + jitter, lens_sample);
 
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
@@ -1002,8 +1489,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var extinction = vec3<f32>(0.0);
     var inside = false;
     var bounce = 0u;
+    // The density of the surface sample that produced the current ray, which is what a rectangle the
+    // ray walks into is weighted against: the path could have been found by a light sample too (L2).
+    var previous_pdf = 0.0;
     loop {
-        let hit = trace(ray, 1.0e7);
+        let hit = trace(ray, FAR_AWAY);
+        let face_of_light = trace_area(ray, select(FAR_AWAY, hit.t, hit.t > 0.0));
+        if (face_of_light >= 0) {
+            // A rectangle is opaque and emits from one side: a ray that walks into its back is black,
+            // and one that walks into its front ends the path with the face's radiance.
+            let index = u32(face_of_light);
+            let distance = intersect_area(ray, index, FAR_AWAY);
+            let point = ray.origin + ray.direction * distance;
+            let normal = area_normal(index);
+            let emitting = dot(normal, ray.direction) < 0.0;
+            if (emitting) {
+                // What a light sample would have paid for this path: the face's own density times the
+                // share the alias table gave it, so the two strategies share one path exactly.
+                let light_pdf = area_share_of(index) * area_pdf(index, point, ray.origin);
+                let weight = select(1.0, balance(previous_pdf, light_pdf), bounce > 0u);
+                radiance = radiance + throughput * camera.area_radiance[index].rgb * weight;
+            }
+            break;
+        }
         if (hit.t <= 0.0) {
             // Nothing there: what the ray sees is the environment, which is the studio the workshop
             // does not build.
@@ -1023,11 +1531,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let bounce_seed = hash(pixel_seed ^ hash(bounce * 2u + 1u));
         let u = sample_pair(0u, sample, bounce_seed);
         let pick = sample_1d(2u, sample, bounce_seed);
-        radiance = radiance + throughput * direct_light(material, frame, wo, position, u, inside);
+        // The rectangle's two draws: which window, and where on its face. They are their own pair of
+        // dimensions so the light sample is not correlated with the surface's own (L2).
+        let area_pick = sample_pair(2u, sample, bounce_seed);
+        let area_point_uv = sample_pair(3u, sample, bounce_seed);
+        radiance = radiance + throughput * direct_light(material, frame, wo, position, u, area_pick, area_point_uv, inside);
         let scatter = sample_bsdf(material, wo, u, pick, inside);
         if (!scatter.valid) {
             break;
         }
+        previous_pdf = scatter.pdf;
         throughput = throughput * scatter.weight;
         if (scatter.transmitted) {
             inside = !inside;
@@ -1053,5 +1566,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // One clamp, documented rather than felt: a pane can concentrate a light into a number an `f32`
     // accumulator has no room for. Its bias is measured against an unclamped reference in the note.
     radiance = clamp(radiance, vec3<f32>(0.0), vec3<f32>(MAX_SAMPLE_RADIANCE));
-    accum[pixel] = accum[pixel] + vec4<f32>(radiance, 1.0);
+    pixels[pixel].sum = pixels[pixel].sum + vec4<f32>(radiance, 1.0);
+    pixels[pixel].squares = pixels[pixel].squares + vec4<f32>(radiance * radiance, 0.0);
 }

@@ -269,7 +269,9 @@ fn panel_facts<'a>(panel: &'a Panel, catalog: &Directory) -> Result<PanelFacts<'
     let geometry = panel.geometry_with_banding(thickness, |spec| {
         catalog.banding(spec.material()).map_or_else(|| spec.last_known_thickness(), |material| material.thickness)
     })?;
-    let (ring, sources) = panel.outline().ring_and_sources_for(panel.nominal_size())?;
+    // The panel's own ring, not the frame's: the end trims are read here, so the contour table and
+    // every banding length follow the board the shop cuts (N31, ADR 0240).
+    let (ring, sources) = panel.contour_with_sources()?;
     let segments: Vec<(geom::Segment, model::SegmentSource)> = ring.segments().iter().copied().zip(sources).collect();
     let mut bands = Vec::new();
     for band in panel.edge_banding() {

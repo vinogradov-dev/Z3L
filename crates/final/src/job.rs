@@ -8,23 +8,22 @@
 //! refuses, reachable from the UI, the CLI or the assistant without a second code path.
 //!
 //! The order of the steps is the contract a person sees: the frame is uploaded (or reused), every
-//! sample is traced, and only then is the image encoded and written. A cancel at any sample therefore
-//! leaves the destination exactly as it was — the old picture is still there and no partial file is
-//! beside it — and the session is back to idle the moment the refusal arrives.
+//! sample is traced — whole frames at a time, each checkpoint publishing a display-sized picture into
+//! the mailbox a surface reads (Y6) — and the bands are filtered (`crate::denoise`). The finished
+//! image is the return value: a run draws a picture, and writing it to a file is the save's own act
+//! (`crate::image::save`, Y12). A cancel at any sample therefore leaves every file exactly as it was,
+//! and the session is back to idle the moment the refusal arrives.
 //!
 //! Refuses: a request or an exposure outside its range, a progress counter that belongs to another
-//! render, and every refusal the tracer and the encoder make. Nothing here panics on a full disk, a
-//! missing directory or a driver that gives up.
+//! render, and every refusal the tracer makes. Nothing here panics on a driver that gives up.
 //!
-//! Changes when: what one render takes as input, or what it leaves behind, changes.
-
-use std::path::{Path, PathBuf};
+//! Changes when: what one render takes as input, or what it hands back, changes.
 
 use geom::DVec3;
 use scene::{Camera, SceneFrame};
 
-use crate::gpu::{Progress, Tracer};
-use crate::image::{encode_png, write_atomic};
+use crate::gpu::{Progress, Snapshot, Snapshots, Tracer, Watch};
+use crate::image::Image;
 use crate::{FinalError, Request};
 
 /// The stable id of a final render, which a surface, a shortcut and the assistant all name.
@@ -33,36 +32,55 @@ use crate::{FinalError, Request};
 /// registry does not carry it and no undo entry answers for it (`AGENTS.md` §4.1).
 pub const RENDER_FINAL_ID: &str = "render.final";
 
-/// What one render was asked for: the image, the exposure, the studio and where the file goes.
+/// What one render was asked for: the image, the exposure and the studio.
 ///
-/// The environment is the render's, not the document's: a final image is made by a person who chose a
-/// studio for it, and the scene's own lights are the workshops'. It stays a setting of this command
-/// until a document object claims it (`plan/notes/Y2.md`, ADR 0213).
+/// There is no destination here: a run draws a picture and the save writes it, so a person can look
+/// at a plate before deciding where it goes (Y12). The environment is the render's, not the
+/// document's: a final image is made by a person who chose a studio for it, and the scene's own
+/// lights are the workshops'. It stays a setting of this command until a document object claims it
+/// (`plan/notes/Y2.md`, ADR 0213). The lens is not here: it is the camera's own and travels with it
+/// (Y11, ADR 0249), so a saved scene renders the same picture from every door.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     request: Request,
     exposure: f32,
     environment: f32,
-    path: PathBuf,
+    denoise: bool,
 }
 
 impl Settings {
-    /// A render of `request` at `exposure`, written to `path`.
+    /// A render of `request` at `exposure`.
     ///
     /// The exposure is a photographic stop applied before the filmic curve, so a scene that is lit for
     /// a workshop and a scene that is lit for a catalogue share one curve and differ by a number. A
     /// value that is not finite or not positive is refused here rather than producing a black or a
     /// white image nobody asked for.
-    pub fn new(request: Request, exposure: f32, path: impl Into<PathBuf>) -> Result<Self, FinalError> {
+    pub fn new(request: Request, exposure: f32) -> Result<Self, FinalError> {
         if !exposure.is_finite() || exposure <= 0.0 {
             return Err(FinalError::Exposure { exposure });
         }
-        Ok(Self { request, exposure, environment: 0.0, path: path.into() })
+        Ok(Self { request, exposure, environment: 0.0, denoise: true })
     }
 
-    /// A render at one stop and the given destination, which is what a surface starts with.
-    pub fn default_for(request: Request, path: impl Into<PathBuf>) -> Result<Self, FinalError> {
-        Self::new(request, 1.0, path)
+    /// The same render with the noise left in: the samples' own average and no filter over it.
+    ///
+    /// The filter is what a picture at the sample counts a workshop waits for needs (`crate::denoise`),
+    /// and it is also what softens a surface's own texture: a board's grain is finer than the noise and
+    /// a filter that cannot tell them apart smooths both. A print that pays for the samples can ask for
+    /// the samples alone, and a caller measuring the filter needs the picture without it.
+    pub fn without_denoise(mut self) -> Self {
+        self.denoise = false;
+        self
+    }
+
+    /// Whether the finished image is filtered.
+    pub fn denoises(&self) -> bool {
+        self.denoise
+    }
+
+    /// A render at one stop, which is what a surface starts with.
+    pub fn default_for(request: Request) -> Result<Self, FinalError> {
+        Self::new(request, 1.0)
     }
 
     /// The same render in a studio of `environment` linear radiance, which is what a ray sees where
@@ -93,24 +111,6 @@ impl Settings {
     pub fn exposure(&self) -> f32 {
         self.exposure
     }
-
-    /// Where the PNG goes.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-/// What a finished render leaves behind.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Report {
-    /// The file that was written.
-    pub path: PathBuf,
-    /// The image width in pixels.
-    pub width: u32,
-    /// The image height in pixels.
-    pub height: u32,
-    /// How many samples each pixel took.
-    pub samples: u32,
 }
 
 /// What a render traces: the frame, the view it is seen from and the revision the frame is keyed by.
@@ -126,11 +126,14 @@ pub struct Input<'a> {
     pub revision: u64,
 }
 
-/// Renders `input` and writes the PNG, or refuses and writes nothing.
+/// Renders `input` and hands the finished image back, or refuses and draws nothing.
 ///
 /// The revision keys the tracer's BVH cache, so a second image of an unchanged document costs one
 /// traverse per sample and no build. `progress` must belong to this request's sample count, because
-/// it is the number the surface shows and the count the cancel is judged against.
+/// it is the number the surface shows and the count the cancel is judged against. `snapshots` is the
+/// mailbox the run publishes its checkpoints into — a place nobody listens to is a place that
+/// publishes and drops — and the finished image is published into it too, so the picture a surface
+/// keeps is the picture the caller may save.
 pub fn run(
     tracer: &mut Tracer,
     device: &wgpu::Device,
@@ -138,7 +141,8 @@ pub fn run(
     input: Input<'_>,
     settings: &Settings,
     progress: &Progress,
-) -> Result<Report, FinalError> {
+    snapshots: &Snapshots,
+) -> Result<Image, FinalError> {
     let request = settings.request;
     if progress.total() != request.samples() {
         return Err(FinalError::Progress { total: progress.total(), samples: request.samples() });
@@ -149,14 +153,15 @@ pub fn run(
     // frame's own value on the copy the tracer reads and never into the frame a viewport shares.
     let mut lighting = frame.lighting.clone();
     lighting.environment = settings.environment();
-    let accumulation = tracer.render(device, queue, camera, &lighting, request, progress)?;
+    let accumulation = tracer.render(device, queue, camera, &lighting, request, Watch { progress, snapshots })?;
     if progress.cancelled() {
         return Err(FinalError::Cancelled { samples: progress.done(), total: progress.total() });
     }
-    let image = accumulation.into_image()?;
-    let bytes = encode_png(&image, settings.exposure)?;
-    write_atomic(&settings.path, &bytes)?;
-    Ok(Report { path: settings.path.clone(), width: image.width(), height: image.height(), samples: request.samples() })
+    let image = if settings.denoise { accumulation.into_image()? } else { accumulation.raw_image()? };
+    // The finished picture is published as the run's last checkpoint: a surface that keeps the
+    // newest snapshot keeps the image the caller is handed, not a picture beside it (Y6).
+    snapshots.publish(Snapshot::of(&image, request.samples())?);
+    Ok(image)
 }
 
 /// The camera a final render starts from, so a caller does not have to remember the default distance.
@@ -176,16 +181,15 @@ mod tests {
     #[test]
     fn an_exposure_is_a_finite_positive_number_of_stops() {
         let request = Request::new(64, 64, 1).expect("a small request");
-        let settings = Settings::new(request, 2.0, "out.png").expect("two stops is a setting");
+        let settings = Settings::new(request, 2.0).expect("two stops is a setting");
         assert_eq!(settings.exposure(), 2.0);
-        assert_eq!(settings.path(), Path::new("out.png"));
         assert_eq!(settings.request(), request);
         for hostile in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            let error = Settings::new(request, hostile, "out.png").expect_err("a broken exposure is refused");
+            let error = Settings::new(request, hostile).expect_err("a broken exposure is refused");
             assert!(matches!(error, FinalError::Exposure { .. }), "{hostile} was accepted");
         }
         // One stop is what a surface starts with, and no studio at all.
-        let defaults = Settings::default_for(request, "out.png").expect("one stop");
+        let defaults = Settings::default_for(request).expect("one stop");
         assert_eq!(defaults.exposure(), 1.0);
         assert_eq!(defaults.environment(), [0.0; 3], "a render that names no studio is black");
     }
@@ -193,14 +197,11 @@ mod tests {
     #[test]
     fn a_studio_is_one_finite_radiance_and_a_hostile_one_is_refused() {
         let request = Request::new(64, 64, 1).expect("a small request");
-        let lit = Settings::default_for(request, "out.png")
-            .expect("a setting")
-            .with_environment(1.0)
-            .expect("a white studio");
+        let lit = Settings::default_for(request).expect("a setting").with_environment(1.0).expect("a white studio");
         assert_eq!(lit.environment(), [1.0; 3], "a neutral studio, not a colour");
         assert_eq!(lit.exposure(), 1.0, "the studio does not touch the exposure");
         for hostile in [-1.0, f32::NAN, f32::INFINITY] {
-            let error = Settings::default_for(request, "out.png")
+            let error = Settings::default_for(request)
                 .expect("a setting")
                 .with_environment(hostile)
                 .expect_err("a broken studio is refused");

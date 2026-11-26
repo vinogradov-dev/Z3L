@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use catalog::Directory;
 use geom::Contact;
+use materials::Library;
 use model::{
     BandingSpec, ClassCode, EdgeBanding, EdgeBevel, Geometry, Id, ItemId, PanelGeometry, PanelNominalSize,
     PanelOutline, PanelTrims, Placement, Project, ProjectError, WorkshopProfile,
@@ -137,6 +138,14 @@ pub struct Session {
     /// reload moves no document revision; the frame follows this counter instead
     /// (`docs/domain/nomenclature.md` §13).
     directory_version: u64,
+    /// The render's material library, shared with every tab of the window like the directory.
+    ///
+    /// A frame is built from it and no document field holds it: a shop edits its materials once and
+    /// every part that names one follows (ADR 0243, Y8).
+    materials: Arc<Library>,
+    /// How often the shell installed a newer material library. The library is not the document, so a
+    /// reload moves no document revision; the frame follows this counter instead.
+    materials_version: u64,
     edit: Option<OpenEdit>,
     next_scope: u64,
     /// The overlay a previewing operation fills; see [`Preview`].
@@ -218,6 +227,8 @@ impl Session {
             dirty: false,
             directory: directory.into(),
             directory_version: 0,
+            materials: Arc::new(Library::default()),
+            materials_version: 0,
             edit: None,
             next_scope: 0,
             preview: Preview::new(),
@@ -390,6 +401,39 @@ impl Session {
         self.directory = directory;
         self.preview.clear();
         self.directory_version = self.directory_version.wrapping_add(1);
+    }
+
+    /// The render's read-only material library.
+    pub fn materials(&self) -> &Library {
+        &self.materials
+    }
+
+    /// The library as the one value every tab shares, for a tab that is about to open.
+    pub fn materials_shared(&self) -> Arc<Library> {
+        Arc::clone(&self.materials)
+    }
+
+    /// How often a newer material library was installed, so the shell knows its frame is stale.
+    pub fn materials_version(&self) -> u64 {
+        self.materials_version
+    }
+
+    /// Installs a newer snapshot of the render's material library.
+    ///
+    /// The library is not the document: this swaps one value, writes no field of the project,
+    /// pushes no undo entry and leaves the saved-content marker alone. What was derived from it is
+    /// the frame, which the shell re-derives from this counter — a picture a shop replaced is read
+    /// again, and no panel, its thickness or its geometry depends on a material here.
+    pub fn set_materials(&mut self, materials: Arc<Library>) {
+        self.materials = materials;
+        self.materials_version = self.materials_version.wrapping_add(1);
+    }
+
+    /// The same session sharing the render library of `other`, which is how a new tab takes the
+    /// workshop's materials from the tab in front of the user.
+    pub fn with_materials(mut self, materials: impl Into<Arc<Library>>) -> Self {
+        self.materials = materials.into();
+        self
     }
 
     /// Resolves one panel's geometry against the session directory.
@@ -709,6 +753,8 @@ impl Session {
             dirty: self.dirty,
             directory: Arc::clone(&self.directory),
             directory_version: self.directory_version,
+            materials: Arc::clone(&self.materials),
+            materials_version: self.materials_version,
             edit: None,
             next_scope: self.next_scope,
             profile: WorkshopProfile::default(),
@@ -831,9 +877,9 @@ mod tests {
     use crate::batch::{BatchEffect, BatchOptions, BatchStep};
     use model::{
         ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
-        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
-        PanelContourError, PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue,
-        RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        DecorMapping, EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
+        MaterialRef, PanelContourError, PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError,
+        PropertyValue, RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, Turns, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -846,10 +892,10 @@ mod tests {
 
     use crate::class_rules::{ClassRefusal, Dimension};
     use crate::node_cmds::{
-        AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup,
-        NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany,
-        NodePlacementWorldZero, NodeProperty, NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename,
-        NodeUngroup,
+        AssemblyCreate, NodeComponentConvertToGroup, NodeDecorSet, NodeDelete, NodeDeleteMany, NodeDuplicate,
+        NodeGroup, NodeMaterialSet, NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet,
+        NodePlacementSetMany, NodePlacementWorldZero, NodeProperty, NodePropertyClear, NodePropertySet,
+        NodePropertySetMany, NodeRename, NodeUngroup,
     };
     use crate::panel_cmds::{
         PanelBowClear, PanelBowSet, PanelContourCreate, PanelCornerBandingClear, PanelCornerBandingSet,
@@ -1634,6 +1680,33 @@ mod tests {
         session.undo().expect("and the first one");
         assert_eq!(session.project().panel(panel_id).expect("panel").name(), "Shelf");
         assert!(session.can_redo(), "the redo branch survives the swap as well");
+    }
+
+    #[test]
+    fn a_new_material_library_moves_its_own_counter_and_no_document_field() {
+        let mut session = sample_session();
+        let panel_id = Id::new(2).expect("id");
+        session
+            .dispatch("panel.rename", &json_params(&PanelRename { panel: panel_id, name: "Shelf".to_owned() }))
+            .expect("rename the panel");
+        session.mark_saved();
+        let stored = session.project().clone();
+        assert!(session.materials().is_empty(), "a session born without a library names no material");
+
+        let board = materials::Material::of_base(
+            materials::MaterialId::new(1).expect("id"),
+            "Oak",
+            materials::Base::matte([0.62, 0.42, 0.22]).expect("a board"),
+        )
+        .expect("a record");
+        session.set_materials(Arc::new(materials::Library::new([board]).expect("one record")));
+
+        assert_eq!(session.materials().len(), 1, "the frame is built from the new snapshot");
+        assert_eq!(session.materials_version(), 1, "the shell is told the frame it holds is stale");
+        assert!(session.project().same_content(&stored), "a library writes no field of the document");
+        assert!(!session.is_dirty(), "nor does it make a saved scene dirty");
+        assert!(session.can_undo(), "a library update takes no undo entry away");
+        assert!(Arc::ptr_eq(&session.materials_shared(), &session.materials_shared()), "one value, not a copy");
     }
 
     #[test]
@@ -3901,6 +3974,129 @@ mod tests {
         assert_eq!(session.project().pivot_local(drawer), Some(pivot));
         session.undo().expect("undo the authored pivot");
         assert!(!session.can_undo(), "each operation is one undo entry");
+    }
+
+    #[test]
+    fn a_nodes_own_picture_placement_is_one_command_and_one_undo_entry() {
+        let mut session = sample_session();
+        let panel = Id::new(2).expect("panel id");
+        let drawer = Id::new(3).expect("drawer id");
+        let root = session.project().root().id();
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        let mapping =
+            DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], Turns::ACROSS).expect("a mapping");
+
+        session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: panel, mapping: Some(mapping) }))
+            .expect("place the picture");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), Some(mapping));
+        assert!(session.can_undo());
+
+        session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: panel, mapping: None }))
+            .expect("clear the placement");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), None, "the record's numbers return");
+
+        session.undo().expect("undo the clearing");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), Some(mapping));
+        session.undo().expect("undo the placement");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), None);
+        assert!(!session.can_undo(), "each placement is exactly one undo entry");
+
+        let registry = CommandRegistry::new();
+        let set = registry.get("node.decor.set").expect("registered");
+        assert!(set.enabled(&session, &json_params(&NodeDecorSet { node: panel, mapping: Some(mapping) })));
+        assert!(!set.enabled(&session, &json_params(&NodeDecorSet { node: drawer, mapping: Some(mapping) })));
+        assert!(!set.enabled(&session, &json_params(&NodeDecorSet { node: root, mapping: Some(mapping) })));
+        let error = session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: drawer, mapping: Some(mapping) }))
+            .expect_err("a container draws no surface");
+        assert!(matches!(error, CommandError::Model(ProjectError::NodeHasNoDecor { id }) if id == drawer));
+
+        // A mapping the document refuses never becomes a coordinate: the parse names the command.
+        let revision = session.project().revision();
+        let hostile = serde_json::json!({"node": panel, "mapping": {"scale": 0, "offset": [0, 0], "turns": 0}});
+        let error = session.dispatch("node.decor.set", &hostile).expect_err("a scale that covers no board is refused");
+        assert!(
+            matches!(error, CommandError::InvalidParams { command, .. } if command == "node.decor.set"),
+            "the refusal names the command and the field"
+        );
+        assert_eq!(session.project().revision(), revision, "a refused placement writes nothing");
+    }
+
+    #[test]
+    fn a_nodes_render_material_slot_is_one_command_and_one_undo_entry() {
+        let mut project = sample_project();
+        let root = project.root().id();
+        let object = project
+            .add_object(
+                root,
+                "Cube",
+                Placement::IDENTITY,
+                Geometry::Mesh(testkit::cube_mesh(testkit::millimetres(100))),
+            )
+            .expect("a mesh object beside the sample nodes");
+        let mut session = Session::with_directory(project, sample_catalog());
+        let panel = Id::new(2).expect("panel id");
+        let drawer = Id::new(3).expect("drawer id");
+        let oak = MaterialRef::new(1).expect("a non-zero material");
+
+        session
+            .dispatch("node.material.set", &json_params(&NodeMaterialSet { node: panel, material: Some(oak) }))
+            .expect("the panel wears the record");
+        assert_eq!(session.project().panel(panel).expect("the panel").render_material(), Some(oak));
+        assert!(session.can_undo());
+
+        session
+            .dispatch("node.material.set", &json_params(&NodeMaterialSet { node: object, material: Some(oak) }))
+            .expect("an object wears the record too");
+        assert_eq!(session.project().object(object).expect("the object").render_material(), Some(oak));
+
+        session
+            .dispatch("node.material.set", &json_params(&NodeMaterialSet { node: panel, material: None }))
+            .expect("the slot is cleared");
+        assert_eq!(
+            session.project().panel(panel).expect("the panel").render_material(),
+            None,
+            "a cleared panel keeps no material"
+        );
+
+        session.undo().expect("undo the clearing");
+        assert_eq!(session.project().panel(panel).expect("the panel").render_material(), Some(oak));
+        session.undo().expect("undo the object's slot");
+        assert_eq!(session.project().object(object).expect("the object").render_material(), None);
+        session.undo().expect("undo the panel's slot");
+        assert_eq!(session.project().panel(panel).expect("the panel").render_material(), None);
+        assert!(!session.can_undo(), "each assignment is exactly one undo entry");
+
+        // A record the workshop's library does not hold is kept: the scene travels with its numbers
+        // and the frame draws the placeholder tone (ADR 0245).
+        assert_eq!(session.materials().len(), 0, "the fixture has no library");
+        session
+            .dispatch("node.material.set", &json_params(&NodeMaterialSet { node: panel, material: Some(oak) }))
+            .expect("an unknown reference is stored, not refused");
+        assert_eq!(session.project().panel(panel).expect("the panel").render_material(), Some(oak));
+
+        let registry = CommandRegistry::new();
+        let set = registry.get("node.material.set").expect("registered");
+        assert!(set.enabled(&session, &json_params(&NodeMaterialSet { node: panel, material: Some(oak) })));
+        assert!(!set.enabled(&session, &json_params(&NodeMaterialSet { node: drawer, material: Some(oak) })));
+        assert!(!set.enabled(&session, &json_params(&NodeMaterialSet { node: root, material: Some(oak) })));
+        let error = session
+            .dispatch("node.material.set", &json_params(&NodeMaterialSet { node: drawer, material: Some(oak) }))
+            .expect_err("a container draws no surface");
+        assert!(matches!(error, CommandError::Model(ProjectError::NodeHasNoMaterial { id }) if id == drawer));
+
+        // Zero is not a material, and a refused slot writes nothing.
+        let revision = session.project().revision();
+        let error = session
+            .dispatch("node.material.set", &serde_json::json!({"node": panel, "material": 0}))
+            .expect_err("zero is not a material");
+        assert!(
+            matches!(error, CommandError::InvalidParams { command, .. } if command == "node.material.set"),
+            "the refusal names the command"
+        );
+        assert_eq!(session.project().revision(), revision, "a refused slot writes nothing");
     }
 
     #[test]

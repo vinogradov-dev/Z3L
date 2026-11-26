@@ -214,7 +214,7 @@ superseded, never rewritten — add a new record and mark the old one `Supersede
 | [0207](0207-the-token-comes-first-and-the-window-answers-between-frames.md) | The token comes first, and the window answers between frames | Accepted; fills in the handshake, the mailbox and `ui_inspect` of 0188; its `busy` answer is amended by 0223 |
 | [0208](0208-a-primitive-is-a-body-a-boolean-cuts.md) | A primitive is a body, so a boolean cuts it in both directions | Accepted; closes the consequence of 0197 |
 | [0209](0209-the-assistant-panel-is-a-window-and-its-turn-runs-between-frames.md) | The assistant's panel is a window, and its turn is driven between frames | Accepted; places the panel 0186 and 0187 asked for; its chrome place extended by 0222 |
-| [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on |
+| [0210](0210-the-final-render-is-our-own-tracer-and-a-job.md) | The final render is our own tracer in `crates/final`, and it is a job rather than a document command | Accepted; the road Y2, Y3, Y4 and Y5 build on; the strip loop and the entry point's arguments superseded by 0250 |
 | [0211](0211-the-render-is-a-place-beside-the-file-menu.md) | The final render is a place beside the File menu, not a dialog | Accepted; the surface the entry point of 0210 is reached from |
 | [0212](0212-a-batch-names-the-product-it-works-in.md) | A batch names the product it works in, and opening is not a step | Accepted; the field 0098 leaves a caller without |
 | [0213](0213-a-frame-carries-a-finish-and-the-tracer-samples-by-power.md) | A frame carries a finish, and the final render samples the light it is given | Accepted; the frame contract Y3 fills from the catalogue |
@@ -266,3 +266,15 @@ What it buys, what it costs, and the condition under which it should be revisite
 ```
 
 The code and `AGENTS.md` stay the authority for rules; a record keeps the reason.
+| [0243](0243-a-surface-is-a-base-and-one-coat.md) | A surface is a base and one coat, and a finish is a number in percent | Accepted; extends 0213's `Surface`, and the record Y8 builds carries it |
+| [0244](0244-the-renders-materials-are-a-library-of-their-own.md) | The render's materials are a library of their own, and a catalogue record points into it | Accepted; extends 0243 with the record's home and shape |
+| [0245](0245-a-3d-object-wears-one-render-material.md) | A 3D object wears one render material, and the frame never reads the catalogue | Accepted; builds on 0244 and shapes Y7, O16 and O18 |
+| [0246](0246-the-noise-a-pixel-carries-is-measured-and-spent.md) | The tracer tracks a pixel's variance, and an edge-avoiding filter spends it | Accepted; builds on 0210, 0213 and Y2, and shapes Y4 |
+| [0247](0247-a-rectangular-light-is-a-face-at-watts.md) | A rectangular light is a face at watts, and the tracer samples it by solid angle | Accepted; extends 0039 and 0213, and gives multiple importance sampling its second strategy |
+| [0248](0248-a-lens-is-the-renders-setting-and-a-sample-is-a-point-of-the-aperture.md) | A lens is the render's setting, and a sample is a point of the aperture | Superseded by 0249 in the home of the two numbers; the thin lens, the disc sampler and the circle of confusion stand |
+| [0249](0249-a-cameras-lens-is-document-data.md) | A camera's lens is document data | Accepted; supersedes 0248's home, and builds on 0036's camera node |
+| [0250](0250-the-render-place-is-a-picture-with-a-rail.md) | The render place is a picture with a rail, and the picture stays | Accepted; answers 0211's deferred preview and pays off the `[ui]` debt entry |
+| [0251](0251-a-material-is-edited-in-a-window-of-its-own.md) | A material is edited in a window of its own, opened from the render place, and a deleted record leaves the reference behind | Accepted; moves the editor ADR 0244 filed out of the settings, and shapes Y14 |
+| [0252](0252-a-node-places-its-picture-on-its-own-plane.md) | A node places its material's picture on its own plane, and the record stays one texture | Accepted; answers the question Y15 held open for the owner |
+| [0253](0253-the-tiling-grid-reads-the-decor-s-own-coordinate.md) | The tiling grid is drawn from the frame's own coordinate, beside the shadow switch, and off by default | Accepted; shapes Y16 and reads 0252's placement |
+| [0254](0254-the-material-slot-is-edited-on-the-nodes-card.md) | The render material slot is edited on the node's own card, by name | Accepted; closes 0245's open command and card, and makes room for 0252's placement |

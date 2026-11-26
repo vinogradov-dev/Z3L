@@ -46,9 +46,11 @@ impl Image {
 
     /// The average radiance of a render, from the accumulator the device wrote back.
     ///
-    /// The accumulator holds one `vec4` per pixel — three channels and one that is unused — summed
-    /// over every sample, so the division here is the only place a sample count is trusted. A buffer
-    /// of the wrong length, or a sample count of zero, is a refusal rather than a shifted image.
+    /// The accumulator holds one `vec4` per pixel — three channels and the number of samples behind
+    /// them — summed over every sample, so the division here is the only place a sample count is
+    /// trusted. The count is per pixel and not per image: a converged pixel retires before the last
+    /// sample (`crate::denoise::MIN_SAMPLES`), so its fourth channel is smaller than the request's own
+    /// count, and dividing it by the request would darken exactly the pixels that were cheap.
     pub fn from_accumulation(
         width: u32,
         height: u32,
@@ -60,9 +62,28 @@ impl Image {
             return Err(FinalError::Accumulation { pixels: accumulated.len(), width, height, samples });
         }
         let mut image = Self::new(width, height)?;
-        let divisor = samples as f32;
+        let offered = samples as f32;
         for (pixel, sum) in image.radiance.iter_mut().zip(accumulated) {
-            *pixel = [sum[0] / divisor, sum[1] / divisor, sum[2] / divisor];
+            // A pixel that reported no weight was never sampled: it is black rather than a division.
+            let count = if sum[3] > 0.0 { sum[3] } else { offered };
+            *pixel = [sum[0] / count, sum[1] / count, sum[2] / count];
+        }
+        Ok(image)
+    }
+
+    /// The image a filter produced: linear radiance per pixel, already averaged and already denoised.
+    ///
+    /// The four channels of an accumulator are not here — this picture is finished, so the only thing
+    /// checked is that there is one triple per pixel and that every value is a number.
+    pub fn from_linear(width: u32, height: u32, radiance: &[[f32; 3]]) -> Result<Self, FinalError> {
+        let expected = u64::from(width).checked_mul(u64::from(height));
+        if expected != Some(radiance.len() as u64) {
+            return Err(FinalError::Accumulation { pixels: radiance.len(), width, height, samples: 0 });
+        }
+        let mut image = Self::new(width, height)?;
+        for (pixel, value) in image.radiance.iter_mut().zip(radiance) {
+            let channel = |channel: f32| if channel.is_finite() { channel.max(0.0) } else { 0.0 };
+            *pixel = [channel(value[0]), channel(value[1]), channel(value[2])];
         }
         Ok(image)
     }
@@ -174,6 +195,17 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, F
     Ok(bytes)
 }
 
+/// Writes `image` to `path` as one PNG at `exposure`.
+///
+/// This is the save a surface performs: a run hands radiance back and the file is written when the
+/// person says where (Y12), so the exposure applied is the one the page shows now rather than the one
+/// the run began with. Encoding and the atomic rename stay here, so the crate owns the one format it
+/// writes and no second encoder appears beside it.
+pub fn save(image: &Image, exposure: f32, path: &Path) -> Result<(), FinalError> {
+    let bytes = encode_png(image, exposure)?;
+    write_atomic(path, &bytes)
+}
+
 /// Writes encoded bytes to `path`, through a temporary file beside it.
 ///
 /// The rename is what makes a cancelled or failed render leave the previous image untouched: a
@@ -267,11 +299,28 @@ mod tests {
         assert_eq!(image.radiance_at(2, 0), None, "past the last column there is no pixel");
         assert_eq!(image.radiance_at(0, 1), None, "and past the last row");
 
+        // A pixel that retired early carries its own smaller count, and it is divided by that: the
+        // same light taken by eight samples is not a quarter of it.
+        let retired = vec![[4.0, 2.0, 1.0, 2.0], [8.0, 4.0, 2.0, 8.0]];
+        let image = Image::from_accumulation(2, 1, &retired, 8).expect("a two-pixel render");
+        assert_eq!(image.radiance_at(0, 0), Some([2.0, 1.0, 0.5]), "two samples, not eight");
+        assert_eq!(image.radiance_at(1, 0), Some([1.0, 0.5, 0.25]), "eight samples, as offered");
+
         let short = Image::from_accumulation(2, 2, &accumulated, 4).expect_err("two pixels are not four");
         assert!(matches!(short, FinalError::Accumulation { pixels: 2, .. }), "{short}");
         let zero = Image::from_accumulation(2, 1, &accumulated, 0).expect_err("a sample count of zero divides nothing");
         assert!(matches!(zero, FinalError::Accumulation { samples: 0, .. }), "{zero}");
         assert!(Image::new(0, 10).is_err());
+    }
+
+    #[test]
+    fn a_filtered_picture_keeps_its_light_and_refuses_what_is_not_a_number() {
+        let radiance = vec![[0.25, 0.5, 1.0], [f32::NAN, -1.0, f32::INFINITY]];
+        let image = Image::from_linear(2, 1, &radiance).expect("two pixels of a finished picture");
+        assert_eq!(image.radiance_at(0, 0), Some([0.25, 0.5, 1.0]), "a finished picture is not divided again");
+        assert_eq!(image.radiance_at(1, 0), Some([0.0, 0.0, 0.0]), "a broken pixel is black, not a hole");
+        let short = Image::from_linear(2, 2, &radiance).expect_err("two pixels are not four");
+        assert!(matches!(short, FinalError::Accumulation { pixels: 2, .. }), "{short}");
     }
 
     #[test]
@@ -311,6 +360,28 @@ mod tests {
         // A buffer that is not four bytes per pixel of the size is a picture that does not exist.
         assert!(matches!(encode_rgba8(2, 2, &pixels[..12]), Err(FinalError::ImageSize { .. })));
         assert!(matches!(encode_rgba8(0, 2, &[]), Err(FinalError::ImageSize { .. })));
+    }
+
+    #[test]
+    fn a_save_writes_the_png_the_exposure_names_and_a_second_save_writes_another() {
+        let directory = scratch_dir("final-save");
+        let picture = image();
+        let first = directory.join("one.png");
+        let second = directory.join("two.png");
+        save(&picture, 1.0, &first).expect("the picture is saved");
+        save(&picture, 4.0, &second).expect("a second save writes another file");
+        assert!(first.is_file() && second.is_file(), "two saves, two files");
+        // The file is the curve the exposure names, not the one the image was made with.
+        assert_eq!(std::fs::read(&first).expect("the first file"), encode_png(&picture, 1.0).expect("encoded"));
+        assert_eq!(std::fs::read(&second).expect("the second file"), encode_png(&picture, 4.0).expect("encoded"));
+        assert_ne!(
+            std::fs::read(&first).expect("the first file"),
+            std::fs::read(&second).expect("the second file"),
+            "a stop of exposure is another picture"
+        );
+        // A second save onto the same name replaces it rather than adding a suffix.
+        save(&picture, 1.0, &second).expect("the same name again");
+        assert_eq!(std::fs::read(&second).expect("the replaced file"), std::fs::read(&first).expect("the first"));
     }
 
     #[test]

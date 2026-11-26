@@ -23,8 +23,9 @@ with no part behind it takes no lap, because an end with nothing under it would 
 **The trim is document data on the panel.** `PanelTrims` is four signed lengths, one per nominal
 edge, in the numbering the card prints (1 the end at zero width, 2 at the full length, 3 at the full
 width, 4 at zero length). A positive number cuts that end in, a negative one lets it out, and an
-ordinary board carries none — the field is skipped in the file whenever all four are zero, so a scene
-that never had a front in it is written exactly as before.
+ordinary board carries none. Every panel writes the four numbers since schema 37 (N31): a field a
+file may omit is a second layout to keep, and before the first release the format has no past
+(ADR 0096).
 
 **The frame is the nominal rectangle, and the material is derived from it.** A panel's origin is the
 base corner of its nominal rectangle, and that is the handle its position is controlled by: a command
@@ -69,8 +70,17 @@ so the framing version does not move for it.
   material the trims make of it. The two numbers cannot drift, because the material is derived.
 - The panel's frame is the opening for a front, so a maker positions a door by the opening's corner
   and never by a lap, which is the whole reason the origin is the parameter's to leave alone.
+- The board's size is one derivation: `Panel::manufactured_size` answers the frame with the four
+  numbers applied and `Panel::contour_with_sources` the ring they draw, and the card, the mesh cache,
+  the node bounds and the order package read those two rather than the nominal rectangle (N31). So a
+  lap reaches the picture, the cutting list and the contour a cutter follows in the same revision.
+- A ring has no four nominal ends: a contour panel refuses a trim by name, baking a rectangle into a
+  ring clears the numbers the ring already drew, and the reader refuses a file that pairs the two
+  (N31).
 - The overlay board is always a rectangle — a facade covers the opening, so its section is the
-  opening's box and the two builds give the same board. The card hides the build row for it.
+  opening's box and the two builds give the same board. The card hides the build row for it, and a
+  front that stopped at a neighbour or lapped at one end is still a rectangle whatever the four
+  numbers are, so it never turns into a contour.
 - Re-planning a part (`panel.build.set`) reads which board it is from where it stands: a part inside
   the void is measured at its own centre and keeps the ends it was trimmed with, and a front is
   measured from its inner face stepped one micrometre into the opening, asking for the ends it

@@ -8,7 +8,7 @@
 
 use catalog::Directory;
 use geom::Contact;
-use model::{CameraProjection, Id, LightKind, LightNode, Placement, Project};
+use model::{CameraLens, CameraProjection, Id, LightKind, LightNode, LightSize, LightSpec, Placement, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -77,12 +77,14 @@ pub struct LightCreate {
     pub name: String,
     /// Placement relative to the parent container.
     pub placement: Placement,
-    /// Directional sun or point light.
+    /// Directional sun, point light or rectangular emitter.
     pub kind: LightKind,
     /// Linear RGB colour, each component inside `0.0..=1.0`.
     pub color: [f32; 3],
-    /// Non-negative intensity multiplier.
+    /// A sun's irradiance multiplier, or a point or area light's radiant power in watts.
     pub intensity: f32,
+    /// The face of a rectangular emitter; the two other kinds carry the default and ignore it.
+    pub size: LightSize,
 }
 
 /// The `light.create` command.
@@ -97,6 +99,7 @@ fn light_create_enabled(session: &Session, params: &Value) -> bool {
         && !params.name.trim().is_empty()
         && valid_color(params.color)
         && valid_intensity(params.intensity)
+        && valid_size(params.size)
 }
 
 fn light_create_run(
@@ -119,8 +122,11 @@ fn light_create_run(
             message: "intensity must be finite and non-negative".to_owned(),
         });
     }
-    let id =
-        project.add_light(params.parent, params.name, params.placement, params.kind, params.color, params.intensity)?;
+    if !valid_size(params.size) {
+        return Err(CommandError::InvalidParams { command: LIGHT_CREATE_ID, message: size_message() });
+    }
+    let spec = LightSpec { kind: params.kind, color: params.color, intensity: params.intensity, size: params.size };
+    let id = project.add_light(params.parent, params.name, params.placement, spec)?;
     Ok(CommandOutcome::created(id))
 }
 
@@ -165,6 +171,61 @@ fn scene_active_camera_set_run(
     let params = parse::<SceneActiveCameraSet>(params, SCENE_ACTIVE_CAMERA_SET_ID)?;
     project.set_active_camera(params.camera)?;
     Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the camera lens command.
+pub const CAMERA_LENS_SET_ID: &str = "camera.lens.set";
+
+/// User-facing label of the camera lens command.
+pub const CAMERA_LENS_SET_LABEL: Message = Message::CmdSetCameraLens;
+
+/// Parameters for `camera.lens.set`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CameraLensSet {
+    /// The camera whose lens changes.
+    pub camera: Id,
+    /// The aperture radius and the focus distance, validated on the way in.
+    pub lens: CameraLens,
+}
+
+/// The `camera.lens.set` command.
+pub(crate) const CAMERA_LENS_SET: CommandSpec = CommandSpec::new::<CameraLensSet>(
+    CAMERA_LENS_SET_ID,
+    CAMERA_LENS_SET_LABEL,
+    camera_lens_set_enabled,
+    camera_lens_set_run,
+);
+
+fn camera_lens_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<CameraLensSet>(params, CAMERA_LENS_SET_ID) else {
+        return false;
+    };
+    session.project().camera(params.camera).is_some() && lens_is_valid(params.lens)
+}
+
+fn camera_lens_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<CameraLensSet>(params, CAMERA_LENS_SET_ID)?;
+    if !lens_is_valid(params.lens) {
+        return Err(CommandError::InvalidParams {
+            command: CAMERA_LENS_SET_ID,
+            message: "an aperture of 0 to 500 mm of radius and a focus of 1 mm to 1 km".to_owned(),
+        });
+    }
+    project.set_camera_lens(params.camera, params.lens)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Whether a lens is inside both of its ranges, which the document checks again.
+fn lens_is_valid(lens: CameraLens) -> bool {
+    let aperture = lens.aperture().micrometres();
+    let focus = lens.focus().micrometres();
+    (0..=500_000).contains(&aperture) && (1_000..=1_000_000_000).contains(&focus)
 }
 
 /// Stable id of the camera projection command.
@@ -221,12 +282,14 @@ pub const LIGHT_PARAMS_SET_LABEL: Message = Message::CmdSetLightParameters;
 pub struct LightParamsSet {
     /// The light whose parameters change.
     pub light: Id,
-    /// Directional sun or point light.
+    /// Directional sun, point light or rectangular emitter.
     pub kind: LightKind,
     /// Linear RGB colour, each component inside `0.0..=1.0`.
     pub color: [f32; 3],
-    /// Non-negative intensity multiplier.
+    /// A sun's irradiance multiplier, or a point or area light's radiant power in watts.
     pub intensity: f32,
+    /// The face of a rectangular emitter; the two other kinds carry the default and ignore it.
+    pub size: LightSize,
 }
 
 /// The `light.params.set` command.
@@ -241,7 +304,10 @@ fn light_params_set_enabled(session: &Session, params: &Value) -> bool {
     let Ok(params) = parse::<LightParamsSet>(params, LIGHT_PARAMS_SET_ID) else {
         return false;
     };
-    session.project().light(params.light).is_some() && valid_color(params.color) && valid_intensity(params.intensity)
+    session.project().light(params.light).is_some()
+        && valid_color(params.color)
+        && valid_intensity(params.intensity)
+        && valid_size(params.size)
 }
 
 fn light_params_set_run(
@@ -263,7 +329,11 @@ fn light_params_set_run(
             message: "intensity must be finite and non-negative".to_owned(),
         });
     }
-    project.set_light_params(params.light, params.kind, params.color, params.intensity)?;
+    if !valid_size(params.size) {
+        return Err(CommandError::InvalidParams { command: LIGHT_PARAMS_SET_ID, message: size_message() });
+    }
+    let spec = LightSpec { kind: params.kind, color: params.color, intensity: params.intensity, size: params.size };
+    project.set_light_params(params.light, spec)?;
     Ok(CommandOutcome::changed())
 }
 
@@ -273,6 +343,21 @@ fn valid_color(color: [f32; 3]) -> bool {
 
 fn valid_intensity(intensity: f32) -> bool {
     intensity.is_finite() && (0.0..=LightNode::MAX_INTENSITY).contains(&intensity)
+}
+
+/// Whether a rectangle's two sides are inside the document's own range.
+fn valid_size(size: LightSize) -> bool {
+    let side = |value: units::Length| (LightSize::MIN..=LightSize::MAX).contains(&value);
+    side(size.width()) && side(size.height())
+}
+
+/// The sentence a face outside the range is refused with.
+fn size_message() -> String {
+    format!(
+        "a light's face must be at least {} mm and at most {} mm a side",
+        LightSize::MIN.micrometres() / 1_000,
+        LightSize::MAX.micrometres() / 1_000
+    )
 }
 
 #[cfg(test)]
@@ -302,6 +387,7 @@ mod tests {
             kind: LightKind::Sun,
             color: [1.0, 0.9, 0.8],
             intensity: 2.0,
+            size: LightSize::DEFAULT,
         })
         .expect("params serialize")
     }
@@ -358,6 +444,7 @@ mod tests {
             kind: LightKind::Point,
             color: [2.0, 0.0, 0.0],
             intensity: 1.0,
+            size: LightSize::DEFAULT,
         };
         let value = serde_json::to_value(&bad_light).expect("params");
         assert!(session.dispatch(LIGHT_CREATE_ID, &value).is_err());
@@ -416,6 +503,7 @@ mod tests {
             kind: LightKind::Point,
             color: [0.2, 0.3, 0.4],
             intensity: 3.0,
+            size: LightSize::DEFAULT,
         })
         .expect("params");
         session.dispatch(LIGHT_PARAMS_SET_ID, &value).expect("light params");
@@ -426,11 +514,105 @@ mod tests {
             kind: LightKind::Point,
             color: [1.0; 3],
             intensity: 1.0,
+            size: LightSize::DEFAULT,
         })
         .expect("params");
         assert!(session.dispatch(LIGHT_PARAMS_SET_ID, &refusal).is_err());
         let revision = session.project().revision();
         assert_eq!(revision, before.checked_next().and_then(|r| r.checked_next()).expect("revisions"));
+    }
+
+    #[test]
+    fn a_camera_s_lens_is_one_revision_and_its_own_command() {
+        // The lens is the camera's, not the render's (Y11, ADR 0249): one command writes both numbers
+        // as one undo entry, and a value outside the range is a sentence that writes nothing.
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let camera = session
+            .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
+            .expect("create camera")
+            .created_id()
+            .expect("a camera id");
+        let lens = CameraLens::new(
+            units::Length::from_millimetres(45).expect("a radius"),
+            units::Length::from_millimetres(2_000).expect("a focus"),
+        )
+        .expect("a lens");
+        let before = session.project().revision();
+        let value = serde_json::to_value(CameraLensSet { camera, lens }).expect("params");
+        session.dispatch(CAMERA_LENS_SET_ID, &value).expect("a lens on a camera");
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"));
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), lens);
+        assert!(session.can_undo(), "a lens is an edit of the document");
+
+        // A hostile radius, a focus of no distance and an id that is not a camera are all refused.
+        let mut broken = serde_json::to_value(CameraLensSet { camera, lens }).expect("params");
+        broken["lens"]["aperture"] = serde_json::json!(600_000_000);
+        assert!(session.dispatch(CAMERA_LENS_SET_ID, &broken).is_err());
+        let root = session.project().root().id();
+        let wrong = serde_json::to_value(CameraLensSet { camera: root, lens }).expect("params");
+        assert!(session.dispatch(CAMERA_LENS_SET_ID, &wrong).is_err(), "a container has no lens");
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), lens, "a refusal writes nothing");
+        assert_eq!(session.project().revision(), before.checked_next().expect("one revision"));
+    }
+
+    #[test]
+    fn a_rectangular_emitter_is_created_resized_and_refused_at_its_ends() {
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let window = LightSize::new(
+            units::Length::from_millimetres(1_200).expect("a side"),
+            units::Length::from_millimetres(1_400).expect("a side"),
+        )
+        .expect("a window");
+        let create = serde_json::to_value(LightCreate {
+            parent: session.project().root().id(),
+            name: "Window".to_owned(),
+            placement: Placement::IDENTITY,
+            kind: LightKind::Area,
+            color: [1.0, 0.98, 0.96],
+            intensity: 40.0,
+            size: window,
+        })
+        .expect("params");
+        let light = session.dispatch(LIGHT_CREATE_ID, &create).expect("create").created_id().expect("a light id");
+        let node = session.project().light(light).expect("the light");
+        assert_eq!(node.kind(), LightKind::Area);
+        assert_eq!(node.size(), window);
+        assert_eq!(node.intensity(), 40.0);
+
+        // One resize is one revision, and the face is the one that was asked for.
+        let before = session.project().revision();
+        let wider = LightSize::new(
+            units::Length::from_millimetres(1_800).expect("a side"),
+            units::Length::from_millimetres(1_400).expect("a side"),
+        )
+        .expect("a wider window");
+        let resize = serde_json::to_value(LightParamsSet {
+            light,
+            kind: LightKind::Area,
+            color: [1.0, 0.98, 0.96],
+            intensity: 40.0,
+            size: wider,
+        })
+        .expect("params");
+        session.dispatch(LIGHT_PARAMS_SET_ID, &resize).expect("resize");
+        assert_eq!(session.project().light(light).expect("the light").size(), wider);
+        assert_eq!(session.project().revision(), before.checked_next().expect("one revision"));
+
+        // A face below the smallest side is refused, and the document keeps the face it had.
+        let shortest = LightSize::new(LightSize::MIN, LightSize::MIN).expect("the smallest face");
+        assert_eq!(shortest.width().micrometres(), 10_000);
+        let mut broken = serde_json::to_value(LightParamsSet {
+            light,
+            kind: LightKind::Area,
+            color: [1.0; 3],
+            intensity: 40.0,
+            size: shortest,
+        })
+        .expect("params");
+        broken["size"]["width"] = serde_json::json!(1_000);
+        assert!(session.dispatch(LIGHT_PARAMS_SET_ID, &broken).is_err(), "a 1 mm face is refused");
+        assert_eq!(session.project().light(light).expect("the light").size(), wider, "a refusal writes nothing");
+        assert_eq!(session.project().revision(), before.checked_next().expect("one revision"));
     }
 
     #[test]

@@ -102,6 +102,9 @@ pub enum ToolKind {
     SnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     Shadows,
+    /// Turns the tiling grid of the active view on or off: the picture's own repeat drawn over a
+    /// decorated board, so its scale and its seam are read before a render (Y16).
+    DecorGrid,
     /// Arms one contour boolean over the selected closed rings: the operation the ✓ will store, with
     /// the base ring and every further picked ring as its operands (G3, ADR 0194).
     ContourBoolean(ContourOp),
@@ -1111,6 +1114,16 @@ const VIEW: [GroupSpec; 5] = [
                 method: None,
                 variants: &[],
             },
+            // The tiling grid sits beside the shadow switch: both are display modes of one view and
+            // neither changes the document (Y16).
+            ToolSpec {
+                id: "view.display.decor_grid",
+                label: Message::ToolDecorGrid,
+                icon: Some(icons::view::DECOR_GRID),
+                run: Some(ToolKind::DecorGrid),
+                method: None,
+                variants: &[],
+            },
             planned("view.display.section", Message::ToolSection),
         ],
     },
@@ -1414,6 +1427,7 @@ mod tests {
         assert_eq!(
             live("view"),
             [
+                "view.display.decor_grid",
                 "view.display.shadows",
                 "view.projection.frame-all",
                 "view.projection.toggle",
@@ -1501,7 +1515,12 @@ mod tests {
         let shadows = display.tools.iter().find(|tool| tool.id == "view.display.shadows").expect("the shadow cell");
         assert_eq!(shadows.run, Some(ToolKind::Shadows));
         assert_eq!(shadows.icon, Some(icons::view::SHADOWS));
-        assert_eq!(display.columns(), 1, "the switch is the group's only cell so far");
+        // The tiling grid is the second display mode beside the shadow's, and no number comes with
+        // it: its step is the board's own picture (Y16).
+        let grid = display.tools.iter().find(|tool| tool.id == "view.display.decor_grid").expect("the grid cell");
+        assert_eq!(grid.run, Some(ToolKind::DecorGrid));
+        assert_eq!(grid.icon, Some(icons::view::DECOR_GRID));
+        assert_eq!(display.columns(), 2, "the two display switches are the group's cells");
     }
 
     #[test]
@@ -1663,6 +1682,7 @@ mod tests {
             ToolKind::Snap(model::SnapKind::Axis),
             ToolKind::Snap(model::SnapKind::Grid),
             ToolKind::Shadows,
+            ToolKind::DecorGrid,
             ToolKind::Measure,
             ToolKind::ContourBoolean(engine::ContourOp::Union),
             ToolKind::ContourBoolean(engine::ContourOp::Subtract),
@@ -1731,18 +1751,18 @@ mod tests {
         // The Products group's one cell and the Panels group's three live ones (U123, U126).
         assert_eq!(tab("furniture").expect("furniture").columns(), 4);
         assert_eq!(tab("scene").expect("scene").columns(), 3);
-        // The View tab's three cells beside the group are the projection pair and the shadow
-        // switch: the Snaps group of twelve cells is the second row.
-        assert_eq!(tab("view").expect("view").columns(), 15);
+        // The View tab's four cells beside the groups are the projection pair and the two display
+        // switches: the Snaps group of twelve cells is the second row.
+        assert_eq!(tab("view").expect("view").columns(), 16);
         let widest = tabs().iter().map(TabSpec::columns).max().unwrap_or(0);
-        assert_eq!(widest, 15, "the View tab's Snaps row is the widest row of the map");
+        assert_eq!(widest, 16, "the View tab's Snaps row is the widest row of the map");
         for tab in tabs() {
             assert!(tab.columns() <= widest);
         }
         // The View tab's widest row is the Snaps group's twelve cells — the master switch, the mode
-        // and the ten kinds — and its three other cells, the projection pair and the shadow switch,
-        // join it on that row.
-        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 5);
+        // and the ten kinds — and its four other cells, the projection pair and the two display
+        // switches, join it on that row.
+        assert_eq!(tab("view").expect("view").columns(), model::SnapKind::ALL.len() + 6);
     }
 
     #[test]

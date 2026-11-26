@@ -82,6 +82,7 @@ impl Editor {
             snaps: view.snaps,
             snap_mode: view.snap_mode,
             shadows: view.shadows,
+            decor_grid: view.decor_grid,
             draft,
             build: self.panel_build(),
         };
@@ -207,6 +208,9 @@ impl Editor {
                     outcome.view = Some(toolbars::RibbonViewAction::ToggleSnapMode);
                 }
                 ToolAction::ToggleShadows => outcome.view = Some(toolbars::RibbonViewAction::ToggleShadows),
+                ToolAction::ToggleDecorGrid => {
+                    outcome.view = Some(toolbars::RibbonViewAction::ToggleDecorGrid);
+                }
             }
         }
         Ok(outcome)

@@ -147,6 +147,7 @@ When creating or editing a panel, the user sets:
 
 - length (nominal);
 - width (nominal);
+- four end trims, one per nominal end, a signed length each (section 4.7);
 - panel material.
 
 A contour panel is the exception: its nominal size comes from the ring, so creation chooses the
@@ -251,6 +252,32 @@ mode is described in [Geometry objects](geometry.md).
 Machining is still stored in nominal panel-local coordinates, and a cutout tool is subtracted from
 the contour body in 3D. The core trace and the cutout fit read the exact ring region, not its bounds
 rectangle, so a ring with a notch or a hole is handled like a rectangle.
+
+### 4.7. End trims
+
+A workshop cuts an end of a board short, or lets it run past its size — «подрезка торца». The panel
+stores four signed `Length`s, one per nominal end in the edge order of section 3: edge 1 the bottom,
+2 the right, 3 the top, 4 the left. A **positive** trim cuts that end in and a **negative** one lets
+the board out; zero, the value every board is born with, is the nominal rectangle to the micrometre
+(ADR 0240).
+
+- **The frame never moves.** The nominal length and width, the origin and the placement stay exactly
+  where the command that set them put them: a number that changes the board through its parameters
+  never moves the handle the person controls the part with. The material sits inside the frame at a
+  cut end and outside it at a let-out end, so a low trim is not an offset of the local zero.
+- **One size, derived.** `board_length = nominal_length - trim(left) - trim(right)` and
+  `board_width = nominal_width - trim(bottom) - trim(top)`. Core, overall, the mesh, the bounds, the
+  exported sizes and the contour table the order package hands over are all measured from that board;
+  the card prints it beside the four fields.
+- **The number belongs to the end.** A command stores the number it is given and moves the end by the
+  difference from the stored one, so typing a number twice moves nothing and zero puts the end back.
+  A trim that would leave no board is refused, as is any trim on an end that cuts more than the board
+  has: the file's reader refuses a board whose trims consume it.
+- **A ring has no ends.** A contour panel is sized by its ring and refuses trims by name; baking a
+  rectangle into a ring clears the numbers the ring already drew.
+- **One command.** `panel.trim.set` (panel, edge, trim) writes one revision and one undo entry. A
+  resize keeps the trims: the size and the trims are two parameters, and a resize writes only the
+  size.
 
 ## 5. Edge banding
 

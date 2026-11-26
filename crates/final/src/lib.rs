@@ -2,15 +2,16 @@
 //!
 //! The viewport draws a frame as fast as a device can, and a catalogue needs the opposite trade: one
 //! image, minutes of it, no aliasing and no noise. This crate owns that pipeline and nothing else —
-//! the BVH over the frame's triangles, the sampler, the WGSL integrator and the tone map that ends
-//! in a PNG. It borrows the device the shell already created instead of opening one: `wgpu` reaches
-//! this crate as the shell's own handle, so the renderer and the tracer cannot drift into two
-//! versions of the same API (`AGENTS.md` §5).
+//! the BVH over the frame's triangles, the sampler, the WGSL integrator, the à-trous filter that takes
+//! the noise the integrator leaves (`crate::denoise`) and the tone map that ends in a PNG. It borrows
+//! the device the shell already created instead of opening one: `wgpu` reaches this crate as the
+//! shell's own handle, so the renderer and the tracer cannot drift into two versions of the same API
+//! (`AGENTS.md` §5).
 //!
 //! Input is frame data, never document data: the triangles of a [`scene`] frame, the lights it
 //! carries in watts with inverse-square falloff (ADR 0039) and the session camera. This crate reads
 //! no `Project`, no catalogue and no file of its own; the shell hands it a frame and takes an image
-//! back, and the one file it ever touches is the PNG it writes (ADR 0210).
+//! back, and the one file it ever touches is the PNG a save writes ([`image::save`], Y12, ADR 0210).
 //!
 //! Layer: L5, beside `render` and above `scene`. It must not depend on `render` (a sibling, and the
 //! tracer owns its own pipelines), on `egui` or a window (the shell owns both), or on `model` (the
@@ -22,8 +23,9 @@
 //! error the shell reports, not a silently black image.
 //!
 //! The techniques are implemented from their published sources and cited where they are used — the
-//! integrator from Veach 1997 and *Physically Based Rendering*, the binned-SAH build from Wald 2007
-//! — and `plan/notes/Y1.md` carries the measurements and the reasoning behind each choice.
+//! integrator from Veach 1997 and *Physically Based Rendering*, the binned-SAH build from Wald 2007,
+//! the edge-avoiding wavelet from Dammertz et al. 2010 — and `plan/notes/Y1.md` and `plan/notes/Y4.md`
+//! carry the measurements and the reasoning behind each choice.
 //!
 //! Changes when: what one image costs, how a sample is taken, or what the frame hands over changes.
 #![forbid(unsafe_code)]
@@ -38,6 +40,7 @@
 
 pub mod bsdf;
 pub mod bvh;
+pub mod denoise;
 #[cfg(test)]
 mod device_tests;
 pub mod gpu;
@@ -50,9 +53,10 @@ pub mod soup;
 pub mod view;
 
 pub use bvh::Bvh;
-pub use gpu::{Accumulation, Progress, Tracer};
-pub use image::{Image, encode_rgba8};
-pub use job::{Input, RENDER_FINAL_ID, Report, Settings, run};
+pub use denoise::{Frame, Guide, Sample};
+pub use gpu::{Accumulation, Progress, Snapshot, Snapshots, Tracer, Watch};
+pub use image::{Image, encode_rgba8, save};
+pub use job::{Input, RENDER_FINAL_ID, Settings, run};
 pub use ray::{Hit, Ray, Triangle};
 pub use soup::{Face, MAX_TRIANGLES, faces_of};
 
@@ -240,6 +244,16 @@ pub enum FinalError {
     Environment {
         /// The value the request carried.
         value: f32,
+    },
+    /// A lens radius or a focus distance outside the range a camera accepts.
+    #[error(
+        "a lens takes a radius of 0 to 500 mm and a focus of at least 1 mm, and {aperture} at {focus} micrometres was asked for"
+    )]
+    Lens {
+        /// The radius the request carried, in micrometres.
+        aperture: i64,
+        /// The focus distance the request carried, in micrometres.
+        focus: i64,
     },
     /// An exposure that is not a positive number of stops.
     #[error("an exposure is a positive number of stops, and {exposure} was asked for")]

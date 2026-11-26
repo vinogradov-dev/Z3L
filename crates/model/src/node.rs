@@ -212,7 +212,7 @@ mod tests {
         let camera =
             project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("add camera");
         let light =
-            project.add_light(root, "Key", Placement::IDENTITY, LightKind::Sun, [1.0; 3], 1.0).expect("add light");
+            project.add_light(root, "Key", Placement::IDENTITY, LightSpec::sun([1.0; 3], 1.0)).expect("add light");
 
         assert!(project.contains_node(root), "the root owns the document frame");
         assert!(project.contains_node(Id::new(2).expect("shelf")), "a panel");

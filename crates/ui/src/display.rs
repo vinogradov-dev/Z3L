@@ -61,12 +61,21 @@ pub fn contact_shadows(strength_percent: u32, visible: bool) -> scene::ContactSh
 }
 
 /// The floor plate's opacity as the frame reads it, from the workspace's whole percent.
-///
 /// Its own endpoints rather than [`display_strength`]'s: zero is a real answer for the plate — it and
 /// its shadow are gone — while a zero strength means "draw nothing" for a pass that still exists
 /// (U109).
 pub fn floor_opacity(percent: u32) -> f32 {
     percent.clamp(crate::settings::MIN_FLOOR_OPACITY, crate::settings::MAX_FLOOR_OPACITY) as f32 / 100.0
+}
+
+/// The ink the tiling grid is drawn in: the frame's guide ink at the opacity the theme gives a guide
+/// laid over the model (Y16).
+///
+/// The grid is a helper, not a selection and not a refusal, so it wears the guide amber every other
+/// helper over the scene wears (ADR 0111) — and it is translucent, because the picture under it is
+/// the thing the person is judging.
+pub fn guide_ink(ink: [f32; 4]) -> [f32; 4] {
+    [ink[0], ink[1], ink[2], crate::theme::DECOR_GRID_INK_ALPHA]
 }
 
 /// The preset a viewport opens with.

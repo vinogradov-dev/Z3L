@@ -79,6 +79,59 @@ impl Project {
         self.set_node_pivot(id, pivot)
     }
 
+    /// Assigns or clears the render material every surface of a node wears, bumping the revision.
+    ///
+    /// A panel and an object draw a surface, so each wears one material of the workshop's library
+    /// and the frame paints all of it with that material. A container, a camera and a light draw
+    /// nothing and are refused. `None` clears the assignment, and the frame keeps its placeholder
+    /// tone until one is named (Y7).
+    pub fn set_node_material(&mut self, id: Id, material: Option<MaterialRef>) -> Result<Revision, ProjectError> {
+        if id == self.root.id() {
+            return Err(ProjectError::RootImmutable { id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        match node {
+            Node::Panel(panel) => panel.set_render_material(material),
+            Node::Object(object) => object.set_render_material(material),
+            Node::Container(_) | Node::Camera(_) | Node::Light(_) => {
+                return Err(ProjectError::NodeHasNoMaterial { id });
+            }
+        }
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
+    /// Assigns or clears where a node places its material's picture on itself, bumping the revision.
+    ///
+    /// A panel and an object draw a surface, so each may say how its material's picture covers it —
+    /// a scale, an offset and a quarter turn — and a node that says nothing keeps the record's own
+    /// numbers (Y15). A container, a camera and a light draw nothing and are refused. `None` clears
+    /// the mapping, and the frame draws the record's numbers again.
+    ///
+    /// The mapping is stored even when the node names no material: a person may place a picture
+    /// before choosing the board it belongs to, and the order of two commands is not a rule.
+    pub fn set_node_decor(&mut self, id: Id, decor: Option<DecorMapping>) -> Result<Revision, ProjectError> {
+        if id == self.root.id() {
+            return Err(ProjectError::RootImmutable { id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        match node {
+            Node::Panel(panel) => panel.set_decor(decor),
+            Node::Object(object) => object.set_decor(decor),
+            Node::Container(_) | Node::Camera(_) | Node::Light(_) => {
+                return Err(ProjectError::NodeHasNoDecor { id });
+            }
+        }
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Checks that `nodes` can be wrapped in one new group.
     ///
     /// Grouping needs at least two distinct non-root nodes that share one parent container, and the
@@ -914,5 +967,80 @@ mod tests {
         assert_eq!(project.revision(), revision, "a refused pivot edit does not bump the revision");
         assert_eq!(project.pivot_local(panel), Some(PivotLocal::ZERO), "a panel's pivot stays at its base corner");
         assert_eq!(project.panel(panel).expect("panel").placement(), stored, "the refusal changes nothing");
+    }
+
+    #[test]
+    fn a_surface_node_takes_one_render_material_and_a_container_has_none_to_take() {
+        let object = crate::fixtures::sample_object(2);
+        let root = Container::new(Id::new(1).expect("root id"), "Root", Placement::IDENTITY, vec![object.into()]);
+        let mut project = Project::new(root).expect("a project around one object");
+        let object = Id::new(2).expect("object id");
+        let root = project.root().id();
+        let oak = MaterialRef::new(1).expect("a non-zero material");
+
+        assert_eq!(project.set_node_material(object, Some(oak)).expect("an object wears a material").get(), 1);
+        assert_eq!(project.object(object).expect("object").render_material(), Some(oak));
+        assert!(project.object(object).expect("object").geometry().as_mesh().is_some(), "the body is untouched");
+
+        let panel = Id::new(2).expect("panel id");
+        let mut project = sample_project();
+        assert_eq!(project.set_node_material(panel, Some(oak)).expect("a panel wears a material").get(), 1);
+        assert_eq!(project.panel(panel).expect("panel").render_material(), Some(oak));
+        assert_eq!(project.set_node_material(panel, None).expect("the assignment is cleared").get(), 2);
+        assert_eq!(project.panel(panel).expect("panel").render_material(), None, "a cleared panel keeps no material");
+
+        let drawer = Id::new(3).expect("drawer id");
+        let revision = project.revision();
+        assert_eq!(
+            project.set_node_material(drawer, Some(oak)),
+            Err(ProjectError::NodeHasNoMaterial { id: drawer }),
+            "a container draws no surface"
+        );
+        assert_eq!(project.set_node_material(root, Some(oak)), Err(ProjectError::RootImmutable { id: root }));
+        assert_eq!(project.revision(), revision, "a refused assignment bumps nothing");
+        assert_eq!(MaterialRef::new(0), None, "zero is not a material");
+    }
+
+    #[test]
+    fn a_surface_node_places_its_picture_itself_and_a_container_has_none_to_place() {
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        let mapping =
+            DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], Turns::ACROSS).expect("a mapping");
+        let panel = Id::new(2).expect("panel id");
+        let mut project = sample_project();
+        let root = project.root().id();
+
+        assert_eq!(project.set_node_decor(panel, Some(mapping)).expect("a panel places its picture").get(), 1);
+        assert_eq!(project.panel(panel).expect("panel").decor(), Some(mapping));
+        assert_eq!(
+            project.panel(panel).expect("panel").render_material(),
+            None,
+            "the picture is placed, no board is named"
+        );
+        assert_eq!(project.set_node_decor(panel, None).expect("the placement is cleared").get(), 2);
+        assert_eq!(project.panel(panel).expect("panel").decor(), None, "a cleared panel keeps the record's numbers");
+
+        let object = crate::fixtures::sample_object(2);
+        let root_container =
+            Container::new(Id::new(1).expect("root id"), "Root", Placement::IDENTITY, vec![object.into()]);
+        let mut project = Project::new(root_container).expect("a project around one object");
+        let object = Id::new(2).expect("object id");
+        assert_eq!(project.set_node_decor(object, Some(mapping)).expect("an object places its picture").get(), 1);
+        assert_eq!(project.object(object).expect("object").decor(), Some(mapping));
+
+        let mut project = sample_project();
+        let drawer = Id::new(3).expect("drawer id");
+        let revision = project.revision();
+        assert_eq!(
+            project.set_node_decor(drawer, Some(mapping)),
+            Err(ProjectError::NodeHasNoDecor { id: drawer }),
+            "a container draws no surface"
+        );
+        assert_eq!(project.set_node_decor(root, Some(mapping)), Err(ProjectError::RootImmutable { id: root }));
+        assert_eq!(
+            project.set_node_decor(Id::new(99).expect("a free id"), Some(mapping)),
+            Err(ProjectError::NodeNotFound { id: Id::new(99).expect("a free id") })
+        );
+        assert_eq!(project.revision(), revision, "a refused placement bumps nothing");
     }
 }

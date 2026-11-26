@@ -46,7 +46,7 @@ pub use camera::{
     Camera, CameraError, DEFAULT_FOV_Y, MAX_DISTANCE_MM, MAX_PITCH, MIN_DISTANCE_MM, MIN_PITCH, POLE_TOLERANCE,
     Projection, ProjectionToggle, canonical_up,
 };
-pub use decor::{Decor, DecorError, DecorId, DecorImage, MAX_DECOR_SIDE, Turns};
+pub use decor::{Decor, DecorError, DecorId, DecorImage, DecorMapping, Faced, MAX_DECOR_SIDE, Turns};
 pub use ray::{LINE_PICK_RADIUS_POINTS, Ray, ray_segment, ray_triangle};
 
 /// Gamma-space colour of a selected line chain.
@@ -317,6 +317,86 @@ pub struct PointLight {
     pub power: f32,
 }
 
+/// The largest number of rectangular emitters one frame carries.
+///
+/// A window is one and a softbox is another; four keep the shader's light loop and the uniform small,
+/// and a fifth is a scene that does not fit rather than an image that silently loses a source. The
+/// document holds as many as a maker authors, and only the first four in tree order reach a frame.
+pub const MAX_AREA_LIGHTS: usize = 4;
+
+/// A rectangular emitter in world space: its face, its colour and its watts.
+///
+/// The face is the light's own `XY` plane centred on its origin, and the light emits from one side of
+/// it, along its local `-Z` — the convention a sun already uses ([`Lighting::key_direction`]), so a
+/// window lights the room and not the street (ADR 0247).
+///
+/// The frame carries watts and geometry, never a radiance: the conversion from emitted power to
+/// radiance is one function here, [`AreaLight::radiance`], and the tests of it are the frame's own.
+///
+/// [ADR 0247]: ../docs/decisions/0247-a-rectangular-light-is-a-face-at-watts.md
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaLight {
+    /// The centre of the face, in world millimetres.
+    pub origin: DVec3,
+    /// The half-edge along the light's own `X`, in world millimetres.
+    pub half_width: DVec3,
+    /// The half-edge along the light's own `Y`, in world millimetres.
+    pub half_height: DVec3,
+    /// Linear RGB colour.
+    pub color: [f32; 3],
+    /// Radiant power in watts, the unit a point light already uses (ADR 0039).
+    pub power: f32,
+}
+
+impl AreaLight {
+    /// The unit normal of the face the light emits from.
+    ///
+    /// It is derived and never stored: the face is the two half-edges, and their cross product in the
+    /// ring's own order — the height edge into the width edge — is the side the light emits from, the
+    /// same order [`AreaLight::corners`] writes. A second stored normal could disagree with the edge
+    /// the shader samples, and did in the test that turned a window around (L2).
+    pub fn normal(&self) -> DVec3 {
+        self.half_height.cross(self.half_width).try_normalize().unwrap_or(DVec3::Z)
+    }
+
+    /// The area of the face in square millimetres, or 0 for a face with no extent.
+    ///
+    /// It is the length of the cross product of the two half-edges, doubled and doubled again, so a
+    /// degenerate rectangle answers zero instead of a number that divides a radiance by nothing.
+    pub fn area_mm2(&self) -> f64 {
+        let area = 4.0 * self.half_width.cross(self.half_height).length();
+        if area.is_finite() && area > 0.0 { area } else { 0.0 }
+    }
+
+    /// The radiance of the face: the watts spread over its area and its hemisphere.
+    ///
+    /// A Lambertian emitter of power `P` and area `A` radiates `P = L * PI * A`, so the radiance a
+    /// tracer samples is `P / (PI * A)` in `W/(m^2 sr)`. The document's millimetres become square
+    /// metres here, once, because that is the unit watts are defined in.
+    pub fn radiance(&self) -> [f32; 3] {
+        let area = self.area_mm2() * 1.0e-6;
+        if area <= 0.0 || !self.power.is_finite() || self.power <= 0.0 {
+            return [0.0; 3];
+        }
+        let scale = f64::from(self.power) / (std::f64::consts::PI * area);
+        self.color.map(|channel| if channel.is_finite() { (f64::from(channel) * scale) as f32 } else { 0.0 })
+    }
+
+    /// The four corners of the face, in world millimetres, counter-clockwise seen from the emitting
+    /// side.
+    ///
+    /// The viewport draws them and a picking test meets them, so the two readings of one rectangle
+    /// come from one list.
+    pub fn corners(&self) -> [DVec3; 4] {
+        [
+            self.origin - self.half_width - self.half_height,
+            self.origin - self.half_width + self.half_height,
+            self.origin + self.half_width + self.half_height,
+            self.origin + self.half_width - self.half_height,
+        ]
+    }
+}
+
 /// The key light, point lights and ambient term used to shade solid drawables.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lighting {
@@ -328,6 +408,13 @@ pub struct Lighting {
     pub ambient: f32,
     /// Point lights in tree order, at most [`MAX_POINT_LIGHTS`] of them when built from a scene.
     pub points: Vec<PointLight>,
+    /// Rectangular emitters in tree order, at most [`MAX_AREA_LIGHTS`] of them when built from a
+    /// scene.
+    ///
+    /// A viewport shades the model from [`Lighting::points`] and draws the faces; it is the final
+    /// render that samples them, by solid angle, and that is why they are data here and not geometry
+    /// in the soup.
+    pub areas: Vec<AreaLight>,
     /// The radiance of an infinite, uniform environment, linear RGB and zero for none.
     ///
     /// This is the studio the workshop does not build: the light a final render sees where the frame
@@ -344,6 +431,7 @@ impl Default for Lighting {
             key_color: [1.0, 0.97, 0.92],
             ambient: 0.32,
             points: Vec::new(),
+            areas: Vec::new(),
             environment: [0.0; 3],
         }
     }
@@ -360,7 +448,11 @@ impl Default for Lighting {
 /// shades as a repaired surface rather than poisoning an image (`crates/final/src/bsdf.rs`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
-    /// Microfacet roughness of the coat or the metal, `0..=1`.
+    /// Microfacet roughness of the metal or of the pane, `0..=1`.
+    ///
+    /// A pane's width is both interfaces': it scatters what it reflects and what it transmits, so a
+    /// glass front with a width is a frosted one (`crates/final/src/bsdf.rs`). A roughness of zero is
+    /// the smooth interface float glass has, which is the picture every clear pane was before it.
     pub roughness: f32,
     /// `0` for a dielectric, `1` for a metal.
     pub metallic: f32,
@@ -370,17 +462,76 @@ pub struct Surface {
     pub transmission: f32,
     /// Beer-Lambert extinction inside the material, per millimetre, linear RGB.
     pub absorption: [f32; 3],
+    /// The clear layer over the base, or [`Coat::NONE`] for a surface that is its base alone.
+    pub coat: Coat,
 }
 
 impl Surface {
-    /// Painted or veneered board: diffuse, opaque, dielectric.
-    pub const MATTE: Self = Self { roughness: 1.0, metallic: 0.0, ior: 1.5, transmission: 0.0, absorption: [0.0; 3] };
+    /// Painted or veneered board: diffuse, opaque, dielectric, no finish over it.
+    pub const MATTE: Self =
+        Self { roughness: 1.0, metallic: 0.0, ior: 1.5, transmission: 0.0, absorption: [0.0; 3], coat: Coat::NONE };
+}
+
+/// The clear dielectric layer over a base: a lacquer, a melamine face, a gloss acrylic front.
+///
+/// A furniture catalogue sells a surface, not a base: a veneer under a 90 % lacquer is a picture of
+/// its own, and ADR 0243 decides the shape — one base, at most one coat, never a stack. The frame
+/// carries the layer the way the tracer reads it: a coverage, a GGX width and an index of refraction.
+///
+/// The gloss in percent is the number a workshop says and a catalogue stores; it becomes the width
+/// here, once, where a record turns into a frame ([`Coat::glossed`]), so no shader sees a percent
+/// and no record carries an alpha.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Coat {
+    /// How much of the surface the layer covers, `0..=1`; zero is no coat at all.
+    pub weight: f32,
+    /// GGX alpha of the layer, `0..=1`: `(1 - gloss / 100)²`, so 90 % gloss is `0.01`.
+    pub alpha: f32,
+    /// The layer's own index of refraction.
+    pub ior: f32,
+}
+
+impl Coat {
+    /// The index of refraction of a clear lacquer: the glass index a finish reads as.
+    pub const IOR: f32 = 1.5;
+
+    /// No layer: the surface is its base alone, which is exactly a picture without a coat.
+    pub const NONE: Self = Self { weight: 0.0, alpha: 1.0, ior: Self::IOR };
+
+    /// A layer covering `weight` of the surface, glossed `gloss` percent, with its own `ior`.
+    ///
+    /// The gloss is the number a workshop says — 90 % is a lacquer, 50 % is a satin — and the width
+    /// the tracer reads is V-Ray's and Cycles' `alpha = (1 - gloss / 100)²` (ADR 0243). The mapping
+    /// lives here because this is the one place a record becomes a frame; a value outside its range
+    /// is repaired rather than carried, the way every other value of a surface is.
+    pub fn glossed(weight: f32, gloss: f32, ior: f32) -> Self {
+        let weight = if weight.is_finite() { weight.clamp(0.0, 1.0) } else { 0.0 };
+        let gloss = if gloss.is_finite() { gloss.clamp(0.0, 100.0) } else { 0.0 };
+        let ior = if ior.is_finite() { ior.max(1.0) } else { Self::IOR };
+        let roughness = 1.0 - gloss / 100.0;
+        Self { weight, alpha: roughness * roughness, ior }
+    }
 }
 
 impl Default for Surface {
     fn default() -> Self {
         Self::MATTE
     }
+}
+
+/// How a viewport draws one mesh's faces.
+///
+/// A body is shaded by the frame's lights; a light's own face is not, because it is the source
+/// rather than a surface the source falls on. The two are one enum rather than a `bool` so a third
+/// way of drawing a mesh has a name to take.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FaceShading {
+    /// Shaded by the frame's lights: every body in the model.
+    #[default]
+    Lit,
+    /// The surface's own colour, blended over the scene and never darkened by a light: the face of a
+    /// rectangular emitter, which is a source and not a board (L2).
+    Source,
 }
 
 /// One shaded mesh in world space.
@@ -418,12 +569,20 @@ pub struct Drawable {
     /// value — the viewport samples it in its fragment and the tracer carries it into its own
     /// shader — because a material the two disagree about is two materials.
     pub decor: Option<Decor>,
+    /// Where this drawable puts that picture on itself, or `None` for the record's own numbers.
+    ///
+    /// The document's mapping, carried beside the picture so the coordinate is computed once by
+    /// [`Decor::uv`] for both frames: a scale, an offset and a quarter turn (Y15). It changes the
+    /// vertices and never the texture, so a cabinet's boards still share one picture.
+    pub decor_mapping: Option<DecorMapping>,
     /// The box around the mesh in its own frame, as the mesh cache measured it (X56).
     ///
     /// `None` means the box was never measured, not that the drawable is empty: a view keeps a
     /// drawable whose extent is unknown. [`Drawable::world_bounds`] turns it into the box a view
     /// culls by (X58).
     pub local_bounds: Option<Aabb>,
+    /// How the viewport draws the faces: lit like a body, or as a source.
+    pub faces: FaceShading,
 }
 
 impl Drawable {
@@ -458,8 +617,17 @@ impl Drawable {
             color,
             surface: Surface::MATTE,
             decor: None,
+            decor_mapping: None,
             local_bounds,
+            faces: FaceShading::Lit,
         }
+    }
+
+    /// The same drawable drawn as a source: its colour is the light it gives, not a surface under a
+    /// light, and the viewport blends it over the scene instead of shading it.
+    pub fn as_source(mut self) -> Self {
+        self.faces = FaceShading::Source;
+        self
     }
 
     /// The same drawable made of `surface`, which is how a frame says a front is glass or a handle is
@@ -473,6 +641,36 @@ impl Drawable {
     pub fn with_decor(mut self, decor: Decor) -> Self {
         self.decor = Some(decor);
         self
+    }
+
+    /// The same drawable with its picture placed by `mapping` instead of the record's numbers.
+    ///
+    /// A mapping without a picture places nothing: [`Drawable::faced`] answers `None` and the
+    /// drawable keeps its flat colour until a decor arrives (Y15).
+    pub fn with_decor_mapping(mut self, mapping: DecorMapping) -> Self {
+        self.decor_mapping = Some(mapping);
+        self
+    }
+
+    /// The picture and the node's placement of it, or `None` for a surfaced drawable with no decor.
+    ///
+    /// This is what a vertex builder reads: one value, so the viewport and the tracer cannot take
+    /// the picture without the placement that belongs to it.
+    pub fn faced(&self) -> Option<Faced<'_>> {
+        let decor = self.decor.as_ref()?;
+        Some(Faced::new(decor, self.decor_mapping))
+    }
+
+    /// The texture coordinate of `local`, a point in the drawable's own frame in millimetres.
+    ///
+    /// A drawable with no decor answers the picture's origin, which the white texel it is bound to
+    /// reads as "the colour alone". The projection itself belongs to [`Decor::uv`], where the grain,
+    /// the size and the node's own numbers live.
+    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+        match self.faced() {
+            Some(faced) => faced.uv(local),
+            None => [0.0, 0.0],
+        }
     }
 
     /// The box around the drawable in world space, or `None` when its extent was never measured.
@@ -1110,6 +1308,42 @@ mod tests {
     /// The relative luminance of a gamma-space colour: enough to tell paper from slate.
     fn luminance(color: [f32; 4]) -> f32 {
         0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+    }
+
+    #[test]
+    fn a_drawable_answers_the_coordinate_of_its_picture_and_the_nodes_placement() {
+        let millimetres = |value: i64| units::Length::from_millimetres(value).expect("whole millimetres");
+        let image = Arc::new(DecorImage::new(2, 1, vec![[200, 120, 60, 255]; 2]).expect("a two-texel image"));
+        let decor =
+            Decor::new(DecorId::new(1).expect("a decor"), image, millimetres(600), Turns::ALONG).expect("a decor");
+        let mesh = Arc::new(MeshData::default());
+        let plain = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None);
+        assert_eq!(plain.uv(DVec2::new(300.0, 0.0)), [0.0, 0.0], "a drawable with no picture answers its origin");
+        assert!(plain.faced().is_none());
+
+        let faced = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+            .with_decor(decor.clone());
+        assert_eq!(faced.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0], "the record's 600 mm covers the board");
+        let mapping = DecorMapping::new(millimetres(300), [millimetres(75), units::Length::ZERO], Turns::ACROSS);
+        let placed = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+            .with_decor(decor.clone())
+            .with_decor_mapping(mapping);
+        let read = placed.faced().expect("a faced drawable");
+        assert_eq!(read.mapping(), Some(mapping), "the placement travels with the picture");
+        assert_eq!(
+            placed.uv(DVec2::new(300.0, 0.0)),
+            [0.0, -1.5],
+            "the node's own scale, offset and turn reach the coordinate"
+        );
+        let coarser =
+            Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+                .with_decor(decor)
+                .with_decor_mapping(DecorMapping::new(millimetres(1200), [units::Length::ZERO; 2], Turns::ALONG));
+        assert_eq!(
+            placed.decor.as_ref().map(Decor::id),
+            coarser.decor.as_ref().map(Decor::id),
+            "two placements of one picture are one texture"
+        );
     }
 
     #[test]
@@ -2658,5 +2892,87 @@ mod tests {
         let mut drawn = Vec::new();
         frustum.visible([None, Some(measured)], &mut drawn);
         assert_eq!(drawn, vec![0], "the unmeasured box is kept, the measured one is dropped");
+    }
+
+    #[test]
+    fn a_camera_is_a_pinhole_until_a_render_gives_it_a_lens() {
+        let camera = Camera::default();
+        assert!(camera.is_pinhole(), "the default camera is a pinhole");
+        assert_eq!(camera.aperture(), 0.0);
+        assert_eq!(camera.focus(), camera::DEFAULT_FOCUS_MM, "a lens that is switched on focuses where the view is");
+
+        // A lens changes neither the eye nor the basis: only the ray of one sample does.
+        let lens = camera.with_lens(50.0, 2_000.0).expect("a lens");
+        assert!(!lens.is_pinhole());
+        assert_eq!((lens.aperture(), lens.focus()), (50.0, 2_000.0));
+        assert_eq!(lens.eye(), camera.eye());
+        assert_eq!(lens.forward(), camera.forward());
+        assert_eq!(lens.projection(), camera.projection());
+        // A zero radius keeps the pinhole and is a lens that costs nothing.
+        assert!(lens.with_lens(0.0, 2_000.0).expect("a pinhole").is_pinhole());
+
+        // Both ends of the range are accepted and just outside them is a sentence.
+        assert!(camera.with_lens(camera::MAX_APERTURE_MM, 1.0).is_ok());
+        for (aperture, focus) in [
+            (-1.0, 1_000.0),
+            (camera::MAX_APERTURE_MM + 1.0, 1_000.0),
+            (f64::NAN, 1_000.0),
+            (10.0, 0.0),
+            (10.0, f64::INFINITY),
+        ] {
+            assert!(camera.with_lens(aperture, focus).is_err(), "{aperture} mm at {focus} mm");
+        }
+    }
+
+    #[test]
+    fn a_window_of_a_known_area_carries_the_radiance_its_watts_are() {
+        // A one-metre square radiating 100 W: the radiance is `P / (PI * A)` and the frame keeps the
+        // watts, so the conversion is one function with one test (ADR 0247).
+        let square = AreaLight {
+            origin: DVec3::ZERO,
+            half_width: DVec3::new(500.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 500.0, 0.0),
+            color: [1.0, 1.0, 1.0],
+            power: 100.0,
+        };
+        assert!((square.area_mm2() - 1_000_000.0).abs() < 1.0, "a square metre is a million square millimetres");
+        let radiance = square.radiance();
+        let expected = 100.0 / std::f64::consts::PI;
+        for channel in radiance {
+            assert!((f64::from(channel) - expected).abs() < 1.0e-4, "{radiance:?} is not {expected}");
+        }
+        // Radiance grows with the watts and falls with the area, because the power is spread over it.
+        let brighter = AreaLight { power: 200.0, ..square };
+        assert!(brighter.radiance()[0] > radiance[0]);
+        let wider = AreaLight { half_width: DVec3::new(1_000.0, 0.0, 0.0), ..square };
+        assert!(wider.radiance()[0] < radiance[0]);
+        // A rectangle of a colour lights in that colour, and one of no power or no extent is dark.
+        let tinted = AreaLight { color: [1.0, 0.5, 0.25], ..square };
+        assert!((tinted.radiance()[1] / tinted.radiance()[0] - 0.5).abs() < 1.0e-6);
+        assert_eq!(AreaLight { power: 0.0, ..square }.radiance(), [0.0; 3]);
+        assert_eq!(AreaLight { half_width: DVec3::ZERO, ..square }.radiance(), [0.0; 3]);
+        assert_eq!(AreaLight { power: f32::NEG_INFINITY, ..square }.radiance(), [0.0; 3]);
+    }
+
+    #[test]
+    fn a_window_draws_the_four_corners_of_its_face() {
+        let window = AreaLight {
+            origin: DVec3::new(0.0, 0.0, 1_000.0),
+            half_width: DVec3::new(600.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 700.0, 0.0),
+            color: [1.0; 3],
+            power: 40.0,
+        };
+        let corners = window.corners();
+        assert_eq!(corners[0], DVec3::new(-600.0, -700.0, 1_000.0));
+        assert_eq!(corners[2], DVec3::new(600.0, 700.0, 1_000.0));
+        // The ring is counter-clockwise seen from the emitting side: the corners in order cross to a
+        // normal that points the way the light emits.
+        let across = (corners[1] - corners[0]).cross(corners[3] - corners[0]);
+        assert!(across.normalize().dot(window.normal()) > 0.999, "{across:?}");
+        assert!(window.normal().dot(-DVec3::Z) > 1.0 - 1.0e-9, "a light with its height along +Y emits along -Z");
+        let turned = AreaLight { half_height: DVec3::new(0.0, -700.0, 0.0), ..window };
+        assert!(turned.normal().dot(DVec3::Z) > 1.0 - 1.0e-9, "the same face the other way round emits the other way");
+        assert!((window.area_mm2() - 1_200.0 * 1_400.0).abs() < 1.0e-6);
     }
 }

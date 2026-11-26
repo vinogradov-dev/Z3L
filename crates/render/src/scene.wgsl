@@ -22,6 +22,11 @@ struct Camera {
     shadow_plane: vec4<f32>,
     // x = how opaque the floor plate is, 0 to 1; the rest is unused
     floor: vec4<f32>,
+    // x = whether this view draws the decor's tiling, y = one line's half-width in physical pixels,
+    // z and w = unused (Y16)
+    decor_grid: vec4<f32>,
+    // rgb = the ink of that grid in gamma space, a = how much of it one line lays over the board
+    decor_grid_ink: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -40,6 +45,9 @@ struct ShadowCamera {
 // changes nothing and the sampler is never branched over (which would need uniform control flow).
 @group(2) @binding(0) var decor_texture: texture_2d<f32>;
 @group(2) @binding(1) var decor_sampler: sampler;
+// x = 1 when the bound texels are a board's picture and 0 for the white stand-in, which is what keeps
+// the tiling guide off a surface nobody can tile (Y16).
+@group(2) @binding(2) var<uniform> decor_layer: vec4<f32>;
 
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -171,6 +179,50 @@ fn albedo_of(color: vec4<f32>, uv: vec2<f32>) -> vec3<f32> {
     return color.rgb * textureSample(decor_texture, decor_sampler, uv).rgb;
 }
 
+// Where the tiling of a board's picture draws, as one number between 0 and 1 (Y16).
+//
+// The step is the file's and not a constant here: the vertex carries the coordinate `Decor::uv`
+// computed from the record's `covers` and the node's own mapping, and that coordinate is one whole
+// picture wide, so a line falls at every whole coordinate and the seam is exactly where the sampler
+// repeats the image. The weight is the theme's, in physical pixels, and the derivative turns it into
+// the units the coordinate counts in — that is the one calculation a screen-space line cannot do
+// without, and it is why the guide is drawn here rather than in the line pass.
+fn decor_tiling(uv: vec2<f32>) -> f32 {
+    let half = max(camera.decor_grid.y, 0.0);
+    // How far this pixel is from the nearest cell edge, and how much of the coordinate one pixel
+    // spans. Both axes lay a line, because the picture is a rectangle in its own right.
+    let edge = abs(fract(uv + vec2<f32>(0.5)) - vec2<f32>(0.5));
+    let per_pixel = max(fwidth(uv), vec2<f32>(1.0e-9));
+    return max(tiling_line(edge.x, per_pixel.x, half), tiling_line(edge.y, per_pixel.y, half));
+}
+
+// One line of the tiling grid along one axis of the picture's coordinate.
+//
+// `edge` is the distance to the nearest seam and `per_pixel` how much of the coordinate one pixel
+// spans, both in cells; `half` is the line's half-width in pixels. A pixel of softness either side
+// keeps a board at a grazing angle from crawling.
+fn tiling_line(edge: f32, per_pixel: f32, half: f32) -> f32 {
+    let cell = 1.0 / per_pixel;
+    // A cell narrower than a few lines is a wash, not a tiling: this axis of the guide steps back
+    // where a picture repeats faster than it can be read, and the other axis keeps its lines.
+    let fade = saturate((cell - 2.0 * half) / (6.0 * half));
+    return (1.0 - smoothstep(half - 0.5, half + 0.5, edge / per_pixel)) * fade;
+}
+
+// The colour a shaded surface is drawn with: its lit albedo, and the tiling guide over it when the
+// view asks for one. The two mix in gamma space, where the target and the chrome live.
+fn board_of(
+    normal: vec3<f32>,
+    front_facing: bool,
+    world_position: vec3<f32>,
+    color: vec4<f32>,
+    uv: vec2<f32>,
+) -> vec3<f32> {
+    let rgb = gamma_encode(shade_surface(normal, front_facing, world_position, color));
+    let guide = decor_tiling(uv) * camera.decor_grid.x * decor_layer.x;
+    return mix(rgb, camera.decor_grid_ink.rgb, guide * camera.decor_grid_ink.a);
+}
+
 // Linear colour of one shaded surface, before the gamma encode the target and egui expect.
 fn shade_surface(
     normal_input: vec3<f32>,
@@ -207,8 +259,8 @@ fn gamma_encode(rgb: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_mesh(fragment: MeshIn) -> @location(0) vec4<f32> {
     let color = vec4<f32>(albedo_of(fragment.color, fragment.uv), fragment.color.a);
-    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, color);
-    return vec4<f32>(gamma_encode(rgb), fragment.color.a);
+    let rgb = board_of(fragment.normal, fragment.front_facing, fragment.world_position, color, fragment.uv);
+    return vec4<f32>(rgb, fragment.color.a);
 }
 
 // The translucent pass reduces opacity so blending reveals what lies behind; with alpha 1 the
@@ -218,8 +270,15 @@ const GHOST_ALPHA: f32 = 0.22;
 @fragment
 fn fs_mesh_translucent(fragment: MeshIn) -> @location(0) vec4<f32> {
     let color = vec4<f32>(albedo_of(fragment.color, fragment.uv), fragment.color.a);
-    let rgb = shade_surface(fragment.normal, fragment.front_facing, fragment.world_position, color);
-    return vec4<f32>(gamma_encode(rgb), min(fragment.color.a, GHOST_ALPHA));
+    let rgb = board_of(fragment.normal, fragment.front_facing, fragment.world_position, color, fragment.uv);
+    return vec4<f32>(rgb, min(fragment.color.a, GHOST_ALPHA));
+}
+
+// The face of a source: a window is what gives the light, so no light falls on it. Its colour is drawn
+// as it stands and blended over the model at the opacity it carries (L2).
+@fragment
+fn fs_mesh_source(fragment: MeshIn) -> @location(0) vec4<f32> {
+    return vec4<f32>(gamma_encode(albedo_of(fragment.color, fragment.uv)), fragment.color.a);
 }
 
 struct LineOut {

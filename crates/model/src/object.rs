@@ -14,7 +14,7 @@ use units::Length;
 use crate::contour::{Contour, ContourError, MAX_CONTOUR_COORDINATE, Path, PathError};
 use crate::mesh::Mesh;
 use crate::primitive::Primitive;
-use crate::{Id, PivotLocal, Placement, Properties, PropertyError, PropertyValue};
+use crate::{DecorMapping, Id, MaterialRef, PivotLocal, Placement, Properties, PropertyError, PropertyValue};
 
 /// Largest number of features in a constructive object.
 pub const MAX_OBJECT_FEATURES: usize = 32;
@@ -762,6 +762,19 @@ pub struct Object {
     #[serde(default)]
     properties: Properties,
     tool: bool,
+    /// The render material every surface of the object wears, when one is assigned (Y7).
+    ///
+    /// An object is a 3D body like any other: the frame paints it from the workshop's material
+    /// library, and the document never holds a resolved colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    render_material: Option<MaterialRef>,
+    /// Where this object places that material's picture on itself (Y15).
+    ///
+    /// Absent means the record's own coverage and turn; present, it overrides them for this body
+    /// alone. The projection stays the node's own local plane: a shop aligns a grain, it does not
+    /// unwrap a body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decor: Option<DecorMapping>,
     geometry: Geometry,
 }
 
@@ -775,6 +788,8 @@ impl Object {
             pivot_local: PivotLocal::ZERO,
             properties: Properties::new(),
             tool: false,
+            render_material: None,
+            decor: None,
             geometry,
         }
     }
@@ -797,6 +812,27 @@ impl Object {
     /// The manipulation pivot in the object's own frame.
     pub const fn pivot_local(&self) -> PivotLocal {
         self.pivot_local
+    }
+
+    /// The render material every surface of the object wears, when one is assigned.
+    pub const fn render_material(&self) -> Option<MaterialRef> {
+        self.render_material
+    }
+
+    /// Assigns or clears the render material every surface of the object wears.
+    pub(crate) fn set_render_material(&mut self, material: Option<MaterialRef>) {
+        self.render_material = material;
+    }
+
+    /// Where this object places its material's picture on itself, or `None` for the record's own
+    /// numbers (Y15).
+    pub const fn decor(&self) -> Option<DecorMapping> {
+        self.decor
+    }
+
+    /// Assigns or clears this object's own placement of its material's picture.
+    pub(crate) fn set_decor(&mut self, decor: Option<DecorMapping>) {
+        self.decor = decor;
     }
 
     /// The geometry payload.

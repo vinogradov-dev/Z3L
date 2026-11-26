@@ -45,30 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[ ]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
-  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
-   a shop has no place where a material is edited once and referenced by its boards. A format a
-   session invents from scratch will not be the one a joiner uses, so it takes the commonly
-   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
-   of pictures beside it.
-  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
-   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
-   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
-   whole. The library is one portable file in the workshop's user settings beside the settings
-   file (library.json) with an atomic save and a readable refusal for every refusal, and a
-   textures folder beside it: a picture is an ordinary file at a relative path that a person
-   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
-   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
-   it hands it the directory's, and the crate is registered in xtask's layer map and in
-   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
-   nothing draws.
-  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
-   empty name, a decor with no size and a picture that is missing are refusals a person can
-   read, never a panic; a replaced picture changes the frame's decor without restarting the
-   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
-   is green.
-  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src`
-
 - `[ ]` **O16** a catalogue record refers to a library material instead of describing it
   Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
    colour, a texture reference, roughness, metallic. The owner's model is the other way round:
@@ -86,25 +62,60 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-
-- `[ ]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
-  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
-   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
-   material and left the mapping unwritten, so the viewport and the final render show something
-   the workshop does not buy, and they disagree with the catalogue record on the first order.
-  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
-   panel's board from its material record, a band from its own, hardware as a conductor with
-   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
-   tint its record names. A record with no material keeps the placeholder tone, because a
-   workshop that has not filled the catalogue must still see a board and not a black rectangle.
-   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
-   exposure and the filmic curve stay the command's settings.
-  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
-   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
-   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
-   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
-  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src`
 ## Bugs
+- `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
+  Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
+   chosen on the tool card): a number typed into one of the row's two end fields cannot be
+   followed by a Tab into the other end and a number there; Enter on an end fixes that end and
+   afterwards the number cannot be overwritten and Tab does not reach the other end; Escape
+   clears the lock, but Tab never gives the cursor back to a field. Reproduced headless over
+   `evenly_harness` (a shelf fill with `FillSpread::Even`, the pointer on the near plate): the
+   near air takes 80 mm and the far plate takes 120 mm after a Tab, so the plain path works;
+   Enter on the far plate then locks it and the row's two airs jump from 80/120 to 600/120
+   although a lock must not move the boards; the plate still owns the keyboard, and the Tab
+   after it leaves the low side active with no field owning the keyboard, so a number typed
+   then lands nowhere (twenty idle frames and the values do not move). Escape clears both locks
+   and re-spreads the row (351/351), and from there neither Tab nor a typed number changes
+   anything: the row keeps three plates on screen that cannot be typed into, and the plate
+   takes no pointer, so the maker has to leave the work area and come back. Expectation: Enter
+   locks the face where it stands and draws the glyph without moving the row; Tab always walks
+   to the other end and that field takes the numbers typed into it, locked or not; Escape gives
+   the part back to the pointer but the next Tab or pointer move hands the keyboard to the end
+   the pointer names, so the gesture never leaves a plate nobody can type into. Suspected
+   cause: the keyboard is `DistanceFields`' own state — `begin` consumes Tab and asks `Scrub`
+   for the focus, `end` writes `focused_id` from `ui.memory().focused()` and re-activates
+   whichever row reported `focused`, so a request made while the locked plate still holds
+   egui's focus is dropped and `focused_id` keeps the other plate's id; and Escape sets
+   `suspended`, which only `reset`/`dismiss` clear, so `begin` stops auto-activating a side and
+   `tab()` has no active side to walk from (crates/ui/src/distance.rs, 656-750). The lock
+   moving the row is `plan_row` fed by `pinned_start`/`pinned_gap` in `update_row`.
+  Done: Tests over `evenly_harness` in `app/src/frame_tests.rs`: a number typed into the near
+   plate, a Tab and a number typed into the far plate leave both airs at what was typed; Enter
+   on an end leaves the row's two airs where they stood, and a Tab after it still hands the
+   keyboard to the other end, where a typed number lands; Escape gives the part back, and a Tab
+   after it (and a second one) returns the keyboard to a plate and a typed number lands; the
+   whole sequence runs without the pointer leaving the work area; cargo xtask ci is green.
+  `files: crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs`
+- `[ ]` **X138** the render place shows the work area's drawing pointer over its own margins
+  Why: Observation (the owner): with the Render place open, the pointer over the place's
+   margins — the rail of numbers, the status row, the air beside the picture — is the work
+   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
+   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
+   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
+   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
+   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
+   document's scene rectangle still names the workspace's area, so the work cursor keeps the
+   place it no longer has.
+  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
+   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
+   the work area is absent) and the system arrow stays everywhere in the place, the picture
+   included. The viewport keeps its own cursor untouched: this is one condition at the call
+   site, not a second pointer rule.
+  Done: A headless frame test: with the place open, the pointer over the rail and over the air
+   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
+   the shell's square again; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs`
+
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -180,22 +191,101 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
-  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
-   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
-   The reference project measured its a-trous filter at about a third off the error at 8 spp
-   and recorded where the filter stops paying and starts smearing; shipping one without our own
-   numbers would repeat the mistake that project documents.
-  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
-  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
-  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
-  catalogue image is graded in the print pipeline, not in the renderer.
-  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
-   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
-   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
-   1000 mm panel keeps its edge; `cargo xtask ci` is green.
-  `files: crates/render/src,crates/mesh/src/lib.rs`
-- `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
+- `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
+  Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
+   features }` cannot store a profile with holes, although the kernel Profile and a panel core
+   already do. A maker who pulls the frame between two nested rings is told the area has a hole
+   and cannot become a part.
+  Shape: The profile becomes outer plus holes: the payload's wire form, its validation, the
+   extrusion compiler, the mesh and the golden file change together, with schema 30 and no
+   migration (ADR 0096). The area command stops refusing and hands the face's holes to the body
+   it creates.
+  Done: A test extrudes an annulus into one body whose profile carries the hole, the golden
+   file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
+   `cargo xtask ci` is green.
+  `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
+- `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
+  Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
+   entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
+   although the task calls them part of the piece. The class registry names them (20.06 is the
+   hanging rail) and the domain says a fitting is a piece mounted on a part.
+  Shape: The catalogue's starter carries the rows a workshop buys — a leg of a diameter and a
+   height, a rail of a diameter and a length — with the class that makes them fittings, so a
+   build names a row and gets a part in the cut list and a line in the price instead of a solid
+   nobody counts. The acceptance recipe then names them the way it names a board.
+  Done: The recipe's four legs and its rail appear in the parts table and in the order
+   package's price rows, and the prompt no longer says the hardware is drawn simply (one
+   scenario test over the recipe).
+  `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
+- `[ ]` **O18** a facade is assembled from a base material and a finish, so a veneer and a lacquer are two records and not a matrix of combinations
+  Why: The owner's requirement, 2026-11-25: the materials a workshop names — a veneer, a
+   lacquer, a patina — are each a material in its own right, and a facade is assembled from
+   them rather than from a record per combination, so that 30 veneers and 5 lacquers do not
+   become 150 records. ADR 0243 settles the renderer's side: a surface is a base plus one coat,
+   and the coat costs no extra lobe per drawable because the frame merges the two into one
+   `Surface`. What is still undecided is how the catalogue says it, and today nothing composes:
+   `docs/domain/nomenclature.md` gives a record an appearance and a finish, Y8 builds the
+   library that holds the channels, O16 makes a record refer to a library material, and a part
+   still names one material that must already be the finished surface. It waits on Y8 and O16.
+  Shape: A part names a **base** material — a library record: a veneer, a paint, a metal, a
+   patina — and optionally a **finish** — a library record whose coat group is the lacquer,
+   with a weight and a gloss percent (ADR 0243). The frame merges the two into one `Surface`
+   before the tracer sees it: the coat is a field of the frame's surface, never a second
+   drawable, so a composition costs no extra lobe and no extra record. A finish named without a
+   base, a base that is itself a finish, and a finish whose record has no coat are readable
+   refusals naming the record. The directory's appearance row references the two ids and stores
+   no colour of its own (O16), the session resolves them like any other record, and a missing
+   material stays a diagnostic rather than a substitution (ADR 0148). The rejected alternative
+   is written down in the entry: one record per finished surface, with the veneer and the
+   lacquer chosen together, which multiplies the library by the finish list and makes a new
+   lacquer edit every veneer record.
+  Done: Tests in `catalog`, `engine` and `app`: a part naming a base and a finish reaches the
+   frame as one `Surface` with a coat, and a part naming a base alone reaches it with no coat;
+   30 bases and 5 finishes resolve 150 combinations out of 35 records, asserted over the
+   directory rather than described; a finish whose base is missing, a part naming a finish as
+   its base, and a finish with no coat are refusals that name the record; the scene file stores
+   the two ids and never the resolved numbers, so a library edit reaches every part that names
+   it; the inspector's material diagnostics still read the resolved surface; cargo xtask ci is
+   green.
+  `files: crates/catalog/src,docs/domain/nomenclature.md,app/src/scene_build.rs,crates/scene/src/lib.rs,plan/notes`
+- `[ ]` **Y17** the card edits a node's decor mapping beside the slot its material sits in
+  Why: Y15 landed the field, the command and the frame's composition, and nothing draws a field
+  for them: the capability is an `Api` row and the `[ui]` debt entry says why. Its place is
+  beside the render material slot, and that slot is U129's, so this entry waits for it — a
+  mapping row above which no material row stands is a field a person can move with nothing
+  visible to move it against.
+  Shape: One section on the panel card and one on the object card, below the material row U129
+  adds: a scale (a length of board per picture width), the two offsets in the node's own
+  axes and a quarter-turn switch, all in one edit scope so a drag of any of them is one undo
+  entry; the record's numbers stand as the quiet value while no mapping is set, a clear row
+  returns to them, and the section draws nothing when the node's record names no picture.
+  The row moves from `Api` to `Card` in the inventory, and the debt entry leaves in the same
+  change.
+  Done: Tests: the card dispatches `node.decor.set` with the typed numbers and one undo entry per
+  settled edit; a node with no mapping shows the record's numbers and the clear row clears the
+  field; a node whose record names no picture draws no section; `cargo xtask ui-rules`,
+  `cargo xtask plan` and `cargo xtask ci` are green, and the `[ui]` debt entry is gone.
+  `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
+
+## Done
+
+- `[x]` **U129** U129 a person gives a node one of the workshop's materials, and the card lists the library
+  Why: Y7 made every surface of a panel or an object wear one record of the render's library,
+   and it reads that record from the document — but nothing writes the slot in the window. A
+   shop can only name a material in the scene file by hand, so the frame's ability is invisible
+   until the card and a command exist (ADR 0245).
+  Shape: Two ways in, one command: a `node.material.set` with its stable id, a README-style
+   inventory row, an icon, the card and the palette place, and one undo entry; a picker that
+   lists the session's library by name, says so when the library is empty and clears a slot;
+   the record a node names is resolved by the session, so a missing one is a readable
+   diagnostic naming the node and the id rather than a silent placeholder. The catalogue's own
+   link is O16's, not this entry's.
+  Done: Tests: a command assigns and clears a slot in one undo entry each; the picker lists the
+   library's names and refuses nothing when the library is empty; a node whose record is gone
+   is a finding the inspector prints; cargo xtask ci is green.
+  `files: crates/engine/src/node_cmds.rs,crates/engine/src/session.rs,crates/ui/src/material_slot.rs,crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src/inventory.rs,crates/ui/src/palette.rs,crates/text/src/messages.rs,assets/icons/actions/material.svg` — `ff99183`
+
+- `[x]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
    that end, a negative grows it. The overlay wall is the same mechanism read the other way:
    its lap is a negative trim, so without one field the board would grow a second way of being
@@ -222,61 +312,187 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    opposite trims classify as a rectangle; the card edits all four and shows the manufactured
    size; the overlay wall reads its lap through the same field; the schema version moved and no
    migration code exists; cargo xtask ci is green.
-  `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
-- `[ ]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
-  Why: The image the owner points at is lit by one big source the size of a window: shadows
-   that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
-   clips to white. The document carries `Sun` and `Point` only
-   (`crates/model/src/light.rs:23`), and a point light cannot make a shadow soft at one
-   distance and hard at another, nor a visible bright pane. Without a rectangular emitter the
-   final render (Y1–Y4) has nothing to sample by solid angle, and every interior it renders
-   stays flat.
-  Shape: A third light kind: a rectangle with a size in the document's own units beside the
-   placement, colour and watts the other kinds carry, created and edited by one command and
-   drawn in the viewport as a translucent pane with an outline so it is selectable and still
-   out of the way. The viewport shades it as a source; the final render samples it by solid
-   angle with next-event estimation and multiple importance sampling (Y2), and a pane the
-   camera sees contributes its own emission. A new variant is a new layout with no migration
-   (ADR 0096).
-  Done: Tests: the command creates, resizes and removes one, the document round-trips the new
-   kind, an unknown kind is a readable load error, picking returns its id, and the emitted
-   power to radiance conversion has a unit test; the traced image against analytic irradiance
-   is Y2's test, not this one; `cargo xtask ci` is green.
-  `files: crates/model/src/light.rs,crates/scene/src/lib.rs,crates/engine/src`
-- `[ ]` **Y5** the final camera has a lens: an aperture, a focus distance and a sample on the disc
-  Why: The image the owner points at reads the way it does because of depth of field: a narrow
-   focus band across the miniature furniture and everything else melted. Behind that sit the
-   three things the plan already carries — bounce light, contact shadows and a denoised
-   estimate — so the one capability the picture has and Y1–Y4 do not is the lens. A pinhole
-   camera renders a product sharp, which is what a catalogue image usually wants; an aperture
-   is what turns the same scene into an atmosphere shot, and it costs one more sampler
-   dimension pair rather than a second renderer.
-  Shape: The camera gains an aperture radius and a focus distance, with a target point the
-   viewport can show, and the sampler spends one more dimension pair on a concentric disc
-   around the lens origin; a zero aperture is exactly today's pinhole and costs nothing. The
-   denoiser's guide already carries camera distance (Y4), which is what keeps the blur from
-   smearing across the focus band. The viewport does not change: a lens is a setting of the
-   render command, never view state.
-  Done: Tests: a zero aperture renders identically to the pinhole (a golden comparison); a wide
-   aperture at a 2 m focus blurs a point at 1 m by the thin-lens circle of confusion within 2%;
-   a shallow-focus render of the fixture reaches the reference noise level at a sample count
-   written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
-   green.
-  `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
-- `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
-  Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
-   features }` cannot store a profile with holes, although the kernel Profile and a panel core
-   already do. A maker who pulls the frame between two nested rings is told the area has a hole
-   and cannot become a part.
-  Shape: The profile becomes outer plus holes: the payload's wire form, its validation, the
-   extrusion compiler, the mesh and the golden file change together, with schema 30 and no
-   migration (ADR 0096). The area command stops refusing and hands the face's holes to the body
-   it creates.
-  Done: A test extrudes an annulus into one body whose profile carries the hole, the golden
-   file round-trips it, and `object.area.extrude` on the frame of two nested rings creates it;
-   `cargo xtask ci` is green.
-  `files: crates/model/src/object.rs,crates/param/src/constructive.rs,crates/engine/src/area_cmds.rs`
-- `[ ]` **Y6** the Render place shows the image as it is traced, and keeps the last one
+  `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/` — `aa41181`
+
+- `[x]` **Y16** the viewport shows the decor's tiling as a grid, so the scale and the seam are seen before a render
+  Why: The mapping is invisible until a final render is drawn: a person cannot tell whether a
+   veneer's picture covers 600 mm or 1200 mm, where the seam falls on a door, or whether the
+   grain runs along the board. A 3D editor the person knows shows a UV or checker grid for
+   exactly this, and the viewport already samples the same `scene::Decor` the tracer does, so
+   the grid is a view mode and not a document change.
+  Shape: A view toggle beside the existing display switches (`view.decor_grid`), off by default
+   and remembered per tab like the other view flags: while it is on, every decorated drawable
+   draws the decor's tiling as a checker — or the decor with a grid over it — so the scale, the
+   turn and the seam are read at a glance, and a surface with no decor keeps its plain tone.
+   The line weight and the step come from the theme and from the decor's own `covers`, never
+   from a literal in a shader. The one `scene::Decor::uv` runs for the overlay, the viewport's
+   shading and the tracer, so the grid cannot disagree with the print.
+  Done: Tests: the toggle is view state and moves no revision; a fixture drawable shows one
+   tiling per `covers` millimetres with the seam where the coordinate wraps; the overlay is off
+   by default and survives a document switch; cargo xtask ci is green.
+  `files: crates/ui/src,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/render/src` — `91e6a47`
+
+- `[x]` **Y15** each object carries its own decor mapping — a scale, an offset and a turn — instead of inheriting the record's
+  Why: `scene::Decor::uv` projects a drawable's local XY by the record's `covers` and `turns`,
+   so every board of a cabinet wears a veneer at one scale and one turn: the grain of a door
+   cannot be run along its height while the shelf beside it runs along its width, and a small
+   part cannot be shown at a finer scale than a large one. The mapping is one plain planar
+   projection from the local frame; there is no per-node scale, offset or quarter turn and no
+   choice of the axis it projects along. `AGENTS.md` §4.9: the document field is designed with
+   the owner before it is written.
+  Shape: A per-node mapping stored beside the node's render material — a scale (a length per
+   picture width), an offset in two axes and a quarter turn — with the record's own numbers as
+   the quiet answer, so a node that says nothing draws exactly as it does today; one command
+   (`node.decor.set`) and one undo entry; the frame composes the mapping with the record's
+   decor, so one picture still textures the whole cabinet and the viewport and the tracer keep
+   reading one `scene::Decor`. The card that draws it sits beside the render material slot U129
+   adds. **Open for the owner before the field is written**: does a person choose the
+   projection axis per face (top, front, side), or does a panel keep its local plane with only
+   scale, offset and turn? A real unwrap is not this task: a contour part is a prism, and a
+   shop aligns a grain rather than unwrapping a body.
+  Done: Tests: a node's mapping is document data — serialized, one undo entry per command, and
+   a node without one draws the record's own numbers; a scale, an offset and a quarter turn
+   each move the coordinate the viewport and the tracer compute, through the one shared
+   function; a hostile mapping (a zero scale) is refused; cargo xtask ci is green.
+  `files: crates/model/src/project/node_cmds.rs,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/ui/src/panel_card.rs` — `1e67073`
+
+- `[x]` **Y14** a material is created and edited in the window, and the file it writes is the one the render reads
+  Why: Every board in a cabinet is drawn from a record of the render's library, and today that
+   record exists only in `library.json`: ADR 0244 states that nothing edits a material yet — a
+   shop writes the file by hand and drops its scans into `textures/` — and it filed the card
+   that authors a record as its own task. The record is the whole vocabulary the tracer has:
+   base colour, decor picture with its size and turn, roughness, metallic, ior, transmission,
+   absorption, and one coat of weight, gloss and ior. A shop that cannot author it cannot buy a
+   decor it does not already have, and a wrong number is found only by rendering a plate.
+  Shape: A Materials page in Settings, where the workshop's own file already lives, drawn from
+   the session's `Library`: the records listed by name and id with their picture, a record
+   editor for the base's fields and one coat, and a preview swatch so a decor's scale and turn
+   are seen before a scene opens. A picture is chosen through the existing `file_picker` order
+   and named by a path relative to the store's folder, as `materials::Decor` already demands. A
+   new record takes a fresh `MaterialId`; saving writes `library.json` through
+   `materials::Store` atomically — the same file the watcher reads — so the page swaps the
+   library into every open tab the way Y8 already does and no revision moves. Deleting a record
+   a node names is refused with the nodes named, or allowed with the diagnostic the frame
+   already prints; that choice is the owner's. `ui` never sees `wgpu`, so the preview is a flat
+   swatch of the colour and the picture, not a traced board.
+  Done: Tests: a record created in the page is in `library.json` and in the next frame; a
+   hostile record (negative roughness, an ior below one, a `covers` of zero) is refused with
+   the field named and the file untouched; an edited record changes the frame and not the
+   document's revision; a chosen picture lands under `textures/` and the record names it
+   relatively; a record a node names is not deleted silently; cargo xtask ci is green.
+  `files: crates/ui/src/settings.rs,crates/materials/src/store.rs,app/src/materials_watch.rs,app/src/file_picker.rs` — `5f8d30c`
+
+- `[x]` **Y12** a render needs no chosen file, and the plate is saved when the person says so
+  Why: The Render place refuses to start until a destination is chosen: `RenderPlace::start`
+   answers "choose a file to write the image to" while `settings.path` is `None`
+   (`app/src/render_place.rs`), and the page's only way to set it is the destination row beside
+   the button (`crates/ui/src/render_page.rs`, `destination`). A person who wants to see the
+   picture at print size must first decide where it goes, ends up with a file nobody asked for,
+   and cannot stop and start a plate without watching a path they will replace. The run is the
+   picture; the file is a separate act.
+  Shape: (1) The run takes no destination: `final::Settings` keeps the exposure and the studio,
+   and `final::run` hands the finished `Image` back instead of writing it — `encode_png` and
+   `write_atomic` stay in `final` and become the save's own path, so the crate still owns the
+   one file it writes and no second encoder appears. (2) The place keeps the full-resolution
+   image after the run (f32 RGB, 12 bytes a pixel; A4 at 300 dpi is about 100 MB and the cap is
+   `MAX_PIXELS`), so saving needs no second run, and the exposure re-tones that image and not
+   only the display-sized snapshot. (3) The page: the destination row becomes a Save row —
+   disabled until a run has an image, one button that asks the system file manager through the
+   existing `file_picker` order and writes the kept image at the exposure the page shows;
+   `Render` is enabled with no path at all. (4) A save that fails is a sentence on the place
+   and keeps the image; a second save writes another file. (5) A cancel writes nothing (already
+   true) and now leaves nothing to clean up. (6) ADR 0250 and ADR 0211 state the destination as
+   the render's setting; the record is amended: a run's output is a picture, and where it lands
+   belongs to the save. The command line keeps `--out`: a headless render has nobody to ask.
+  Done: Tests: a run with no destination writes no file and hands an image back; the place
+   starts with no path and holds the image after the run; a save writes the PNG the exposure
+   names, and a second save writes another; a failed save leaves the image and says why; the
+   page's Render button is enabled with no destination and its Save button is not, until an
+   image exists; cargo xtask ci is green.
+  `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs` — `b1bab21`
+
+- `[x]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
+  Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
+   — so every pane is clear float glass. A sandblasted or etched front is a standard furniture
+   door and is not a different colour but a different surface: the transmitted light is
+   scattered by the roughness the reflection lobe already has. Today the only way to draw one
+   is a heavier Beer-Lambert tint, which darkens the pane instead of softening what stands
+   behind it, and the tint is a property of the glass and not of its finish.
+  Shape: Take the transmitted beam about the same microfacet normal the reflection lobe draws
+   (Walter et al. 2007, §4), weighted by the GGX distribution the roughness names, with the
+   refraction direction computed from that normal and the weight corrected by the Jacobian of
+   the refraction — the η² and the cosine ratio the smooth path already carries as `ratio²` —
+   and the exit interface sampled again. A roughness of zero stays exactly today's `refract`,
+   so a clear pane is not changed by this entry. Total internal reflection and the Fresnel
+   split stay where they are. A pane keeps its own `roughness` and is never a coat (ADR 0243):
+   it scatters what it transmits, where a coat reflects, so the two are different lobes and
+   neither stands in for the other. Caustics through a rough pane are found by chance and not
+   sampled: the noise the entry adds is written into `plan/notes/`, and the transmitted
+   radiance is checked against an analytic single-scattering estimate instead of a converged
+   reference.
+  Done: `final` tests: a rough pane's transmitted directions lie inside the lobe its roughness
+   names, and a zero roughness reproduces the smooth refraction of today; a pane's total
+   transmittance — reflected plus transmitted — stays within tolerance at roughness
+   0.1/0.5/1.0; a device test renders the same bar behind a pane at roughness 0 and 0.6 and
+   asserts the transmitted radiance spreads (its variance across the image rises) while the
+   clear pane is unchanged; the added variance and the sample count it needs are written into
+   `plan/notes/`; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/device_tests.rs,crates/scene/src/lib.rs` — `9ead440`
+
+- `[x]` **Y13** the filter stops at a board's grain, and a render can be written without it
+  Why: Owner's report (2026-11-26): a render of a decor was mush. Measured on the H1346 board
+   at 128 samples: local contrast 5.69 unfiltered against 0.96 filtered, so 83 % of the
+   surface's own texture was gone. Two causes in one place: the filter's albedo stop was
+   `SIGMA_ALBEDO = 0.05`, a value chosen for two paints a workshop names apart while a
+   woodgrain's neighbouring texels differ by a few percent, and the guide the stop reads was
+   written from the jittered first sample, so it carried the sampler's noise and could not be
+   tightened. There was also no way to see what the filter costs: `z3l render` always wrote the
+   filtered picture.
+  Shape: The stop becomes a grain's step, `0.012`; that is only safe because the guide is exact
+   — `write_guide` traces one ray from the pixel's centre on the first sample and answers the
+   three things the filter reads (a light's face, a body, the studio), so an albedo step is the
+   surface's own. `Settings::without_denoise` and `z3l render --no-denoise` write the samples'
+   own average, which is both the knob a print bought with samples needs and the measurement
+   the filter's clause needed. The viewport and the page keep the filter: this is the file's
+   picture.
+  Done: A unit test in `denoise` fails on the old constant (the wave collapses to 12 % of its
+   amplitude) and passes on the new one; a device test asserts a filtered board is made of
+   exactly the two texels it wears; `--no-denoise` is parsed and reaches `Settings`; the
+   existing Y4 clauses — denoised beats raw against a reference, and 4096 samples move under a
+   code value — still pass; cargo xtask ci is green.
+  `files: crates/final/src/denoise.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,app/src/cli.rs` — `c5f1674`
+
+- `[x]` **Y9** a varnished board shows a dielectric sheen over its decal instead of a flat matte
+  Why: `final::bsdf::probabilities` gives `diffuse = 1 - metallic` and `specular = metal * (1 -
+   multiple)`, so at `metallic = 0` an opaque surface has no specular lobe at all. The three
+   lobes of Y1 and Y2 cover a diffuse board, a metal handle and a pane; the fourth surface a
+   furniture catalogue sells — a lacquer, a melamine face, a gloss acrylic front, which is a
+   dielectric specular layer over a decal — reads as matte clay, and no denoiser (Y4) turns
+   that into the picture the owner points at. The number is already in the frame:
+   `Surface::ior` travels to the tracer and is read for an opaque surface nowhere.
+  Shape: A coat on `scene::Surface` and on the tracer's `Face.finish`, exactly as ADR 0243
+   decides: a weight in 0..=1, a gloss in percent and its own ior. The lobe is GGX with the
+   visible-normal sampling and the masking the conductor already uses, at the alpha the gloss
+   maps to — `alpha = (1 - gloss / 100)²`, computed once where the record becomes a frame, so a
+   gloss of 99 % does not turn into fireflies — drawn by the discrete pick the other lobes
+   share, weighted `weight · F_coat · f · cos / pdf`, while the base's radiance is multiplied
+   by the coat's transmittance `1 - weight · F_coat`. The four probabilities (diffuse,
+   conductor, coat, transmitted) sum to one; a weight of zero draws nothing and is exactly
+   today's picture; the three spare channels of `GpuFace` carry the coat, so a face keeps its
+   144 bytes (`docs/performance.md` §2). A pane keeps the `is_pane` path untouched, and the
+   viewport keeps its own shading: this entry changes the frame's value and the tracer, not
+   `render`.
+  Done: `final` tests: the coat's albedo by sampling equals the Fresnel-weighted specular
+   integral by quadrature within tolerance at cos 0.1/0.5/1.0 and gloss 99/70/20; the four
+   probabilities sum to one under every weight and every view angle; the summed opaque model
+   answers at most its albedo and at least 0.9 of it at a 50 % gloss; a weight of zero is
+   bit-identical to the picture without the entry; the conductor and `is_pane` tests are
+   unchanged; a device test renders a matte and a 90 % lacquered sphere side by side and
+   asserts the lacquered one is brighter in a grazing band while the two agree on axis; ADR
+   0243 is cited by the code; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/soup.rs,crates/final/src/device_tests.rs,crates/scene/src/lib.rs` — `e51bb13`
+
+- `[x]` **Y6** the Render place shows the image as it is traced, and keeps the last one
   Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
   step by step where that is possible, and the render grows step by step toward a product a
   workshop can use. V-Ray and Blender are references a session looks at, never specifications
@@ -326,22 +542,132 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    second run (a shell test on the tone map); the status row prints resolution, samples,
    elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
    is green.
-  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-- `[ ]` **O17** a leg and a hanging rail are bought records with a class, so a build that names them gets them cut and priced
-  Why: The wardrobe's four legs and its hanging rail are geometry bodies because no furniture
-   entity is a fitting: they are drawn, they are not cut from a sheet and they are not priced,
-   although the task calls them part of the piece. The class registry names them (20.06 is the
-   hanging rail) and the domain says a fitting is a piece mounted on a part.
-  Shape: The catalogue's starter carries the rows a workshop buys — a leg of a diameter and a
-   height, a rail of a diameter and a length — with the class that makes them fittings, so a
-   build names a row and gets a part in the cut list and a line in the price instead of a solid
-   nobody counts. The acceptance recipe then names them the way it names a board.
-  Done: The recipe's four legs and its rail appear in the parts table and in the order
-   package's price rows, and the prompt no longer says the hardware is drawn simply (one
-   scenario test over the recipe).
-  `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
+  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs` — `3bed423`
 
-## Done
+- `[x]` **Y11** a camera's lens is saved with the camera, and a render reads it from there
+  Why: Owner's decision (2026-11-26): a camera's lens is the camera's own setting and must be
+   saved in the document, not chosen again per render. Y5 put the aperture and the focus on the
+   render's Settings (ADR 0248) because the studio had gone there; the owner names the other
+   home, and it is the right one: a photographic camera is its lens, a saved scene must render
+   the same picture from every door — the window, the command line and the assistant — and a
+   number a maker spends time on must survive the session.
+  Shape: CameraNode carries a CameraLens: an aperture radius and a focus distance in the
+   document's own units, validated (0 to 500 mm of radius, a focus of at least a millimetre,
+   and a pinhole needs no focus) with a pinhole default so a camera without one is the camera
+   this tree always had. The camera card gains the two fields, one new command camera.lens.set
+   writes them as one undo entry, and the schema moves to 35 with the golden regenerated (ADR
+   0096). authored_camera maps the lens into the frame's Camera, so the tracer reads it from
+   the camera it was handed, and the Render place renders through scene_camera so the
+   document's camera is what its button uses. Settings::with_lens, its two fields, the page's
+   two fields and --aperture/--focus go: one number, one home. ADR 0249 records the move and
+   0248 is marked superseded.
+  Done: Tests: a lens outside its range is refused on build and load and the document keeps the
+   one it had; the camera round-trips the new field and an older schema is a readable error;
+   the command writes one revision and one undo entry; the card reads the document and builds
+   one request; authored_camera carries the radius and the focus into the frame; a render of
+   the fixture through a document camera with an aperture is blurred and one with a zero
+   aperture is the pinhole the Y5 test measured; cargo xtask ci is green.
+  `files: crates/model/src/camera.rs,crates/model/src/project/camera_light_cmds.rs,crates/engine/src/scene_cmds.rs,crates/ui/src/camera_card.rs,app/src/scene_build.rs,app/src/main.rs,crates/final/src/job.rs,crates/ui/src/render_page.rs,app/src/cli.rs` — `fe5b1ae`
+
+- `[x]` **Y5** the final camera has a lens: an aperture, a focus distance and a sample on the disc
+  Why: The image the owner points at reads the way it does because of depth of field: a narrow
+   focus band across the miniature furniture and everything else melted. Behind that sit the
+   three things the plan already carries — bounce light, contact shadows and a denoised
+   estimate — so the one capability the picture has and Y1–Y4 do not is the lens. A pinhole
+   camera renders a product sharp, which is what a catalogue image usually wants; an aperture
+   is what turns the same scene into an atmosphere shot, and it costs one more sampler
+   dimension pair rather than a second renderer.
+  Shape: The camera gains an aperture radius and a focus distance, with a target point the
+   viewport can show, and the sampler spends one more dimension pair on a concentric disc
+   around the lens origin; a zero aperture is exactly today's pinhole and costs nothing. The
+   denoiser's guide already carries camera distance (Y4), which is what keeps the blur from
+   smearing across the focus band. The viewport does not change: a lens is a setting of the
+   render command, never view state.
+  Done: Tests: a zero aperture renders identically to the pinhole (a golden comparison); a wide
+   aperture at a 2 m focus blurs a point at 1 m by the thin-lens circle of confusion within 2%;
+   a shallow-focus render of the fixture reaches the reference noise level at a sample count
+   written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
+   green.
+  `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl` — `1251e81`
+
+- `[x]` **L2** a window is a soft source: the document carries a rectangular emitter, and the tracer samples it
+  Why: The image the owner points at is lit by one big source the size of a window: shadows
+   that harden where the unit meets the floor, a niche interior lit by bounce, and a pane that
+   clips to white. The document carries `Sun` and `Point` only
+   (`crates/model/src/light.rs:23`), and a point light cannot make a shadow soft at one
+   distance and hard at another, nor a visible bright pane. Without a rectangular emitter the
+   final render (Y1–Y4) has nothing to sample by solid angle, and every interior it renders
+   stays flat.
+  Shape: A third light kind: a rectangle with a size in the document's own units beside the
+   placement, colour and watts the other kinds carry, created and edited by one command and
+   drawn in the viewport as a translucent pane with an outline so it is selectable and still
+   out of the way. The viewport shades it as a source; the final render samples it by solid
+   angle with next-event estimation and multiple importance sampling (Y2), and a pane the
+   camera sees contributes its own emission. A new variant is a new layout with no migration
+   (ADR 0096).
+  Done: Tests: the command creates, resizes and removes one, the document round-trips the new
+   kind, an unknown kind is a readable load error, picking returns its id, and the emitted
+   power to radiance conversion has a unit test; the traced image against analytic irradiance
+   is Y2's test, not this one; `cargo xtask ci` is green.
+  `files: crates/model/src/light.rs,crates/scene/src/lib.rs,crates/engine/src` — `b039a5d`
+
+- `[x]` **Y4** the finished image is not noisy, and the filter proves itself against a reference
+  Why: At the sample counts a workshop waits for — 128 to 256 per pixel — a naive tracer is
+   visibly grainy, and a denoiser is the difference between a catalogue image and a test chart.
+   The reference project measured its a-trous filter at about a third off the error at 8 spp
+   and recorded where the filter stops paying and starts smearing; shipping one without our own
+   numbers would repeat the mistake that project documents.
+  Shape: Per-pixel variance tracked by the sample loop, an edge-avoiding à-trous filter of three to five
+  levels guided by the primary hit's albedo, shading normal and camera distance, and adaptive
+  retirement once a pixel's relative error falls under a threshold. No bloom and no saturation: a
+  catalogue image is graded in the print pipeline, not in the renderer.
+  Done: Tests: at 128 spp the denoised image is measurably closer to the converged reference
+   than the raw one, with both RMSEs written into the note; at 4096 spp the filter moves the
+   image by under one code value RMS, which rules out a permanent blur floor; a 2 mm band on a
+   1000 mm panel keeps its edge; `cargo xtask ci` is green.
+  `files: crates/final/src` — `703cbb5`
+
+- `[x]` **Y7** a board, a band and a handle take their colour, decor and metal from a record, not from three placeholders
+  Why: app/src/scene_build.rs draws a panel from one of three placeholder tones, a band from
+   one grey constant and a handle as matte paint. Y3 gave the frame the ability to carry a
+   material and left the mapping unwritten, so the viewport and the final render show something
+   the workshop does not buy, and they disagree with the catalogue record on the first order.
+  Shape: One function turning a record's material into Drawable::color, Surface and Decor: a
+   panel's board from its material record, a band from its own, hardware as a conductor with
+   its finish's roughness, and a glass front as a dielectric pane with the thickness and the
+   tint its record names. A record with no material keeps the placeholder tone, because a
+   workshop that has not filled the catalogue must still see a board and not a black rectangle.
+   The mapping lives where the frame is built, so the viewport and the tracer read one answer;
+   exposure and the filmic curve stay the command's settings.
+  Done: Tests: a panel with a striped decor shows the stripes along the item's grain direction
+   and a rotated item turns them; a banded edge takes its banding's colour and an unbanded one
+   the decor's; a handle renders as metal in the viewport's frame and in the tracer's image; an
+   item that names no decor renders a flat colour rather than black; cargo xtask ci is green.
+  `files: app/src/scene_build.rs,crates/scene/src/lib.rs,app/src` — `7a66fe6`
+
+- `[x]` **Y8** materials live in one portable file in the workshop's settings, and their pictures are files beside it
+  Why: Y3 taught the frame to carry a decor and the tracer to draw it, and nothing authors one:
+   a shop has no place where a material is edited once and referenced by its boards. A format a
+   session invents from scratch will not be the one a joiner uses, so it takes the commonly
+   accepted shape: a material library, as in V-Ray and Blender, a portable file with a folder
+   of pictures beside it.
+  Shape: A new materials crate (L2) beside catalog: the record with a base colour, a decor
+   (file, how many millimetres one image width covers, quarter turns of grain), roughness,
+   metallic, ior, transmission and absorption; a stable id, a revision and the library as a
+   whole. The library is one portable file in the workshop's user settings beside the settings
+   file (library.json) with an atomic save and a readable refusal for every refusal, and a
+   textures folder beside it: a picture is an ordinary file at a relative path that a person
+   replaces and the program re-reads, without the hash pinning part documents use (ADR 0149),
+   because a decor is replaced and not versioned. The shell hands the frame a snapshot the way
+   it hands it the directory's, and the crate is registered in xtask's layer map and in
+   PROJECT.md in the same change. The channels are exactly the ones the shader reads: no field
+   nothing draws.
+  Done: Tests: a library round-trips through its file with every channel; a duplicate id, an
+   empty name, a decor with no size and a picture that is missing are refusals a person can
+   read, never a panic; a replaced picture changes the frame's decor without restarting the
+   program; three boards of one material copy neither its texels nor its record; cargo xtask ci
+   is green.
+  `files: Cargo.toml,xtask/src/main.rs,PROJECT.md,app/src` — `c207d61`
 
 - `[x]` **X136** the row was too twitchy, its pitch stood at the far end, and the overlay key leaked to a shelf
   Why: The row of «Равномерно» was too sensitive to place a small count, its pitch run stood at

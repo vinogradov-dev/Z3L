@@ -35,6 +35,8 @@ pub(crate) enum PickMode {
     Prices,
     /// Write a final render: a PNG, chosen by the render place.
     Image,
+    /// Read a decor picture for a material: a PNG the library copies beside its file.
+    Picture,
 }
 
 /// The order one gesture gives the system file manager.
@@ -62,6 +64,7 @@ impl Order {
             PickMode::Save => Message::SaveSceneAsTitle,
             PickMode::Prices => Message::PriceListTitle,
             PickMode::Image => Message::SaveImageAsTitle,
+            PickMode::Picture => Message::ChoosePictureTitle,
         }
         .text(self.lang)
     }
@@ -70,7 +73,7 @@ impl Order {
     pub(crate) fn filter(&self) -> &'static str {
         match self.mode {
             PickMode::Prices => Message::PriceListFiles,
-            PickMode::Image => Message::ImageFiles,
+            PickMode::Image | PickMode::Picture => Message::ImageFiles,
             PickMode::Open | PickMode::Save => Message::SceneFiles,
         }
         .text(self.lang)
@@ -80,7 +83,7 @@ impl Order {
     pub(crate) fn extension(&self) -> &'static str {
         match self.mode {
             PickMode::Prices => PRICE_LIST_EXTENSION,
-            PickMode::Image => IMAGE_EXTENSION,
+            PickMode::Image | PickMode::Picture => IMAGE_EXTENSION,
             PickMode::Open | PickMode::Save => EXTENSION,
         }
     }
@@ -235,7 +238,7 @@ fn ask(order: &Order) -> Option<PathBuf> {
         dialog = dialog.set_file_name(name);
     }
     let picked = match order.mode {
-        PickMode::Open | PickMode::Prices => pollster::block_on(dialog.pick_file()),
+        PickMode::Open | PickMode::Prices | PickMode::Picture => pollster::block_on(dialog.pick_file()),
         PickMode::Save | PickMode::Image => pollster::block_on(dialog.save_file()),
     };
     picked.map(|handle| handle.path().to_owned())

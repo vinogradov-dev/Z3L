@@ -678,6 +678,20 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "node.decor.set",
+        label: Message::CmdSetDecor,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Node),
+        icon: None,
+    },
+    Row {
+        id: "node.material.set",
+        label: Message::CmdSetMaterial,
+        places: &[Place::Card, Place::Palette],
+        applies: Applies::Context(ActsOn::Node),
+        icon: Some(crate::icons::actions::MATERIAL),
+    },
+    Row {
         id: "node.pivot.set",
         label: Message::CmdSetPivot,
         places: &[Place::Card],
@@ -899,6 +913,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Camera),
         icon: None,
     },
+    // A camera's lens is an inspector field like its projection, and its numbers are the camera's own
+    // (Y11, ADR 0249).
+    Row {
+        id: "camera.lens.set",
+        label: Message::CmdSetCameraLens,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Camera),
+        icon: None,
+    },
     Row {
         id: "light.params.set",
         label: Message::CmdSetLightParameters,
@@ -944,6 +967,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Always,
         icon: Some(crate::icons::view::SHADOWS),
     },
+    // The tiling grid is the second such switch: view state beside the ground shadow's, read by the
+    // renderer per view, and the board's own picture says the step (Y16).
+    Row {
+        id: "view.display.decor_grid",
+        label: Message::ToolDecorGrid,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::view::DECOR_GRID),
+    },
 ];
 
 /// The row a command id names, if the inventory knows it.
@@ -956,7 +988,8 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows"];
+pub const ATOMS: &[&str] =
+    &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows", "view.display.decor_grid"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {
@@ -1076,11 +1109,12 @@ mod tests {
 
     #[test]
     fn the_palette_runs_exactly_the_commands_it_builds_parameters_for() {
-        // The thirteen ids `Palette::params_for` answers for — twelve with parameters and rename
-        // with its refusal. The table is the record of that set, so a builder that grows or shrinks
-        // has to change the column with it (U94).
+        // The fourteen ids `Palette::params_for` answers for — thirteen with parameters and the two
+        // that refuse by naming the surface that owns the value (rename and the material slot). The
+        // table is the record of that set, so a builder that grows or shrinks has to change the
+        // column with it (U94).
         let answered = in_place(Place::Palette).count();
-        assert_eq!(answered, 13, "the palette row count moved");
+        assert_eq!(answered, 14, "the palette row count moved");
         for row in in_place(Place::Palette) {
             assert!(!row.has(Place::Api), "`{}` is not reachable from the palette", row.id);
         }

@@ -43,6 +43,7 @@ mod gizmo;
 mod gizmo_math;
 mod header;
 mod logging;
+mod materials_watch;
 mod measure_gizmo;
 mod mesh_pick;
 mod model_list;
@@ -273,6 +274,18 @@ enum Gesture {
     },
 }
 
+/// The folders the shell watches off the frame path: the workshop's nomenclature directory and the
+/// render material library beside the settings file.
+///
+/// One value rather than two fields, because every place that composes a window composes both and a
+/// test's workspace is read exactly as a workshop's is.
+struct Watching {
+    /// The packages a shop connects, and the rows a panel is cut from.
+    directory: directory_watch::Watch,
+    /// The materials a facade is drawn with, and the pictures beside them (Y8).
+    materials: materials_watch::Watch,
+}
+
 struct App {
     /// The open scenes, in the order the tab row draws them. Never empty.
     tabs: Tabs<Document>,
@@ -285,11 +298,12 @@ struct App {
     settings: Settings,
     /// Where [`Settings`] is read from and written to.
     settings_store: SettingsStore,
-    /// The worker that hands over a newer nomenclature directory, and its channel to this frame.
+    /// The workers that hand over a newer nomenclature directory and render material library, and
+    /// their channels to this frame.
     ///
-    /// The frame only takes what the worker finished: polling the folder's revision and validating
-    /// the packages both happen off the frame path (`docs/domain/nomenclature.md` §13).
-    watch: directory_watch::Watch,
+    /// The frame only takes what a worker finished: polling a folder's revision and validating its
+    /// packages or materials both happen off the frame path (`docs/domain/nomenclature.md` §13).
+    watching: Watching,
     /// The section the Settings window was last left on.
     settings_section: SettingsSection,
     /// The model list the *Assistant* page asked its endpoint for, and the last answer (ADR 0234).
@@ -345,6 +359,21 @@ struct App {
     /// it is are the shell's; what it says is the active tab's ([`Document::chat`]). The header's
     /// cell and `Ctrl+J` are one act and both write this flag (X106, ADR 0222, J24).
     assistant_open: bool,
+    /// The material window: the workshop's render materials and the one record it edits (Y14).
+    ///
+    /// It is a floating tool of the shell, opened from the render place, so it outlives a tab switch
+    /// exactly as the render place does; the library it shows is the one every tab draws with.
+    material_window: ui::material_window::MaterialWindow,
+    /// What the open documents say about the library: the nodes that name each record, and the ids
+    /// they name that the library no longer holds.
+    ///
+    /// Derived, never stored in a document: it is what the window lists, and it is rebuilt only when
+    /// a revision or a library snapshot moved, because a frame never walks a tree (`AGENTS.md` §2).
+    material_use: ui::material_window::Use,
+    /// The revision and library version of every tab the map above was built from.
+    material_use_key: Vec<(u64, u64)>,
+    /// The decor picture of the record the window edits, decoded once per record and path.
+    material_preview: Option<(materials::MaterialId, String, egui::ColorImage)>,
 }
 
 impl App {
@@ -376,12 +405,20 @@ impl App {
     ) -> Result<Self, String> {
         let root = settings_store.directory_root();
         let start = directory_watch::open(root.as_deref());
-        let watch = directory_watch::Watch::start(root, start.revision);
-        let session = empty_session_with(start.directory)?;
-        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watch)?;
+        let directory_watch = directory_watch::Watch::start(root, start.revision);
+        let store = settings_store.materials();
+        let materials = materials_watch::open(store.as_ref());
+        let materials_watch = materials_watch::Watch::start(store, materials.revision);
+        let session = empty_session_with(start.directory)?.with_materials(materials.library);
+        let watching = Watching { directory: directory_watch, materials: materials_watch };
+        let mut app = Self::build(ctx, render_state, settings_store, loaded, session, watching)?;
         app.apply_channel(ctx);
         if let Some(refusal) = start.refusal {
             log::warn!("the workshop directory could not be read; the starter rows are in use: {refusal}");
+            app.failed(refusal);
+        }
+        if let Some(refusal) = materials.refusal {
+            log::warn!("the workshop material library could not be read; no material is named: {refusal}");
             app.failed(refusal);
         }
         Ok(app)
@@ -424,8 +461,12 @@ impl App {
         // file. The stamp is taken now, so the folder the test wrote before it built the shell is
         // the state the shell starts from and only a later write is a reload (O5).
         let root = settings_store.directory_root();
-        let watch = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
-        Self::build(ctx, render_state, settings_store, loaded, session, watch)
+        let directory = directory_watch::Watch::start(root.clone(), directory_watch::open(root.as_deref()).revision);
+        // The library beside the test's own settings file, watched the same way the window watches
+        // the workshop's: a test that replaces a picture drives the same reload path (Y8).
+        let store = settings_store.materials();
+        let materials = materials_watch::Watch::start(store.clone(), materials_watch::open(store.as_ref()).revision);
+        Self::build(ctx, render_state, settings_store, loaded, session, Watching { directory, materials })
     }
 
     /// Composes the shell around one document, one workspace and, when the window has one, its GPU.
@@ -438,7 +479,7 @@ impl App {
         settings_store: SettingsStore,
         loaded: crate::settings_store::Loaded,
         session: engine::Session,
-        watch: directory_watch::Watch,
+        watching: Watching,
     ) -> Result<Self, String> {
         let settings = loaded.settings;
         let shell = Shell {
@@ -446,15 +487,21 @@ impl App {
             colors: theme::scene_colors(ctx.theme()),
             ..Shell::default()
         };
-        let document =
-            Document::new(render_state.as_ref(), &settings, &shell, plan_mode(session), PreservedSections::new())?;
+        let document = Document::new(
+            render_state.as_ref(),
+            &settings,
+            &shell,
+            plan_mode(session),
+            PreservedSections::new(),
+            settings_store.materials(),
+        )?;
         Ok(Self {
             tabs: Tabs::new(document),
             render_state,
             shell,
             settings,
             settings_store,
-            watch,
+            watching,
             settings_section: SettingsSection::default(),
             assistant_models: model_list::Models::default(),
             settings_open: false,
@@ -473,6 +520,10 @@ impl App {
             queued: Vec::new(),
             frames: 0,
             assistant_open: false,
+            material_window: ui::material_window::MaterialWindow::new(),
+            material_use: ui::material_window::Use::default(),
+            material_use_key: Vec::new(),
+            material_preview: None,
         })
     }
 
@@ -510,6 +561,192 @@ impl App {
         self.tabs.active_mut().last_error = Some(error);
     }
 
+    /// Draws the material window and performs the one act it asked for (Y14).
+    ///
+    /// The window writes nothing: an act is filed here — the record goes into the library, the whole
+    /// library is written through its own store and swapped into every tab — and the sentence a
+    /// refusal carries goes back into the window, which keeps the fields the person typed. A picture
+    /// is the file manager's answer and the store's own copy; the shell only carries the path.
+    fn material_window_frame(&mut self, ctx: &egui::Context) {
+        if !self.material_window.is_open() {
+            return;
+        }
+        let library = self.tabs.active().session.materials_shared();
+        self.refresh_material_use(&library);
+        self.refresh_material_preview(&library);
+        let preview = self.material_preview.as_ref().map(|(material, picture, image)| ui::material_window::Preview {
+            material: *material,
+            picture,
+            image,
+        });
+        let act =
+            ui::material_window::show(ctx, &mut self.material_window, library.as_ref(), &self.material_use, preview);
+        match act {
+            Some(ui::material_window::Act::Set(material)) => self.file_material(*material),
+            Some(ui::material_window::Act::Remove(material)) => self.remove_material(material),
+            Some(ui::material_window::Act::Pick(_)) => self.ask_for_picture(ctx),
+            None => {}
+        }
+    }
+
+    /// Rebuilds what the documents say about the library, when a revision or a snapshot moved.
+    ///
+    /// The map is the window's list of users and of ids that are gone; it is derived, so it is rebuilt
+    /// only when something it is derived from changed, and never on a frame that changed nothing.
+    fn refresh_material_use(&mut self, library: &materials::Library) {
+        let key: Vec<(u64, u64)> = self
+            .tabs
+            .iter()
+            .map(|(_, document)| (document.session.project().revision().get(), document.session.materials_version()))
+            .collect();
+        if key == self.material_use_key {
+            return;
+        }
+        let mut used = ui::material_window::Use::default();
+        for (_, document) in self.tabs.iter() {
+            for (reference, nodes) in document.session.project().nodes_by_material() {
+                let Some(material) = materials::MaterialId::new(reference.get()) else {
+                    continue;
+                };
+                let users = used.named.entry(material).or_default();
+                users.extend(nodes.into_iter().map(|(_, name)| name.to_owned()));
+            }
+        }
+        used.missing = used.named.keys().copied().filter(|id| library.get(*id).is_none()).collect();
+        self.material_use = used;
+        self.material_use_key = key;
+    }
+
+    /// Decodes the picture the record in the fields is faced with, for the swatch.
+    ///
+    /// One picture per record and per path: a scan a shop replaced is the path's own new picture, and
+    /// a record the window leaves takes its picture with it. `ui` never reads a file, so the decode
+    /// is here, beside every other read of the library's folder (ADR 0244).
+    fn refresh_material_preview(&mut self, library: &materials::Library) {
+        let Some(editing) = self.material_window.editing() else {
+            self.material_preview = None;
+            return;
+        };
+        let Some(record) = library.get(editing) else {
+            self.material_preview = None;
+            return;
+        };
+        let Some(picture) = record.base().and_then(materials::Base::decor).map(|decor| decor.picture().to_owned())
+        else {
+            self.material_preview = None;
+            return;
+        };
+        if self.material_preview.as_ref().is_some_and(|(held, path, _)| *held == editing && *path == picture) {
+            return;
+        }
+        self.material_preview = None;
+        let Some(store) = self.settings_store.materials() else {
+            return;
+        };
+        match store.picture(record) {
+            Ok(Some(decoded)) => {
+                let size = [decoded.width() as usize, decoded.height() as usize];
+                let image = egui::ColorImage::from_rgba_unmultiplied(size, decoded.rgba8());
+                self.material_preview = Some((editing, picture, image));
+            }
+            Ok(None) => {}
+            Err(refusal) => {
+                log::warn!("the decor of material {editing} could not be read: {refusal}");
+                self.material_window.refused(refusal.to_string());
+            }
+        }
+    }
+
+    /// Files one record into the workshop's library: one atomic write, then every tab draws with it.
+    fn file_material(&mut self, material: materials::Material) {
+        let records: Vec<materials::Material> = self
+            .tabs
+            .active()
+            .session
+            .materials()
+            .records()
+            .filter(|record| record.id() != material.id())
+            .cloned()
+            .chain([material.clone()])
+            .collect();
+        if self.write_materials(records).is_some() {
+            self.material_window.filed(material.id());
+        }
+    }
+
+    /// Removes one record, leaving every reference to it in the documents (ADR 0251).
+    fn remove_material(&mut self, material: materials::MaterialId) {
+        let records: Vec<materials::Material> = self
+            .tabs
+            .active()
+            .session
+            .materials()
+            .records()
+            .filter(|record| record.id() != material)
+            .cloned()
+            .collect();
+        if self.write_materials(records).is_some() {
+            self.material_window.forget(material);
+            self.material_preview = None;
+        }
+    }
+
+    /// Writes a library the window built and hands it to every tab, or says why it could not.
+    ///
+    /// The whole library is validated before anything is written, so a second record named `Oak` or
+    /// an id two records claim leaves the file exactly as it was; the write itself is the store's
+    /// atomic one, so a crash during it cannot leave half a library behind. A snapshot the frame
+    /// could not read is the window's own sentence, and the records in use stay where they are.
+    fn write_materials(&mut self, records: Vec<materials::Material>) -> Option<std::sync::Arc<materials::Library>> {
+        let library = match materials::Library::new(records) {
+            Ok(library) => library,
+            Err(refusal) => {
+                self.material_window.refused(refusal.to_string());
+                return None;
+            }
+        };
+        let Some(store) = self.settings_store.materials() else {
+            let lang = self.settings.appearance.language.lang();
+            self.material_window.refused(text::Message::MaterialsNoFolder.text(lang));
+            return None;
+        };
+        if let Err(refusal) = store.write(&library) {
+            self.material_window.refused(refusal.to_string());
+            return None;
+        }
+        let library = std::sync::Arc::new(library);
+        for (_, document) in self.tabs.iter_mut() {
+            document.set_materials(std::sync::Arc::clone(&library));
+        }
+        // The watcher sees the stamp move and hands the same library back; the tab then rebuilds one
+        // frame it already has, which costs a frame and never a wrong picture.
+        Some(library)
+    }
+
+    /// Asks the system file manager for a decor picture, starting in the library's own folder.
+    fn ask_for_picture(&mut self, ctx: &egui::Context) {
+        let lang = ui::language(ctx);
+        let folder = self.settings_store.materials().map(|store| store.textures());
+        let order = file_picker::Order { mode: PickMode::Picture, folder, name: None, lang };
+        if let Err(error) = self.picker.start(ctx, order) {
+            self.material_window.refused(error);
+        }
+    }
+
+    /// Copies the picture the person chose beside the library and names it on the record.
+    fn take_material_picture(&mut self, path: std::path::PathBuf) {
+        let Some(store) = self.settings_store.materials() else {
+            return;
+        };
+        match store.import_picture(&path) {
+            Ok(named) => {
+                self.material_preview = None;
+                self.material_window.picture(named);
+            }
+            Err(refusal) => self.material_window.refused(refusal.to_string()),
+        }
+    }
+
     /// Swaps in the directory the worker finished since the last frame.
     ///
     /// The folder is the workshop's, so every open tab takes the same snapshot in the same frame,
@@ -518,7 +755,7 @@ impl App {
     /// (`docs/domain/nomenclature.md` §13). A revision that could not be read keeps the rows in use
     /// and says why in the status bar.
     fn take_directory(&mut self) {
-        while let Some(reload) = self.watch.take() {
+        while let Some(reload) = self.watching.directory.take() {
             match reload {
                 directory_watch::Reload::Loaded(directory) => {
                     for (_, document) in self.tabs.iter_mut() {
@@ -533,6 +770,29 @@ impl App {
         }
     }
 
+    /// Swaps in the material library the worker finished since the last frame.
+    ///
+    /// The library is the workshop's, so every open tab takes the same snapshot in the same frame,
+    /// and each tab re-derives only its frame: no panel, its geometry or the undo history depends on
+    /// a material (`AGENTS.md` §4.2). A library that could not be read keeps the records in use and
+    /// says why in the status bar; a replaced picture arrives here as a new snapshot, which is what
+    /// makes the new scan reach the screen without a restart.
+    fn take_materials(&mut self) {
+        while let Some(reload) = self.watching.materials.take() {
+            match reload {
+                materials_watch::Reload::Loaded(library) => {
+                    for (_, document) in self.tabs.iter_mut() {
+                        document.set_materials(Arc::clone(&library));
+                    }
+                }
+                materials_watch::Reload::Refused(refusal) => {
+                    log::warn!("the workshop material library could not be read; the records in use stay: {refusal}");
+                    self.failed(refusal);
+                }
+            }
+        }
+    }
+
     /// Performs the gesture the file manager answered, or nothing when the pick was cancelled.
     ///
     /// A cancelled pick writes and opens nothing: the person closed the dialog, which is an answer
@@ -541,11 +801,18 @@ impl App {
         let Some((order, answer)) = self.picker.take() else {
             return;
         };
-        // A render's destination belongs to the place, not to a tab: the answer lands wherever the
-        // run will read it, and the page keeps drawing while the file manager is up (ADR 0182).
+        // A render's save belongs to the place, not to a tab: the answer is where the kept image is
+        // written, and the page keeps drawing while the file manager is up (ADR 0182, Y12).
         if order.mode == PickMode::Image {
             if let Some(path) = answer {
-                self.render_place.set_path(path);
+                self.render_place.save(path);
+            }
+            return;
+        }
+        // A decor picture belongs to the material window, which is the shell's and not a tab's.
+        if order.mode == PickMode::Picture {
+            if let Some(path) = answer {
+                self.take_material_picture(path);
             }
             return;
         }
@@ -568,7 +835,7 @@ impl App {
             // without one becomes a file the next *Open* can see.
             PickMode::Save => FileAction::Save(scene_file(path)),
             // The editor never asks for a price list: that pick belongs to the directory application.
-            PickMode::Prices | PickMode::Image => {
+            PickMode::Prices | PickMode::Image | PickMode::Picture => {
                 // Both are answered before this point: the price list belongs to the directory
                 // application, and an image to the render place.
                 log::warn!("a pick that is not a scene reached the tab that asked for it");
@@ -685,17 +952,25 @@ impl App {
             return Ok(());
         }
         let catalog = self.tabs.active().session.directory_shared();
-        let document = Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog)?;
+        // A tab opened beside another one opens on the same shared snapshots: the directory the
+        // window holds and the materials every tab is drawn with (Y8, Y7).
+        let library = self.tabs.active().session.materials_shared();
+        let pictures = self.settings_store.materials();
+        let document =
+            Document::open(self.render_state.as_ref(), &self.settings, &self.shell, path, catalog, library, pictures)?;
         self.tabs.add(document);
         Ok(())
     }
 
     /// Opens an empty *Untitled* scene in a new tab.
     fn new_tab(&mut self) -> Result<(), String> {
-        let session = empty_session_with(self.tabs.active().session.directory_shared())?;
+        let library = self.tabs.active().session.materials_shared();
+        let session = empty_session_with(self.tabs.active().session.directory_shared())?.with_materials(library);
         let settings = &self.settings;
         let shell = &self.shell;
-        let document = Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new())?;
+        let pictures = self.settings_store.materials();
+        let document =
+            Document::new(self.render_state.as_ref(), settings, shell, session, PreservedSections::new(), pictures)?;
         self.tabs.add(document);
         Ok(())
     }
@@ -801,13 +1076,16 @@ impl App {
     /// Replaces the last tab with an empty *Untitled* scene.
     fn empty_tab(&mut self, id: TabId) {
         let directory = self.tabs.active().session.directory_shared();
+        let library = self.tabs.active().session.materials_shared();
+        let pictures = self.settings_store.materials();
         let built = empty_session_with(directory).and_then(|session| {
             Document::new(
                 self.render_state.as_ref(),
                 &self.settings,
                 &self.shell,
-                plan_mode(session),
+                plan_mode(session.with_materials(library)),
                 PreservedSections::new(),
+                pictures,
             )
         });
         match built {
@@ -1458,27 +1736,35 @@ impl App {
     /// Draws the render place in the workspace and performs the one action it asked for.
     ///
     /// The page edits the place's own numbers and draws its own report; the shell starts the run,
-    /// stops it and asks the file manager where the image goes. The scene it renders is the one in
-    /// front of the person — the same frame and the same camera the viewport draws — taken at the
-    /// moment the button is pressed and cloned into the worker, so an edit made while it runs does
-    /// not change the image under it (ADR 0210, ADR 0211).
+    /// stops it and saves the picture where the person says. The scene it renders is the one in front
+    /// of the person — the same frame and the same camera the viewport draws — taken at the moment the
+    /// button is pressed and cloned into the worker, so an edit made while it runs does not change the
+    /// image under it (ADR 0210, ADR 0211).
     fn render_page(&mut self, ui: &mut egui::Ui) {
         let lang = ui::language(ui.ctx());
         let scene = self.tabs.active().file_name(lang);
         let stage = self.render_place.stage();
+        let picture = self.render_place.picture();
+        // The numbers, the kept image and the last save are borrowed from one place at once, so the
+        // page draws them without the shell cloning a path every frame (Y12).
+        let (settings, has_image, saved) = self.render_place.page_parts();
         let action = ui::render_page::show(
             ui,
             ui::render_page::Page {
                 scene: &scene,
-                settings: self.render_place.settings(),
+                settings,
                 bounds: render_place::RenderPlace::bounds(),
                 stage: &stage,
+                picture,
+                has_image,
+                saved,
             },
         );
         match action {
             Some(ui::render_page::Action::Render) => self.start_render(ui.ctx()),
             Some(ui::render_page::Action::Cancel) => self.render_place.cancel(),
-            Some(ui::render_page::Action::Choose) => self.ask_for_image(ui.ctx()),
+            Some(ui::render_page::Action::Save) => self.ask_for_image(ui.ctx()),
+            Some(ui::render_page::Action::Materials) => self.material_window.open(),
             Some(ui::render_page::Action::Close) => self.render_open = false,
             None => {}
         }
@@ -1488,7 +1774,9 @@ impl App {
     fn start_render(&mut self, ctx: &egui::Context) {
         let document = self.tabs.active();
         let frame = document.drawn_frame().clone();
-        let camera = document.camera();
+        // The image is the document's camera when it has one — with that camera's lens — and the view's
+        // own camera otherwise, which is exactly what the viewport draws through (Y11).
+        let camera = crate::scene_build::scene_camera(document.session.project(), document.camera());
         let revision = document.session.project().revision().get();
         let state = self.render_state.clone();
         if let Err(reason) = self.render_place.start(ctx, state.as_ref(), frame, camera, revision) {
@@ -1496,7 +1784,7 @@ impl App {
         }
     }
 
-    /// Asks the system file manager where the image goes, in the folder the scene lives in.
+    /// Saves the render place's picture where the person says, in the folder the scene lives in.
     fn ask_for_image(&mut self, ctx: &egui::Context) {
         let lang = ui::language(ctx);
         let document = self.tabs.active();
@@ -1599,13 +1887,15 @@ impl App {
         // boundary, before anything this frame derives from it: the tree, the cards, the meshes and
         // the diagnostics all read the one snapshot, and the undo history never sees it (O5).
         self.take_directory();
+        self.take_materials();
         // The file manager answers on its own schedule, so its path is taken at the same boundary
         // and becomes the open or the save the gesture would have been (ADR 0182).
         self.take_pick(ui.ctx());
         // A finished render is taken at the same boundary, and a run in flight asks for the next
         // frame so its counter keeps moving even while the person is back in the document
         // (ADR 0211).
-        if self.render_place.take_finished() || self.render_place.is_running() {
+        let state = self.render_state.clone();
+        if self.render_place.poll(ui.ctx(), state.as_ref()) || self.render_place.is_running() {
             ui.ctx().request_repaint();
         }
         // The language is workspace settings, published once per frame so every surface draws the
@@ -1637,7 +1927,10 @@ impl App {
             || self.home_open
             || self.palette.is_open()
             || self.product_card.is_open()
-            || self.pending_question.is_some();
+            || self.pending_question.is_some()
+            // The material window is a floating editor with a field in it: while it is up, a key is
+            // the editor's and never the scene's (Y14).
+            || self.material_window.is_open();
         let chat_open = self.assistant_open;
         {
             let Self { tabs, shell, .. } = self;
@@ -1751,6 +2044,14 @@ impl App {
             self.settings_notice = None;
         }
         self.settings_window(ui.ctx());
+        // Escape closes the material window before the place behind it leaves, so one press closes
+        // one thing; the key is taken here because the place draws earlier in the frame.
+        if self.material_window.is_open()
+            && ui.ctx().input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.material_window.close();
+        }
+        self.material_window_frame(ui.ctx());
         self.assistant(ui.ctx());
         self.take_snaps();
         self.product_frame_card(ui.ctx());

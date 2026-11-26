@@ -767,7 +767,7 @@ fn the_render_tab_turns_the_workspace_into_the_render_place_and_back() {
     let words = harness.drawn.clone();
     let title = Message::RenderTitle.text(text::Lang::En);
     assert!(words.iter().any(|word| word == title), "the page names itself: {words:?}");
-    assert!(words.iter().any(|word| word == Message::RenderDestination.text(text::Lang::En)), "{words:?}");
+    assert!(words.iter().any(|word| word == Message::RenderSave.text(text::Lang::En)), "{words:?}");
     assert_eq!(chrome.ribbon, egui::Rect::NOTHING, "no ribbon band is drawn behind the place");
     assert!(chrome.panels.left.is_none() && chrome.panels.right.is_none(), "and no panel floats over it");
     assert_eq!(harness.revision(), revision, "opening the place writes no document");
@@ -8863,4 +8863,195 @@ fn the_by_points_card_offers_the_class_and_the_rings_finish_and_commits_one_boar
         "the card's class is the one the board carries"
     );
     assert!(document.session.can_undo(), "and one undo entry");
+}
+
+// ── The material window (Y14) ────────────────────────────────────────────────
+
+/// The library the harness's workspace folder holds: the file the material window writes.
+fn material_store(harness: &Harness) -> materials::Store {
+    let folder = harness.path.parent().expect("the workspace file has a folder");
+    materials::Store::at(folder.to_path_buf())
+}
+
+/// The middle of the text the last frame drew for `label`, so a test presses what a person reads.
+fn drawn_point(harness: &Harness, label: &str) -> egui::Pos2 {
+    harness
+        .drawn_rects
+        .iter()
+        .find(|(_, text)| text == label)
+        .map(|(rect, _)| rect.center())
+        .unwrap_or_else(|| panic!("the frame never drew `{label}`"))
+}
+
+/// Writes one opaque texel as a PNG, so a chosen picture is a file the library reads.
+fn write_scan(path: &std::path::Path, texel: [u8; 4]) {
+    let file = std::fs::File::create(path).expect("a fresh file");
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 1, 1);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().expect("a PNG header");
+    writer.write_image_data(&texel).expect("the texel");
+}
+
+/// A record of one matte board, built the way the crate builds one.
+fn board(id: u32, name: &str, colour: [f32; 3]) -> materials::Material {
+    let id = materials::MaterialId::new(id).expect("a non-zero id");
+    let base = materials::Base::matte(colour).expect("a board");
+    materials::Material::of_base(id, name, base).expect("a record")
+}
+
+/// A session whose one panel wears `material`, so a record's fate is read off the frame.
+fn session_wearing(material: u32, library: materials::Library) -> engine::Session {
+    let mut project = testkit::sample_project();
+    let panel = Id::new(2).expect("the fixture's panel");
+    let worn = model::MaterialRef::new(material).expect("a non-zero material");
+    project.set_node_material(panel, Some(worn)).expect("a panel wears one record");
+    let materials = std::sync::Arc::new(library);
+    engine::Session::new(project).with_materials(materials)
+}
+
+/// The colour the frame drew `panel` with, which is the record it names or the placeholder.
+fn panel_colour(harness: &Harness, panel: Id) -> [f32; 4] {
+    harness
+        .app
+        .tabs
+        .active()
+        .drawn_frame()
+        .drawables()
+        .iter()
+        .find(|drawable| drawable.id == panel)
+        .map(|drawable| drawable.color)
+        .expect("the panel is drawn")
+}
+
+#[test]
+fn the_render_place_opens_the_material_window_and_a_new_record_lands_in_the_library() {
+    // The place is where a person says "this board is wrong", so its rail is the window's only door
+    // (ADR 0251). A record made in it is one atomic write of `library.json` and the snapshot every
+    // open tab then draws with — no revision moves, because a material is not the document.
+    let mut harness = Harness::new("frame-materials-new");
+    let store = material_store(&harness);
+    let revision = harness.revision();
+
+    harness.app.render_open = true;
+    harness.settle();
+    harness.click(drawn_point(&harness, Message::MaterialsOpen.text(Lang::En)), egui::PointerButton::Primary);
+    assert!(harness.app.material_window.is_open(), "the rail's row opens the window");
+
+    harness.settle();
+    harness.click(drawn_point(&harness, Message::MaterialNew.text(Lang::En)), egui::PointerButton::Primary);
+    harness.settle();
+
+    let library = store.read().expect("the file this build wrote");
+    assert_eq!(library.len(), 1, "the record is in the workshop's library");
+    let record = library.records().next().expect("the record");
+    assert_eq!(record.name(), "Material 1");
+    assert!(record.base().is_some(), "a new record is a board, not a hole");
+    assert_eq!(harness.app.tabs.active().session.materials().len(), 1, "and the frame draws from it");
+    assert_eq!(harness.revision(), revision, "a material moves no document");
+    assert_eq!(harness.app.material_window.notice(), None, "nothing refused it");
+}
+
+#[test]
+fn a_record_the_library_refuses_leaves_the_file_untouched_and_says_which_field() {
+    // The page's own ranges are the crate's, so the only record a person can build is one the crate
+    // accepts; the refusal that is reachable is the library's (two records one name), and it leaves
+    // `library.json` byte for byte as it was. A hostile channel — an index below one, a coverage of
+    // zero — is refused where it is built, and `ui::material_window`'s own test names those fields.
+    let mut harness = Harness::new("frame-materials-refused");
+    let store = material_store(&harness);
+    harness.app.material_window.open();
+    harness.frame();
+    harness.app.file_material(board(1, "Oak", [0.30, 0.55, 0.20]));
+    let written = std::fs::read(store.library_path()).expect("the first record is written");
+    harness.app.file_material(board(2, " oak ", [0.5, 0.4, 0.3]));
+
+    assert_eq!(std::fs::read(store.library_path()).expect("the file is still there"), written, "nothing was written");
+    let notice = harness.app.material_window.notice().expect("the window says why");
+    assert!(notice.contains("second material named"), "the sentence names the record: {notice}");
+}
+
+#[test]
+fn a_record_edited_in_the_window_changes_the_frame_and_no_revision() {
+    // The same scene, before and after one record lands: a panel that names material 1 draws the
+    // placeholder tone while the library is empty and the record's own albedo once it is filed.
+    let mut harness = Harness::with_session("frame-materials-edit", session_wearing(1, materials::Library::default()));
+    let panel = Id::new(2).expect("the fixture's panel");
+    harness.settle();
+    let placeholder = panel_colour(&harness, panel);
+    let revision = harness.revision();
+
+    harness.app.material_window.open();
+    harness.frame();
+    harness.app.file_material(board(1, "Oak", [0.30, 0.55, 0.20]));
+    harness.settle();
+
+    assert_eq!(
+        panel_colour(&harness, panel),
+        [0.30, 0.55, 0.20, 1.0],
+        "the frame is rebuilt from the record the library now holds"
+    );
+    assert_ne!(panel_colour(&harness, panel), placeholder, "which is not the tone a missing record draws");
+    assert_eq!(harness.revision(), revision, "and the document did not move");
+    assert!(harness.app.tabs.active().session.materials().get(materials::MaterialId::new(1).expect("an id")).is_some());
+}
+
+#[test]
+fn a_picture_chosen_for_a_record_lands_in_the_textures_folder_and_is_named_relatively() {
+    // A decor is a file beside the library, named by a relative path (`materials::Decor`): the picker
+    // chooses it, the store copies it, and the record carries `textures/…` and never a disk.
+    let mut harness = Harness::new("frame-materials-picture");
+    let store = material_store(&harness);
+    harness.app.material_window.open();
+    harness.settle();
+    harness.click(drawn_point(&harness, Message::MaterialNew.text(Lang::En)), egui::PointerButton::Primary);
+
+    let scan = harness.path.parent().expect("the workspace folder").join("oak.png");
+    write_scan(&scan, [0x6d, 0x4b, 0x2a, 0xff]);
+    harness.app.take_material_picture(scan);
+    harness.settle();
+
+    let library = store.read().expect("the file this build wrote");
+    let record = library.records().next().expect("the record");
+    let decor = record.base().and_then(materials::Base::decor).expect("the window switched the decor on");
+    assert_eq!(decor.picture(), "textures/oak.png", "the record names a path inside the folder");
+    assert!(store.textures().join("oak.png").exists(), "and the scan is there to be read");
+    assert_eq!(
+        store.picture(record).expect("the picture reads").expect("a decor").texel(0, 0),
+        Some([0x6d, 0x4b, 0x2a, 0xff]),
+        "the copy is the file the person chose"
+    );
+}
+
+#[test]
+fn a_deleted_record_leaves_the_reference_and_the_window_names_the_id_it_left_behind() {
+    // Deleting is allowed and the document keeps the reference: the object is drawn with the default
+    // material, and the id it still names stands in the window's danger ink so a shop can put a
+    // record back under that number (ADR 0251). Nothing rewrites a placement, a panel or an id.
+    let library = materials::Library::new([board(1, "Oak", [0.30, 0.55, 0.20])]).expect("one record");
+    let mut harness = Harness::with_session("frame-materials-delete", session_wearing(1, library));
+    let panel = Id::new(2).expect("the fixture's panel");
+    let store = material_store(&harness);
+    harness.settle();
+    assert_eq!(panel_colour(&harness, panel), [0.30, 0.55, 0.20, 1.0], "the record is what the panel wears");
+    let revision = harness.revision();
+
+    harness.app.material_window.open();
+    harness.settle();
+    harness.click(drawn_point(&harness, Message::MaterialDelete.text(Lang::En)), egui::PointerButton::Primary);
+    harness.settle();
+
+    assert!(store.read().expect("the library reads").is_empty(), "the file lost the record");
+    let project = harness.app.tabs.active().session.project();
+    let worn = model::MaterialRef::new(1).expect("a non-zero material");
+    assert!(project.nodes_by_material().contains_key(&worn), "the panel still names it");
+    assert_eq!(project.panel(panel).expect("the panel").render_material(), Some(worn));
+    assert_eq!(harness.revision(), revision, "and the reference costs no revision");
+    assert_ne!(
+        panel_colour(&harness, panel),
+        [0.30, 0.55, 0.20, 1.0],
+        "the frame draws the record it can no longer find with the default material"
+    );
+    let missing = Message::MaterialMissing.with(Lang::En, [1]);
+    assert!(harness.drew(&missing), "the id the scene still names is listed: {:?}", harness.drawn);
 }

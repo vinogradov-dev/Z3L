@@ -82,6 +82,18 @@ pub enum ProjectError {
         /// The missing node id.
         id: Id,
     },
+    /// The node draws no surface, so it has no material to assign.
+    #[error("node {id} draws no surface, so it has no material")]
+    NodeHasNoMaterial {
+        /// The node that was asked.
+        id: Id,
+    },
+    /// The node draws no surface, so it has no picture to place.
+    #[error("node {id} draws no surface, so it has no decor to place")]
+    NodeHasNoDecor {
+        /// The node that was asked.
+        id: Id,
+    },
     /// The root container cannot be deleted, moved, grouped, ungrouped or dissolved.
     #[error("root container {id} cannot be changed this way")]
     RootImmutable {

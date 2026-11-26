@@ -233,6 +233,30 @@ impl Panel {
         self.contour_with_sources_for(nominal_size).map(|(contour, _)| contour)
     }
 
+    /// The ring this panel draws, with one nominal source per segment, in panel-local millimetres.
+    ///
+    /// This is the panel's own board and not the frame it sits in: the end trims are read here, so a
+    /// caller that measures the material — the order package's contour table, a banding length, the
+    /// size the saw cuts — sees the board the shop makes of the nominal rectangle (ADR 0240).
+    pub fn contour_with_sources(&self) -> Result<(Contour, Vec<SegmentSource>), PanelContourError> {
+        self.contour_with_sources_for(self.nominal_size())
+    }
+
+    /// The size the board is cut to: the nominal frame with its four end trims applied.
+    ///
+    /// The ring answers it, so the number cannot drift from the shape the outline generator draws: a
+    /// positive trim shortens the board at its end, a negative one lengthens it, and a board with no
+    /// trims answers its nominal size. A contour panel is sized by its ring, so its manufactured size
+    /// is the size it already stores.
+    pub fn manufactured_size(&self) -> Result<PanelNominalSize, PanelContourError> {
+        let (ring, sources) = self.contour_with_sources()?;
+        let (document, _) = document_ring(&ring, sources)?;
+        let (min, max) = document.bounds_micrometres();
+        let length = max[0].checked_sub(min[0]).ok_or(PanelContourError::InvalidBounds)?;
+        let width = max[1].checked_sub(min[1]).ok_or(PanelContourError::InvalidBounds)?;
+        Ok(PanelNominalSize::new(Length::from_micrometres(length), Length::from_micrometres(width))?)
+    }
+
     /// Bakes this rectangular outline into the ring it draws, moving every band with it.
     ///
     /// A ring panel cannot carry edge or corner banding, so the conversion translates each record

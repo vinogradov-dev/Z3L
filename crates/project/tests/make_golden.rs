@@ -16,9 +16,10 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use model::{
-    CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth, CutoutShape,
-    EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightKind, LightNode,
-    Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
+    CameraLens, CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth,
+    CutoutShape, EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId,
+    LightNode, LightSize, LightSpec, MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement,
+    Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -96,16 +97,53 @@ fn scene() -> SceneFile {
                 Geometry::Primitive(Primitive::sphere(millimetres(50), 32, 16).expect("a sphere")),
             )
             .into(),
+            // A camera carries its lens, and a scene with a lensed camera renders that picture from
+            // every door (Y11, ADR 0249).
             CameraNode::new(id(6), "Presentation", Placement::IDENTITY, CameraProjection::DEFAULT)
                 .expect("a camera")
+                .with_lens(CameraLens::new(millimetres(45), millimetres(2_000)).expect("a lens"))
+                .expect("a lensed camera")
                 .into(),
-            LightNode::new(id(7), "Key", Placement::IDENTITY, LightKind::Sun, [1.0, 0.95, 0.9], 2.0)
+            LightNode::new(id(7), "Key", Placement::IDENTITY, LightSpec::sun([1.0, 0.95, 0.9], 2.0))
                 .expect("a light")
                 .into(),
+            // A rectangular emitter is the one light whose wire carries a face (L2, ADR 0247).
+            LightNode::new(
+                id(13),
+                "Window",
+                Placement::IDENTITY,
+                LightSpec::area(
+                    [1.0, 1.0, 0.98],
+                    40.0,
+                    LightSize::new(millimetres(1200), millimetres(1400)).expect("a window"),
+                ),
+            )
+            .expect("a window")
+            .into(),
             drawer.into(),
         ],
     );
     let mut project = Project::new(root).expect("the scene is valid");
+    // The render material a surface wears is written beside the geometry and never a resolved
+    // colour, so a file names the record and a library edit reaches it (Y7).
+    project
+        .set_node_material(id(2), Some(MaterialRef::new(1).expect("a non-zero material")))
+        .expect("the shelf wears a material");
+    project
+        .set_node_material(id(5), Some(MaterialRef::new(2).expect("a non-zero material")))
+        .expect("the ball wears a material");
+    // Where a node places its material's picture is the node's own: the golden carries one board
+    // that says how much of it the grain covers and which way it runs, and every other node says
+    // nothing and keeps the record's numbers (Y15).
+    project
+        .set_node_decor(
+            id(2),
+            Some(
+                model::DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], model::Turns::ACROSS)
+                    .expect("a mapping"),
+            ),
+        )
+        .expect("the shelf places the picture");
     project
         .set_edge_banding(
             id(2),

@@ -461,6 +461,7 @@ messages! {
     WidthField = ["Width: {}", "Ширина: {}"],
     SectionResolved = ["Resolved", "Расчётные"],
     SectionMaterial = ["Material", "Материал"],
+    SectionSurface = ["Surface", "Поверхность"],
     SectionShape = ["Shape", "Форма"],
     SectionBanding = ["Banding", "Кромка"],
     PanelClassNoBanding = ["The class does not allow edge banding.", "Класс не допускает кромление."],
@@ -472,6 +473,10 @@ messages! {
         "Материал панели {} отсутствует в каталоге."
     ],
     MissingMaterial = ["Missing material {}", "Материал {} отсутствует"],
+    MaterialSlotMissing = [
+        "The library has no material {}; choose another one.",
+        "В библиотеке нет материала {}; выберите другой."
+    ],
     NoMaterial = ["No material", "Нет материала"],
     SectionOutline = ["Outline", "Контур"],
     SectionFootprint = ["Base outline", "Контур основания"],
@@ -519,6 +524,7 @@ messages! {
     ThicknessRow = ["Thickness  {}", "Толщина: {}"],
     CoreRow = ["Core  {} × {}", "Сердцевина: {} × {}"],
     OverallRow = ["Overall  {} × {}", "Габарит: {} × {}"],
+    MadeRow = ["Made  {} × {}", "Изготовляемый: {} × {}"],
     GeometryError = ["Geometry: {}", "Геометрия: {}"],
     EdgeBottom = ["Bottom", "Нижняя"],
     EdgeRight = ["Right", "Правая"],
@@ -642,6 +648,12 @@ messages! {
     SectionLight = ["Light", "Свет"],
     Sun = ["Sun", "Солнце"],
     Point = ["Point", "Точечный"],
+    Area = ["Window", "Окно"],
+    LightSize = ["Face", "Плоскость"],
+    LightSizeRange = [
+        "A light's face must be between {} and {} mm a side.",
+        "Плоскость источника должна быть от {} до {} мм по стороне."
+    ],
     Colour = ["Colour", "Цвет"],
     PowerWatts = ["Power (W)", "Мощность (Вт)"],
     Intensity = ["Intensity", "Интенсивность"],
@@ -883,17 +895,79 @@ messages! {
     RenderSamples = ["Samples", "Сэмплы"],
     RenderExposure = ["Exposure", "Экспозиция"],
     RenderStudio = ["Studio", "Студия"],
-    RenderDestination = ["File", "Файл"],
-    RenderNoPath = ["no file chosen yet", "файл ещё не выбран"],
-    RenderChoose = ["Choose…", "Выбрать…"],
+    RenderSave = ["Save", "Сохранить"],
+    RenderSaveAs = ["Save as…", "Сохранить как…"],
+    RenderSaveNothing = ["Nothing to save until Render draws a picture.", "Сохранять нечего, пока «Рендерить» не построит изображение."],
+    RenderSavedTo = ["Saved to {}", "Записано в {}"],
+    RenderSaveFailed = ["The picture could not be saved: {}", "Изображение не удалось сохранить: {}"],
     RenderStart = ["Render", "Рендерить"],
     RenderCancel = ["Cancel", "Отменить"],
-    RenderNeedsPath = ["Choose a file to write the image to.", "Выберите файл, куда записать изображение."],
+    RenderAperture = ["Aperture radius", "Радиус диафрагмы"],
+    RenderFocus = ["Focus distance", "Дистанция фокуса"],
     RenderNeedsSize = ["Name a size for the image.", "Укажите размер изображения."],
     RenderSamplesDone = ["{} of {} samples", "{} из {} сэмплов"],
     RenderDone = ["Written to {} — {}, {} samples", "Записано в {} — {}, {} сэмплов"],
     RenderCancelled = ["Cancelled; no image was written.", "Отменено; изображение не записано."],
     RenderFailed = ["The render stopped: {}", "Рендер остановлен: {}"],
+    RenderElapsed = ["{} elapsed", "{} прошло"],
+    RenderEstimate = ["about {} left", "осталось около {}"],
+    RenderNoPicture = ["Press Render to draw the scene.", "Нажмите «Рендерить», чтобы построить изображение."],
+    RenderPictureOlder = [
+        "The picture is {} × {} at {} samples; Render draws the numbers above.",
+        "Изображение {} × {} при {} сэмплах; «Рендерить» построит указанное выше."
+    ],
+
+    // ── The material window ────────────────────────────────────────────────
+    MaterialsTitle = ["Materials", "Материалы"],
+    MaterialsOpen = ["Materials…", "Материалы…"],
+    MaterialsOpenHint = [
+        "The records this render draws its boards, bands and handles with",
+        "Записи, которыми рендер рисует доски, кромку и фурнитуру"
+    ],
+    MaterialsEmpty = ["The library holds no material yet.", "В библиотеке пока нет ни одного материала."],
+    MaterialsNoFolder = [
+        "The workspace has no settings folder, so a library cannot be written.",
+        "У рабочей области нет папки настроек, поэтому библиотеку некуда записать."
+    ],
+    MaterialNew = ["New material", "Новый материал"],
+    MaterialDefaultName = ["Material {}", "Материал {}"],
+    MaterialNoFreeId = ["The library has no free number left.", "В библиотеке не осталось свободного номера."],
+    MaterialDelete = ["Delete", "Удалить"],
+    MaterialDeleteHint = [
+        "The objects keep the reference and are drawn with the default material",
+        "Объекты сохранят ссылку и будут нарисованы материалом по умолчанию"
+    ],
+    MaterialName = ["Name", "Название"],
+    MaterialId = ["material {}", "материал {}"],
+    MaterialBase = ["Base", "Основа"],
+    MaterialCoat = ["Coat", "Покрытие"],
+    MaterialColour = ["Colour", "Цвет"],
+    MaterialRoughness = ["Roughness", "Шероховатость"],
+    MaterialMetallic = ["Metallic", "Металличность"],
+    MaterialIor = ["IOR", "Показатель преломления"],
+    MaterialTransmission = ["Transmission", "Пропускание"],
+    MaterialAbsorption = ["Absorption, 1/mm", "Поглощение, 1/мм"],
+    MaterialDecor = ["Decor", "Декор"],
+    MaterialPicture = ["Picture…", "Картинка…"],
+    MaterialPictureNone = ["No picture: the colour alone", "Без картинки: только цвет"],
+    MaterialCovers = ["Covers", "Покрывает"],
+    MaterialTurns = ["Turn", "Поворот"],
+    MaterialTurn = ["{}°", "{}°"],
+    MaterialWeight = ["Weight", "Вес"],
+    MaterialGloss = ["Gloss", "Глянец"],
+    MaterialCoatIor = ["Coat IOR", "Показатель покрытия"],
+    MaterialNamedBy = ["Named by {}", "Называют: {}"],
+    MaterialMatching = ["{} · {}", "{} · {}"],
+    MaterialNamedByNone = ["No object names it", "Ни один объект не называет его"],
+    MaterialMissing = [
+        "Material {} is gone and objects still name it: they are drawn with the default material.",
+        "Материала {} нет, но объекты его называют: они нарисованы материалом по умолчанию."
+    ],
+    MaterialMissingCreate = [
+        "Make a record under that number",
+        "Создать запись с этим номером"
+    ],
+    ChoosePictureTitle = ["Choose a decor picture", "Выбрать картинку декора"],
 
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],
@@ -923,6 +997,10 @@ messages! {
     PaletteNeedsNewName = [
         "Needs a new name; rename the node in the inspector.",
         "Нужно новое имя; переименуйте узел в инспекторе."
+    ],
+    PaletteNeedsMaterial = [
+        "Needs a material; choose it on the node's card in the inspector.",
+        "Нужен материал; выберите его в карточке узла в инспекторе."
     ],
     PaletteNeedsTwoNodes = ["Needs two or more selected nodes.", "Нужно два или больше выделенных узла."],
     PaletteNeedsCamera = ["Needs a selected camera.", "Нужна выделенная камера."],
@@ -1042,6 +1120,7 @@ messages! {
     ToolStyle = ["Display style", "Стиль отображения"],
     ToolContours = ["Contours", "Контуры"],
     ToolShadows = ["Shadows", "Тени"],
+    ToolDecorGrid = ["Tiling grid", "Сетка декора"],
     ToolSection = ["Section", "Сечение"],
     ToolLayoutOne = ["One view", "Один вид"],
     ToolLayoutTwo = ["Two views", "Два вида"],
@@ -1588,6 +1667,14 @@ messages! {
     CmdCreateLight = ["Create light", "Создать источник света"],
     CmdSetActiveCamera = ["Set active camera", "Сделать камеру активной"],
     CmdSetCameraProjection = ["Set camera projection", "Задать проекцию камеры"],
+    CmdSetCameraLens = ["Set camera lens", "Задать объектив камеры"],
+    SectionLens = ["Lens", "Объектив"],
+    LensAperture = ["Aperture radius", "Радиус диафрагмы"],
+    LensFocus = ["Focus distance", "Дистанция фокуса"],
+    LensRange = [
+        "A camera's lens takes an aperture of {} to {} mm of radius and a focus of {} to {} mm.",
+        "Объектив камеры: радиус диафрагмы от {} до {} мм, дистанция фокуса от {} до {} мм."
+    ],
     CmdSetLightParameters = ["Set light parameters", "Задать параметры света"],
     CmdCreateAssembly = ["Create assembly", "Создать сборку"],
     CmdCreateProduct = ["Create product frame", "Создать каркас изделия"],
@@ -1607,6 +1694,8 @@ messages! {
     CmdPlaceAtWorldZero = ["Place at world zero", "На начало мира"],
     CmdPlaceSelection = ["Place selection", "Разместить выделение"],
     CmdSetPivot = ["Set pivot", "Задать пивот"],
+    CmdSetDecor = ["Place the material's picture", "Задать раскладку декора"],
+    CmdSetMaterial = ["Assign material", "Назначить материал"],
     CmdCenterPivot = ["Center pivot", "Центрировать пивот"],
     CmdRebaseOrigin = ["Rebase origin", "Переякорить начало"],
     CmdSetProperty = ["Set property", "Задать свойство"],

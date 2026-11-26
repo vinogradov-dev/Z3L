@@ -13,7 +13,7 @@
 //! Changes when: a field of the shader's input changes, or the tree's layout does.
 
 use geom::DVec3;
-use scene::{Camera, Lighting, MAX_POINT_LIGHTS, Projection};
+use scene::{AreaLight, Camera, Lighting, MAX_AREA_LIGHTS, MAX_POINT_LIGHTS, Projection};
 
 use crate::bsdf;
 use crate::bvh::Bvh;
@@ -25,6 +25,12 @@ const VERTEX_SLOTS: usize = 3;
 
 /// How many `vec4`s the alias table of [`MAX_POINT_LIGHTS`] columns occupies.
 const ALIAS_WORDS: usize = MAX_POINT_LIGHTS.div_ceil(4);
+
+/// The rectangular lights one frame carries, which is the scene's own cap.
+const MAX_AREAS: usize = MAX_AREA_LIGHTS;
+
+/// How many `vec4`s the alias table of [`MAX_AREAS`] columns occupies.
+const AREA_ALIAS_WORDS: usize = MAX_AREAS.div_ceil(4);
 
 /// One face as the shader reads it: three vertices and the surface's colour.
 ///
@@ -40,15 +46,15 @@ pub(crate) struct GpuFace {
     pub(crate) b: [f32; 4],
     /// The third vertex and the padding.
     pub(crate) c: [f32; 4],
-    /// Linear RGB albedo and the padding.
+    /// Linear RGB albedo, and the coat's weight in `w`.
     pub(crate) colour: [f32; 4],
     /// The finish: `x` roughness, `y` metallic, `z` the index of refraction, `w` transmission.
     pub(crate) finish: [f32; 4],
-    /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the padding.
+    /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the coat's alpha in `w`.
     pub(crate) tint: [f32; 4],
     /// The decor's coordinate at the first two corners: `xy` the first, `zw` the second.
     pub(crate) uv_a: [f32; 4],
-    /// The third corner's coordinate in `xy`; `z` and `w` are unused.
+    /// The third corner's coordinate in `xy`, the coat's index of refraction in `z`, and `w` unused.
     pub(crate) uv_b: [f32; 4],
     /// `x` is the picture's index plus one, or zero for a surface with no decor.
     pub(crate) decor: [u32; 4],
@@ -101,6 +107,54 @@ pub(crate) fn decors(decors: &[scene::Decor]) -> DecorTable {
     DecorTable { texels, entries }
 }
 
+/// One pixel of a strip as the shader writes it: its samples' sums, and what its primary ray met.
+///
+/// Four `vec4`s and no more, in one buffer and one binding: the accumulator and its second moment,
+/// which are what the mean and the variance come from, and the guide, which is what the filter tells
+/// two surfaces apart by. They travel together because one sample writes all four and one filter
+/// reads all four — and because a compute shader has eight storage bindings to spend, and the frame's
+/// faces, nodes, two tables and two decor arrays already take six of them.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuPixel {
+    /// `xyz` the sum of the samples' radiance, `w` how many samples there are.
+    pub(crate) sum: [f32; 4],
+    /// `xyz` the sum of the squares of those samples, `w` unused.
+    pub(crate) squares: [f32; 4],
+    /// `xyz` the linear albedo of the surface the primary ray met, or the studio where it met none;
+    /// `w` how far that ray travelled in millimetres.
+    pub(crate) albedo: [f32; 4],
+    /// `xyz` the shading normal that faced the ray, or the ray's own direction where it met nothing.
+    pub(crate) normal: [f32; 4],
+}
+
+impl GpuPixel {
+    /// What the primary ray met, as the filter reads it: `crate::denoise::Guide`.
+    pub(crate) fn guide(&self) -> crate::denoise::Guide {
+        crate::denoise::Guide {
+            albedo: [self.albedo[0], self.albedo[1], self.albedo[2]],
+            normal: [self.normal[0], self.normal[1], self.normal[2]],
+            distance: self.albedo[3],
+        }
+    }
+
+    /// The pixel as the filter reads it: its mean, the variance of that mean and its sample count.
+    pub(crate) fn sample(&self) -> crate::denoise::Sample {
+        let count = self.sum[3];
+        // A pixel that never took a sample cannot divide; it is black rather than shifted.
+        let divisor = if count > 0.0 { count } else { 1.0 };
+        crate::denoise::Sample {
+            mean: [self.sum[0] / divisor, self.sum[1] / divisor, self.sum[2] / divisor],
+            variance: crate::denoise::variance_of_mean(
+                [self.sum[0], self.sum[1], self.sum[2]],
+                [self.squares[0], self.squares[1], self.squares[2]],
+                count,
+            ),
+            count: u32::try_from(count.max(0.0) as u64).unwrap_or(u32::MAX),
+        }
+    }
+}
+
 /// One node as the shader reads it: a box and what it means.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -137,8 +191,14 @@ pub(crate) struct Uniform {
     /// count including the key light.
     pub(crate) counts: [u32; 4],
     /// `x` the first image row of the strip this dispatch traces, `y` its row count. An image larger
-    /// than one accumulator buffer is traced strip by strip (`gpu::MAX_STRIP_PIXELS`).
+    /// than one accumulator buffer is traced strip by strip (`gpu::MAX_STRIP_PIXELS`), and a strip is
+    /// traced wider than the rows it owns so the filter's widest tap has a neighbour.
     pub(crate) strip: [u32; 4],
+    /// `x` the fewest samples a pixel takes before it may retire, `y` the relative error a finished
+    /// image is held to, `z` the dimmest light a relative error is measured against. All three are
+    /// `crate::denoise`'s own numbers, so the shader's retirement test and the filter's blend are one
+    /// threshold with one source.
+    pub(crate) denoise: [f32; 4],
     /// `xyz` the key light's colour as irradiance on a surface facing it, `w` one when it exists.
     pub(crate) key: [f32; 4],
     /// `xyz` the unit direction from a surface towards the key light.
@@ -155,6 +215,41 @@ pub(crate) struct Uniform {
     pub(crate) point_alias: [[u32; 4]; ALIAS_WORDS],
     /// The share of the light each point light carries, which is the density of a draw.
     pub(crate) point_share: [[f32; 4]; ALIAS_WORDS],
+    /// `xyz` the centre of each rectangular light's face, `w` unused.
+    pub(crate) area_origin: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the half-edge along the light's own `X` in world space, `w` unused.
+    pub(crate) area_half_width: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the half-edge along the light's own `Y` in world space, `w` unused.
+    pub(crate) area_half_height: [[f32; 4]; MAX_AREAS],
+    /// `xyz` the radiance the face emits, `w` its area in square millimetres: the two the sample's
+    /// pdf divides by and multiplies with (L2).
+    pub(crate) area_radiance: [[f32; 4]; MAX_AREAS],
+    /// `x` the number of rectangular lights the frame carries, the rest unused.
+    pub(crate) area_count: [u32; 4],
+    /// The alias table over the rectangles' emitted power, four columns to a vector.
+    pub(crate) area_probability: [[f32; 4]; AREA_ALIAS_WORDS],
+    /// The other column of each rectangle's alias, four to a vector.
+    pub(crate) area_alias: [[u32; 4]; AREA_ALIAS_WORDS],
+    /// The share of the power each rectangle carries, which is the density of a draw.
+    pub(crate) area_share: [[f32; 4]; AREA_ALIAS_WORDS],
+    /// `x` the lens radius in millimetres, `y` the distance the lens focuses at, `z` one when the view
+    /// is a perspective one that can have a lens, `w` unused (Y5).
+    pub(crate) lens: [f32; 4],
+}
+
+/// What one checkpoint's average pass is told: the band it reads and the picture it fills.
+///
+/// The band's rows are whole blocks of the snapshot, so a snapshot pixel is never the sum of a part
+/// of two bands: `band.x` is the band's source width, `band.y` its row count, `band.z` the block one
+/// snapshot pixel averages and `band.w` the image row the band starts at. `picture` is the snapshot's
+/// own size, which every band of the run shares (`crate::gpu::SNAPSHOT_LONG_SIDE`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ReduceUniform {
+    /// The band: `x` its source width, `y` its rows, `z` the block size, `w` its first image row.
+    pub(crate) band: [u32; 4],
+    /// The picture: `x` its width, `y` its height, the rest unused.
+    pub(crate) picture: [u32; 4],
 }
 
 /// The frame's faces as the shader reads them, in the tree's order.
@@ -175,11 +270,14 @@ pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
             a,
             b,
             c,
-            colour: [face.colour[0], face.colour[1], face.colour[2], 0.0],
+            // The coat rides in the three channels a face had spare — `colour.w`, `tint.w` and
+            // `uv_b.z` — so a face keeps its 144 bytes and its place in one memory sector
+            // (`docs/performance.md` §2, ADR 0243).
+            colour: [face.colour[0], face.colour[1], face.colour[2], surface.coat.weight],
             finish: [surface.roughness, surface.metallic, surface.ior, surface.transmission],
-            tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], 0.0],
+            tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], surface.coat.alpha],
             uv_a: [uv[0][0], uv[0][1], uv[1][0], uv[1][1]],
-            uv_b: [uv[2][0], uv[2][1], 0.0, 0.0],
+            uv_b: [uv[2][0], uv[2][1], surface.coat.ior, 0.0],
             // One-based, so zero — the value a cleared slot holds — is "no picture".
             decor: [face.decor.map_or(0, |index| index.saturating_add(1)), 0, 0, 0],
         });
@@ -296,6 +394,7 @@ pub(crate) fn uniform(
         }
     }
     let environment = lighting.environment.map(|channel| if channel.is_finite() { channel.max(0.0) } else { 0.0 });
+    let (areas, area_table) = area_lights(&lighting.areas)?;
     Ok(Uniform {
         eye: [eye.x as f32, eye.y as f32, eye.z as f32, orthographic],
         right: [right.x as f32, right.y as f32, right.z as f32, 0.0],
@@ -304,6 +403,12 @@ pub(crate) fn uniform(
         view: [half_height as f32, aspect as f32, request.width() as f32, request.height() as f32],
         counts: [face_count, node_count, sample, light_count],
         strip: [strip.0, strip.1, 0, 0],
+        denoise: [
+            crate::denoise::MIN_SAMPLES as f32,
+            crate::denoise::TARGET_RELATIVE_ERROR,
+            crate::denoise::LIGHT_FLOOR,
+            0.0,
+        ],
         key: [
             if key_lit { lighting.key_color[0] } else { 0.0 },
             if key_lit { lighting.key_color[1] } else { 0.0 },
@@ -317,7 +422,108 @@ pub(crate) fn uniform(
         point_probability,
         point_alias,
         point_share,
+        area_origin: areas.origin,
+        area_half_width: areas.half_width,
+        area_half_height: areas.half_height,
+        area_radiance: areas.radiance,
+        area_count: [areas.count, 0, 0, 0],
+        area_probability: area_table.probability,
+        area_alias: area_table.alias,
+        area_share: area_table.share,
+        // A lens is a perspective camera's: an orthographic view has no eye to put a disc at, and the
+        // shader reads the flag rather than asking twice (`crate::view::camera_ray_through`).
+        lens: [
+            camera.aperture() as f32,
+            camera.focus() as f32,
+            if camera.is_pinhole() || matches!(camera.projection(), Projection::Orthographic { .. }) {
+                0.0
+            } else {
+                1.0
+            },
+            0.0,
+        ],
     })
+}
+
+/// The rectangular lights as the shader reads them, and the table that picks one by its power.
+struct Areas {
+    origin: [[f32; 4]; MAX_AREAS],
+    half_width: [[f32; 4]; MAX_AREAS],
+    half_height: [[f32; 4]; MAX_AREAS],
+    radiance: [[f32; 4]; MAX_AREAS],
+    count: u32,
+}
+
+/// The alias table of the rectangles, in the same shape the point lights use.
+struct AreaTable {
+    probability: [[f32; 4]; AREA_ALIAS_WORDS],
+    alias: [[u32; 4]; AREA_ALIAS_WORDS],
+    share: [[f32; 4]; AREA_ALIAS_WORDS],
+}
+
+/// Packs the frame's rectangular emitters into the uniform, refusing a hostile one.
+///
+/// A face with no extent is skipped rather than uploaded: a radiance over no area is a number that
+/// divides an image by zero, and the frame's own builder already guards it (`AreaLight::area_mm2`).
+fn area_lights(lights: &[AreaLight]) -> Result<(Areas, AreaTable), FinalError> {
+    let mut areas = Areas {
+        origin: [[0.0; 4]; MAX_AREAS],
+        half_width: [[0.0; 4]; MAX_AREAS],
+        half_height: [[0.0; 4]; MAX_AREAS],
+        radiance: [[0.0; 4]; MAX_AREAS],
+        count: 0,
+    };
+    let mut powers: Vec<f32> = Vec::new();
+    for light in lights.iter().take(MAX_AREAS) {
+        let area = light.area_mm2();
+        if area <= 0.0 {
+            continue;
+        }
+        let finite = light.origin.is_finite()
+            && light.half_width.is_finite()
+            && light.half_height.is_finite()
+            && light.color.iter().all(|channel| channel.is_finite())
+            && light.power.is_finite();
+        if !finite {
+            return Err(refuse("a rectangular light's numbers are not finite"));
+        }
+        let index = areas.count as usize;
+        let radiance = light.radiance();
+        if let (Some(origin), Some(u), Some(v), Some(scale)) = (
+            areas.origin.get_mut(index),
+            areas.half_width.get_mut(index),
+            areas.half_height.get_mut(index),
+            areas.radiance.get_mut(index),
+        ) {
+            *origin = [light.origin.x as f32, light.origin.y as f32, light.origin.z as f32, 0.0];
+            *u = [light.half_width.x as f32, light.half_width.y as f32, light.half_width.z as f32, 0.0];
+            *v = [light.half_height.x as f32, light.half_height.y as f32, light.half_height.z as f32, 0.0];
+            *scale = [radiance[0], radiance[1], radiance[2], area as f32];
+        }
+        areas.count = areas.count.saturating_add(1);
+        powers.push(light.power);
+    }
+    let mut table = AreaTable {
+        probability: [[0.0; 4]; AREA_ALIAS_WORDS],
+        alias: [[0u32; 4]; AREA_ALIAS_WORDS],
+        share: [[0.0; 4]; AREA_ALIAS_WORDS],
+    };
+    if let Some(alias) = crate::light::AliasTable::build(&powers) {
+        for index in 0..powers.len() {
+            let (vector, channel) = (index / 4, index % 4);
+            let (probability, instead) = alias.column(index);
+            if let Some(slot) = table.probability.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = probability.clamp(0.0, 1.0);
+            }
+            if let Some(slot) = table.share.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = alias.share(index) as f32;
+            }
+            if let Some(slot) = table.alias.get_mut(vector).and_then(|row| row.get_mut(channel)) {
+                *slot = instead;
+            }
+        }
+    }
+    Ok((areas, table))
 }
 
 /// Sobol's direction numbers, flattened for the device: four dimensions of thirty-two words.
@@ -387,9 +593,33 @@ mod tests {
         assert_eq!(faces[0].a, [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(faces[0].b, [10.0, 0.0, 0.0, 0.0]);
         assert_eq!(faces[0].c, [0.0, 10.0, 0.0, 0.0]);
-        assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0]);
+        assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0], "no coat, so the spare channel is zero");
         assert_eq!(faces[0].finish, [1.0, 0.0, 1.5, 0.0], "a face that names no finish is matte paint");
-        assert_eq!(faces[0].tint, [0.0; 4]);
+        assert_eq!(
+            faces[0].tint,
+            [0.0, 0.0, 0.0, scene::Coat::NONE.alpha],
+            "a coat that is not there still says its default width"
+        );
+        assert_eq!(faces[0].uv_b, [0.0, 0.0, scene::Coat::NONE.ior, 0.0], "and its default index");
+    }
+
+    #[test]
+    fn a_coated_face_carries_the_layer_in_the_channels_it_had_spare() {
+        // ADR 0243 spends no byte and no extra sector on the coat: the three numbers a layer is made
+        // of ride where the face had nothing to say, and the struct is the size it always was.
+        let coat = scene::Coat::glossed(1.0, 90.0, 1.5);
+        let surface = scene::Surface { coat, ..scene::Surface::MATTE };
+        let mut coated = face(DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0), [0.25, 0.5, 0.75]);
+        coated.surface = surface;
+        let faces = faces(&bvh(vec![coated])).expect("a flat face list");
+        assert_eq!(faces[0].colour[3], 1.0, "the coat's weight in the colour's spare channel");
+        assert_eq!(faces[0].tint[3], coat.alpha, "its GGX width in the tint's");
+        assert_eq!(faces[0].uv_b[2], coat.ior, "and its index in the third corner's");
+        assert!((coat.alpha - 0.01).abs() < 1.0e-6, "90 % gloss is a hundredth of a width: {}", coat.alpha);
+        assert_eq!(std::mem::size_of::<GpuFace>(), 144, "the coat costs the face no bytes");
+        // No coat at all is a zero in the two weights, so the shader reads a surface it always had.
+        assert_eq!(surface.coat.weight, 1.0);
+        assert_eq!(scene::Coat::NONE.alpha, 1.0);
     }
 
     #[test]
@@ -451,6 +681,67 @@ mod tests {
         assert_eq!(uniform.point_position[0], [500.0, 0.0, 300.0, 0.0]);
         assert_eq!(uniform.point_colour[0], [1.0, 0.9, 0.8, 1000.0]);
         assert_eq!(uniform.point_colour[1], [0.0; 4], "a dead light is not uploaded as a lamp");
+    }
+
+    #[test]
+    fn a_lens_reaches_the_uniform_with_its_radius_and_its_focus() {
+        let camera = Camera::new(DVec3::ZERO, 3_000.0).expect("a camera");
+        let pinhole =
+            uniform(camera, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(pinhole.lens, [0.0, 1200.0, 0.0, 0.0], "a pinhole says so, and the shader costs one test");
+
+        let lens = camera.with_lens(45.0, 1_800.0).expect("a lens");
+        let packed = uniform(lens, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(packed.lens, [45.0, 1_800.0, 1.0, 0.0]);
+
+        // An orthographic view carries the numbers but not the switch: it has no lens to draw from.
+        let flat = lens.with_projection(Projection::Orthographic { height: 1_000.0 });
+        let packed = uniform(flat, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(packed.lens[2], 0.0);
+    }
+
+    #[test]
+    fn a_rectangular_light_reaches_the_uniform_as_a_face_and_a_share() {
+        let mut frame = SceneFrame::default();
+        frame.lighting.areas.push(scene::AreaLight {
+            origin: DVec3::new(0.0, 0.0, 1_000.0),
+            half_width: DVec3::new(600.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 700.0, 0.0),
+            color: [1.0, 0.5, 0.25],
+            power: 40.0,
+        });
+        frame.lighting.areas.push(scene::AreaLight {
+            origin: DVec3::new(2_000.0, 0.0, 1_000.0),
+            half_width: DVec3::new(100.0, 0.0, 0.0),
+            half_height: DVec3::new(0.0, 100.0, 0.0),
+            color: [1.0; 3],
+            power: 40.0,
+        });
+        let camera = Camera::new(DVec3::new(0.0, 0.0, 500.0), 2_000.0).expect("a camera");
+        let packed = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).expect("a uniform");
+        assert_eq!(packed.area_count[0], 2);
+        assert_eq!(packed.area_origin[0], [0.0, 0.0, 1_000.0, 0.0]);
+        assert_eq!(packed.area_half_width[0], [600.0, 0.0, 0.0, 0.0]);
+        assert_eq!(packed.area_half_height[0], [0.0, 700.0, 0.0, 0.0]);
+        // The radiance is the watts over the area and the hemisphere, and the area travels with it so
+        // the shader's pdf needs no second conversion.
+        let radiance = 40.0 / (std::f32::consts::PI * 1.68);
+        assert!((packed.area_radiance[0][0] - radiance).abs() < 1.0e-3, "{:?}", packed.area_radiance[0]);
+        assert_eq!(packed.area_radiance[0][1], packed.area_radiance[0][0] * 0.5);
+        assert!((packed.area_radiance[0][3] - 1.68e6).abs() < 1.0, "the area is square millimetres");
+        // Two equal-wattage faces are drawn equally often.
+        assert!((packed.area_share[0][0] - 0.5).abs() < 1.0e-6);
+        assert!((packed.area_share[0][1] - 0.5).abs() < 1.0e-6);
+
+        // A face with no extent is not uploaded at all: a radiance over no area has no pdf.
+        frame.lighting.areas[1].half_width = DVec3::ZERO;
+        let skipped = uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).expect("a uniform");
+        assert_eq!(skipped.area_count[0], 1, "a degenerate face is skipped");
+        assert_eq!(skipped.area_share[0][0], 1.0, "the one face left takes every draw");
+
+        // A hostile number stops the render instead of poisoning it.
+        frame.lighting.areas[0].origin = DVec3::new(f64::NAN, 0.0, 0.0);
+        assert!(uniform(camera, &frame.lighting, request(), (3, 5), (0, 100), 0).is_err());
     }
 
     #[test]

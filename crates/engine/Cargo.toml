@@ -13,6 +13,9 @@ geom = { workspace = true }
 mesh = { workspace = true }
 model = { workspace = true }
 catalog = { workspace = true }
+# The render's material library: session-scoped like the directory, because a frame is built from
+# it and no document field holds it (Y8).
+materials = { workspace = true }
 param = { workspace = true }
 text = { workspace = true }
 units = { workspace = true }

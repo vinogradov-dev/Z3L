@@ -267,7 +267,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use geom::{DQuat, DVec3};
-    use model::{ClassCode, Envelope, LightKind, PanelNominalSize, Placement};
+    use model::{ClassCode, Envelope, LightSpec, PanelNominalSize, Placement};
     use testkit::{millimetres, sample_project, scratch_dir};
 
     use super::*;
@@ -288,7 +288,7 @@ mod tests {
         let size = PanelNominalSize::new(millimetres(700), millimetres(500)).expect("a valid size");
         project.add_panel(root, "Side", size, None, millimetres(18), Placement::IDENTITY).expect("the side is added");
         let centre = Placement::new(DVec3::new(300.0, 280.0, 360.0), DQuat::IDENTITY).expect("a unit placement");
-        project.add_light(product, "Key", centre, LightKind::Sun, [1.0; 3], 1.0).expect("the light is added");
+        project.add_light(product, "Key", centre, LightSpec::sun([1.0; 3], 1.0)).expect("the light is added");
         let path = directory.join("cabinet.z3l");
         SceneFile::new(project).write(&path).expect("the fixture scene is saved");
         path

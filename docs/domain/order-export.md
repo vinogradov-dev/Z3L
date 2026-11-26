@@ -171,7 +171,7 @@ One row per panel that is cut, with every number a cutting list or a parts repor
 `node_id`, `product_id` (the nearest product ancestor, computed by one tree walk and never stored — this is what
 makes a per-cabinet report a `GROUP BY`; zero outside every product), `class`, `material_id`,
 `thickness_um`, `length_um`, `width_um` (nominal), `measured_length_um`, `measured_width_um` (with
-banding), `area_mm2` (the core region, which is what is cut from the sheet), `grain` (`none`,
+banding and the panel's end trims), `area_mm2` (the core region, which is what is cut from the sheet), `grain` (`none`,
 `length`, `width`), `nesting` (`member` or `never`, from the class; empty when the class says
 nothing), `banding_total_um`, `price_minor` (the part's share of one sheet's price, rounded to the
 nearest minor unit; zero when the material has no price). Version 1 writes `grain = none` because the
@@ -196,9 +196,11 @@ recomputation — this is what a drawing, a nesting program and a CNC post need,
 floating-point millimetres appear anywhere: `node_id`, `ring` (`outline`; hole ids are reserved),
 `seq` (travel order from zero), `kind` (`line` or `arc`), `x_um`, `y_um` (the segment start),
 `x2_um`, `y2_um` (the end, lines; zero on arcs), `cx_um`, `cy_um` (the arc centre, zero on lines),
-`clockwise` (arcs; false on lines). A generated rectangle starts at the panel's zero corner; a contour
-panel is handed over in the order its ring stores. An arc's radius and angle follow from its stored
-start, its centre and the next segment.
+`clockwise` (arcs; false on lines). A generated rectangle starts at the panel's zero corner with its
+end trims applied, so a cut end starts inside the frame and a let-out end reaches past it; a contour
+panel is handed over in the order its ring stores. The banding lengths and the measured sizes come
+from that same ring. An arc's radius and angle follow from its stored start, its centre and the next
+segment.
 
 ### `facades`
 

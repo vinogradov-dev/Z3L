@@ -2,9 +2,9 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 32,
-    "revision": 10,
-    "next_id": 14,
+    "schema_version": 37,
+    "revision": 13,
+    "next_id": 16,
     "root": {
       "id": 1,
       "name": "Root",
@@ -39,6 +39,15 @@
               "kind": "rect"
             },
             "material": null,
+            "render_material": 1,
+            "decor": {
+              "scale": 300000,
+              "offset": [
+                -40000,
+                15000
+              ],
+              "turns": 1
+            },
             "last_known_thickness": 18000,
             "placement": {
               "translation": [
@@ -60,7 +69,7 @@
             ],
             "machining": [
               {
-                "id": 12,
+                "id": 14,
                 "anchor": {
                   "kind": "face",
                   "side": "A"
@@ -108,6 +117,12 @@
                 "angle": 45000
               }
             ],
+            "trims": {
+              "bottom": 0,
+              "right": 0,
+              "top": 0,
+              "left": 0
+            },
             "properties": {
               "plug.confirmat": {
                 "kind": "item",
@@ -531,6 +546,7 @@
             ],
             "properties": {},
             "tool": false,
+            "render_material": 2,
             "geometry": {
               "kind": "primitive",
               "base": {
@@ -653,6 +669,10 @@
             "projection": {
               "kind": "perspective",
               "fov_y": 50000
+            },
+            "lens": {
+              "aperture": 45000,
+              "focus": 2000000
             }
           }
         },
@@ -685,7 +705,47 @@
               0.95,
               0.9
             ],
-            "intensity": 2.0
+            "intensity": 2.0,
+            "size": {
+              "width": 1000000,
+              "height": 1000000
+            }
+          }
+        },
+        {
+          "light": {
+            "id": 13,
+            "name": "Window",
+            "placement": {
+              "translation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            },
+            "pivot_local": [
+              0,
+              0,
+              0
+            ],
+            "properties": {},
+            "kind": "area",
+            "color": [
+              1.0,
+              1.0,
+              0.98
+            ],
+            "intensity": 40.0,
+            "size": {
+              "width": 1200000,
+              "height": 1400000
+            }
           }
         },
         {
@@ -748,6 +808,12 @@
                   "ring_banding": [],
                   "band_order": [],
                   "bevels": [],
+                  "trims": {
+                    "bottom": 0,
+                    "right": 0,
+                    "top": 0,
+                    "left": 0
+                  },
                   "properties": {}
                 }
               }
@@ -762,7 +828,7 @@
         },
         {
           "container": {
-            "id": 13,
+            "id": 15,
             "name": "Corner cabinet",
             "placement": {
               "translation": [

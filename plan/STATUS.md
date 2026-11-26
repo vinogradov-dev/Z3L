@@ -1,60 +1,58 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=101a0fe updated=2026-11-24
+STATE: milestone=M7 phase=T task=- state=idle base=ff99183 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
-The assistant reaches a real model, and what leaves is what a person agreed to send:
-`AssistantSettings.endpoint` and `model` make one OpenAI-compatible wire, one message posts a
-completion on a worker thread so no frame waits, and the answer's `command_batch` call is the batch
-the turn dispatches — its steps alone: the mode, the save and the product are not a model's to
-choose (J14, ADR 0189). A step's parameters are read whether the wire sends the object or JSON in a
-string, and anything else is refused with the field and shape to send (J28, J16); a reply streams
-when the endpoint answers an event stream (J26). The key comes from `Z3L_AGENT_KEY` or `agent-key`
-(0600) and never enters a log line; the first message to an endpoint stops at the consent card. A
-workshop can hand the loop to a program instead: `AssistantSettings.agent` is one line, the process
-speaks ACP version one over its own stdio, and its one MCP server is `z3l mcp bridge` (J11, ADR
-0230).
-
-A model in the panel reads what the tool server publishes and guesses nothing: `command_list` (one
-command's schema), `query` (the tree, a box, bounds, the parts, the diagnostics, the catalogue's
-`materials`, a niche) and `inspect` are answered by `mcp::reads::MessageDoor` over the same
-functions a foreign client calls (J29, ADR 0232). The history carries every call and the answer tied
-to it by the wire's id, a turn ends on an answer that names no call, a repeated batch is answered,
-not run twice, and the panel draws Stop for a turn (J27).
-
-An acceptance test runs whole tasks as a foreign client does: a child `z3l mcp serve` over its own
-stdio and the model a list of calls, so ADR 0193's five scenarios need no network and no key (J13).
-The recipe's prompt names the check that proves a build — `inspect`, `envelope_out` first — and
-reads its materials through `query materials` (J29).
-
-An inspector reads the seven mistakes ADR 0191 names in one pass — each names the ids it blames and
-the commands a fix would dispatch; `inspect` is the fifth coarse tool and `z3l inspect <scene>`
-prints the same list (J9). The guide names the two checks and which question each answers, and what
-a panel's `nominal_size` is: two sides, the third from the material (J29).
-
-The command line and the tool server are two doors to one document: `z3l run` reads a recipe as JSON
-Lines and `command_batch` takes the same steps, and a step names what it creates with `as` (J4, J17,
-J18, ADRs 0198, 0212, 0214). The guide is what a model reads before its first command:
-`engine::guide()` names the two worlds a request can belong to and the order of a build from
-scratch, and every command carries the family word it serves (J20, ADR 0215). The surface is the
-dictionary: every schema annotates its unit, and the list is a short row per command plus its schema
-(J15, J19, ADRs 0227, 0231).
-
-A drawing becomes bodies in one press, one per ring, in one revision (X100, ADR 0205), and the final
-render is our own path tracer whose drawables carry the `Surface` (`render.final` fills from the
-render's settings, Y2, ADR 0213). A wall cell lays its board over the frame or inside the opening,
-the front carries its four end trims as the workshop's own signed numbers, and one click is one
-`panel.create` (U124, ADR 0240). A batch is one operation in every number a caller reads: one undo
-entry, one revision and one `entries`, because the copy the steps ran on installs with the revision
-it started from plus one (X128, ADR 0234).
+A material is authored in the window the render place opens, and never in the settings: the
+workshop's library is listed with the colour each record draws and the nodes that name it, one
+record's base and coat are edited in the crate's own ranges, a decor's scan is chosen in the
+file manager and copied beside the file, and a swatch tiles it at its own coverage and turn
+(Y14, ADR 0251). A board may wear its material's picture its own way: a node carries a scale, an
+offset and a quarter turn that the frame composes with its record's decor, so the door's grain
+runs along its height while the shelf's runs along its width and one picture still textures the
+whole cabinet (Y15, ADR 0252). The viewport draws that tiling over a decorated board, as a display
+switch beside the ground shadow's: a line falls where the coordinate is a whole number, so one cell
+is one picture, the seam is where the sampler repeats and the guide cannot disagree with the print;
+the weight and the ink are the theme's points, an axis whose cell is narrower than its lines fades,
+a surface with no picture keeps its plain tone, and a fresh view starts with the guide off (Y16, ADR
+0253). A record may be deleted while objects name it — they keep the
+reference, the window lists that id in the danger ink, and the frame draws them with the default
+material. A catalogue plate shows the board's own grain: the final render's denoiser stops at a
+woodgrain's step rather than at a paint line, and the guide it reads is one ray from the pixel's
+centre and never the sampler's jitter, so a decor reaches a print unfiltered by accident only
+when the operator asks for it (Y13). A glass front can be frosted by the roughness a pane
+already had: the transmitted beam is drawn about the same microfacet normal the reflection lobe
+uses, so a sandblasted door scatters what stands behind it while a clear one keeps yesterday's
+smooth refraction, sample for sample (Y10, ADR 0243). A varnished board shows its sheen: the
+tracer draws a clear layer over a base as a fourth lobe — a weight, a GGX width and its own
+index, read as one Fresnel for the whole event — so the gloss a workshop says becomes the width
+once where a record turns into a frame (Y9). The Render place shows the picture it traces: one
+sample over every band at a time with the accumulators held for the run, a checkpoint averaged
+down to a display-sized picture on the device and carried by a mailbox of one to the shell,
+which tones it into an egui texture (Y6, ADR 0250). A run draws a picture and the file is a
+later act: the place keeps the finished image, the rail's Save row writes it where the file
+manager says, and its Materials row opens the records the picture is drawn from (Y12, Y14, ADR
+0250, ADR 0251). The final render has a camera with a lens that is the document's
+`model::CameraLens` (Y11, ADR 0249), a light can be a window (L2, ADR 0247), the denoiser
+measures the noise it spends and the render's materials are one portable library (Y4, Y8, Y7),
+and the assistant reaches a real model over its own wire (J14, J11). A board's ends are cut in or
+let out by four signed trims the outline generator reads, so the size a saw takes, the ring a cutter
+follows, the mesh, the bounds, the card's own row and the order package are one derivation, a resize
+keeps the numbers, and a ring refuses the ones it cannot have (N31, ADR 0240). A node is given one
+of those records on its own card: a picker over the
+workshop's library beside the panel's catalogue material and above an object's numbers, one undo
+entry per assignment, an empty library and a lost number both said in words, and the row kept where
+the picture placement will sit (U129, ADR 0254). The plan's work order
+still opens with a catalogue record that refers to a library material instead of describing it
+(O16).
 
 ## Next
 
-Nothing is scheduled: 15 open tasks wait in `## Next`.
+Nothing is scheduled: 14 open tasks wait in `## Next`.
 
 ## Index
 

@@ -349,6 +349,51 @@ mod tests {
     }
 
     #[test]
+    fn the_inspector_gives_a_panel_and_an_object_the_same_render_material_row() {
+        use std::sync::Arc;
+
+        use engine::{NodeMaterialSet, node_cmds::NODE_MATERIAL_SET_ID};
+        use materials::{Base, Library, Material, MaterialId};
+        use model::MaterialRef;
+
+        let (mut session, panel, cube, _) = three_kinds();
+        let mut editor = Editor::new();
+        // No library: both cards draw the row, the empty face and the sentence that says why the
+        // picker offers nothing (U129).
+        let bare = inspector_texts(&mut editor, &mut session, panel);
+        assert!(drew(&bare, "Surface"), "the panel wears a surface: {bare:?}");
+        assert!(drew(&bare, "No material"), "an empty slot says so: {bare:?}");
+        assert!(drew(&bare, "The library holds no material yet."), "the empty library is named: {bare:?}");
+        let object = inspector_texts(&mut editor, &mut session, cube);
+        assert!(drew(&object, "Surface"), "an object card draws the same row: {object:?}");
+
+        // One record, assigned by the command the row dispatches: the face names it.
+        let id = MaterialId::new(1).expect("a non-zero id");
+        let board =
+            Material::of_base(id, "Oak natural", Base::matte([0.48, 0.36, 0.24]).expect("a base")).expect("a record");
+        session.set_materials(Arc::new(Library::new([board]).expect("a library")));
+        let oak = MaterialRef::new(1).expect("a material");
+        let params = json(&NodeMaterialSet { node: panel, material: Some(oak) }).expect("slot parameters");
+        session.dispatch(NODE_MATERIAL_SET_ID, &params).expect("the panel wears the record");
+        let filled = inspector_texts(&mut editor, &mut session, panel);
+        assert!(drew(&filled, "Oak natural"), "the picker prints the record's name: {filled:?}");
+        assert!(!drew(&filled, "The library holds no material yet."), "a filled library says nothing: {filled:?}");
+
+        // A library that lost the record keeps the number and prints a sentence a person can act on:
+        // another record is there, so the row blames the missing one instead of an empty library.
+        let beech = MaterialId::new(2).expect("a non-zero id");
+        let other =
+            Material::of_base(beech, "Beech", Base::matte([0.70, 0.55, 0.35]).expect("a base")).expect("a record");
+        session.set_materials(Arc::new(Library::new([other]).expect("a library")));
+        let gone = inspector_texts(&mut editor, &mut session, panel);
+        assert!(drew(&gone, "Missing material 1"), "the lost number is named: {gone:?}");
+        assert!(
+            drew(&gone, "The library has no material 1; choose another one."),
+            "and the row says what to do about it: {gone:?}"
+        );
+    }
+
+    #[test]
     fn the_inspector_draws_the_card_of_the_selected_kind_and_no_other() {
         let (mut session, panel, cube, product) = three_kinds();
         assert!(session.project().panel(panel).is_some(), "the fixture holds a panel");

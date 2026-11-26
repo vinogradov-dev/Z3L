@@ -29,8 +29,8 @@ use geom::{Aabb, DVec3, MeshData, triangulate_face};
 use kernel::{BodyId, KernelError, SolidKernel, TessOptions};
 use model::{
     BandingSpec, Constructive, CornerBanding, DerivedHoles, Drilling, EdgeBanding, EdgeBevel, HoleError, Id, Machining,
-    Mesh, Object, Panel, PanelGeometry, PanelNominalSize, PanelOutline, Path, Placement, Primitive, Revision,
-    RingBanding, SegmentSource, derive_holes,
+    Mesh, Object, Panel, PanelGeometry, PanelNominalSize, PanelOutline, PanelTrims, Path, Placement, Primitive,
+    Revision, RingBanding, SegmentSource, derive_holes,
 };
 use param::{EdgeBandProfile, ParamError, build_constructive_mesh, build_panel_parts_with};
 use thiserror::Error;
@@ -424,6 +424,7 @@ impl NodeGeometry {
 struct PanelInputs {
     outline: PanelOutline,
     nominal_size: PanelNominalSize,
+    trims: PanelTrims,
     machining: Vec<Machining>,
     edge_banding: Vec<EdgeBanding>,
     corner_banding: Vec<CornerBanding>,
@@ -449,6 +450,7 @@ impl PanelInputs {
         Self {
             outline: panel.outline().clone(),
             nominal_size: panel.nominal_size(),
+            trims: panel.trims(),
             machining: panel.machining().to_vec(),
             edge_banding: panel.edge_banding().to_vec(),
             corner_banding: panel.corner_banding().to_vec(),
@@ -469,6 +471,7 @@ impl PanelInputs {
     ) -> bool {
         self.outline == *panel.outline()
             && self.nominal_size == panel.nominal_size()
+            && self.trims == panel.trims()
             && self.machining.as_slice() == panel.machining()
             && self.edge_banding.as_slice() == panel.edge_banding()
             && self.corner_banding.as_slice() == panel.corner_banding()
@@ -481,9 +484,12 @@ impl PanelInputs {
 }
 
 /// The document payload a derived mesh came from.
+///
+/// A panel's inputs are boxed: they carry every feature the derivation reads and are several times
+/// the size of the next payload, and one store per rebuilt panel does not care about the allocation.
 #[derive(Clone, Debug)]
 enum Payload {
-    Panel(PanelInputs),
+    Panel(Box<PanelInputs>),
     Mesh(Mesh),
     Constructive(Constructive),
     Primitive(Primitive),
@@ -548,6 +554,7 @@ impl<'a> PanelEval<'a> {
 struct HoleInputs {
     outline: PanelOutline,
     nominal_size: PanelNominalSize,
+    trims: PanelTrims,
     machining: Vec<Machining>,
     bevels: Vec<EdgeBevel>,
     thickness: units::Length,
@@ -561,6 +568,7 @@ impl HoleInputs {
         Self {
             outline: request.panel.outline().clone(),
             nominal_size: request.panel.nominal_size(),
+            trims: request.panel.trims(),
             machining: request.panel.machining().to_vec(),
             bevels: request.panel.bevels().to_vec(),
             thickness: request.geometry.thickness(),
@@ -575,6 +583,7 @@ impl HoleInputs {
     fn matches(&self, request: &PanelEval<'_>) -> bool {
         self.outline == *request.panel.outline()
             && self.nominal_size == request.panel.nominal_size()
+            && self.trims == request.panel.trims()
             && self.machining.as_slice() == request.panel.machining()
             && self.bevels.as_slice() == request.panel.bevels()
             && self.thickness == request.geometry.thickness()
@@ -754,7 +763,14 @@ impl EvaluationCache {
             band_all_edges,
             polylines: Vec::new(),
         };
-        self.store(id, revision, Payload::Panel(inputs), geometry.clone(), holes, Some(HoleInputs::capture(request)));
+        self.store(
+            id,
+            revision,
+            Payload::Panel(Box::new(inputs)),
+            geometry.clone(),
+            holes,
+            Some(HoleInputs::capture(request)),
+        );
         Ok(geometry)
     }
 
@@ -1615,6 +1631,44 @@ mod tests {
             !Arc::ptr_eq(before.body().expect("first"), after.body().expect("second")),
             "the new angle is a new body"
         );
+    }
+
+    #[test]
+    fn a_trim_moves_one_end_and_rebuilds_the_board_it_shortens() {
+        // A trim is document data the panel's ring reads, so it changes the body the cache holds:
+        // without it in the key the document revision moved, the mesh was reused, and the card's
+        // number moved nothing on screen (N31, ADR 0240).
+        use model::Project;
+
+        let mut kernel = TruckKernel::new();
+        let mut cache = EvaluationCache::new();
+        let mut project: Project = crate::tests::project_with_two_panels();
+        let id = Id::new(1).expect("id");
+
+        let panel = project.panel(id).expect("panel").clone();
+        let geometry = panel.geometry_with_fallbacks().expect("geometry");
+        cache.start();
+        let before = cache
+            .panel(project.revision(), &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
+            .expect("the untrimmed body");
+        cache.finish();
+
+        project.set_panel_trim(id, RectEdge::Top.id(), millimetres(-14)).expect("a lap on the far end");
+        let panel = project.panel(id).expect("panel").clone();
+        let geometry = panel.geometry_with_fallbacks().expect("geometry");
+        cache.start();
+        let after = cache
+            .panel(project.revision(), &plain(&panel, &geometry), &mut kernel, &TessOptions::default())
+            .expect("the lapped body");
+        cache.finish();
+
+        assert!(!Arc::ptr_eq(before.body().expect("first"), after.body().expect("second")), "a new board");
+        let untrimmed = before.body_bounds().expect("the box of the frame");
+        let lapped = after.body_bounds().expect("the box of the board");
+        let span = |bounds: &Aabb| bounds.max() - bounds.min();
+        assert!((span(&untrimmed).y - 500.0).abs() < 1.0e-3, "the frame is 500 wide: {:?}", span(&untrimmed));
+        assert!((span(&lapped).y - 514.0).abs() < 1.0e-3, "the board runs 14 mm past it: {:?}", span(&lapped));
+        assert_eq!(panel.manufactured_size().expect("the cut size").width(), millimetres(514));
     }
 
     #[test]

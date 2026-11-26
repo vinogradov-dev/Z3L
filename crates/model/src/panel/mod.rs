@@ -43,8 +43,8 @@ use crate::panel::banding::{normalize_band_order, validate_corner_banding};
 use crate::panel::geometry::validate_dimension;
 use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, PanelTrims, validate_contour_features};
 use crate::{
-    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, PivotLocal,
-    Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
+    Contour, ContourError, ContourSegmentError, ContourSegmentId, DecorMapping, EdgeId, Id, ItemId, MachiningId,
+    MaterialRef, PivotLocal, Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
 };
 
 /// Where a panel's outline comes from: one source for the whole panel.
@@ -123,6 +123,16 @@ pub struct Panel {
     nominal_size: PanelNominalSize,
     outline: PanelOutline,
     material: Option<ItemId>,
+    /// The render material every surface of this panel wears, when the shop or the catalogue named
+    /// one. The frame paints the panel from it and never reads the catalogue (Y7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    render_material: Option<MaterialRef>,
+    /// Where this panel places that material's picture on itself (Y15).
+    ///
+    /// Absent means the record's own coverage and turn, which is what every board drew before the
+    /// field existed; present, it overrides them for this board alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decor: Option<DecorMapping>,
     last_known_thickness: Length,
     placement: Placement,
     pivot_local: PivotLocal,
@@ -135,9 +145,8 @@ pub struct Panel {
     bevels: Vec<EdgeBevel>,
     /// The end trims, one signed number per nominal edge (ADR 0240).
     ///
-    /// An ordinary board keeps the field out of the file: a scene that never had a front in it is
-    /// written exactly as it was before the trims existed.
-    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
+    /// The field is written on every panel, zeros included: it is one of the four numbers that
+    /// describe a board, and a file that omits it would be a second layout to keep (ADR 0096).
     trims: PanelTrims,
     properties: Properties,
 }
@@ -180,6 +189,8 @@ impl Panel {
             bevels: Vec::new(),
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
+            render_material: None,
+            decor: None,
         })
     }
 
@@ -215,6 +226,8 @@ impl Panel {
             bevels: Vec::new(),
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
+            render_material: None,
+            decor: None,
         })
     }
 
@@ -297,6 +310,20 @@ impl Panel {
         self.material
     }
 
+    /// The render material every surface of the panel wears, when one is assigned.
+    ///
+    /// It is one material for the whole board — both faces, the edges and anything cut through it —
+    /// which is what a 3D object carries and what the frame paints (Y7).
+    pub const fn render_material(&self) -> Option<MaterialRef> {
+        self.render_material
+    }
+
+    /// Where this panel places its material's picture on itself, or `None` for the record's own
+    /// numbers (Y15).
+    pub const fn decor(&self) -> Option<DecorMapping> {
+        self.decor
+    }
+
     /// The fallback thickness used when the material is absent.
     pub const fn last_known_thickness(&self) -> Length {
         self.last_known_thickness
@@ -357,6 +384,16 @@ impl Panel {
     /// Replaces the selected material.
     pub(crate) fn set_material(&mut self, material: Option<ItemId>) {
         self.material = material;
+    }
+
+    /// Assigns or clears the render material every surface of the panel wears.
+    pub(crate) fn set_render_material(&mut self, material: Option<MaterialRef>) {
+        self.render_material = material;
+    }
+
+    /// Assigns or clears this panel's own placement of its material's picture.
+    pub(crate) fn set_decor(&mut self, decor: Option<DecorMapping>) {
+        self.decor = decor;
     }
 
     /// Replaces the fallback thickness used when the catalogue has no entry.
@@ -881,6 +918,9 @@ pub enum PanelError {
     /// A contour panel stored edge or corner banding, which belongs to a rectangle.
     #[error("a contour panel cannot carry edge or corner banding, only ring banding")]
     ContourWithBanding,
+    /// A contour panel stored end trims, whose four nominal ends a ring does not have.
+    #[error("a contour panel has no nominal ends, so it cannot carry end trims")]
+    ContourWithTrims,
     /// A rectangular panel stored banding against contour ring segments.
     #[error("a rectangular panel cannot carry banding on a contour ring segment")]
     RectWithRingBanding,
@@ -941,6 +981,10 @@ pub(crate) struct PanelWire {
     outline: PanelOutline,
     #[serde(default)]
     material: Option<ItemId>,
+    #[serde(default)]
+    render_material: Option<MaterialRef>,
+    #[serde(default)]
+    decor: Option<DecorMapping>,
     last_known_thickness: Length,
     placement: Placement,
     #[serde(default)]
@@ -957,7 +1001,6 @@ pub(crate) struct PanelWire {
     band_order: Vec<SegmentSource>,
     #[serde(default)]
     bevels: Vec<EdgeBevel>,
-    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
     trims: PanelTrims,
     #[serde(default)]
     properties: Properties,
@@ -974,6 +1017,9 @@ impl TryFrom<PanelWire> for Panel {
             PanelOutline::Contour { contour } => {
                 if !wire.edge_banding.is_empty() || !wire.corner_banding.is_empty() {
                     return Err(PanelError::ContourWithBanding);
+                }
+                if !wire.trims.is_zero() {
+                    return Err(PanelError::ContourWithTrims);
                 }
                 validate_ring_banding(contour, &wire.ring_banding)?;
                 let contour_size = contour_nominal_size(contour)?;
@@ -1002,6 +1048,8 @@ impl TryFrom<PanelWire> for Panel {
         panel.validate_bevels()?;
         panel.trims = wire.trims;
         panel.properties = wire.properties;
+        panel.render_material = wire.render_material;
+        panel.decor = wire.decor;
         Ok(panel)
     }
 }
@@ -1267,6 +1315,13 @@ mod tests {
         }]);
         let error = serde_json::from_value::<Panel>(banded).expect_err("rectangle banding is not a ring");
         assert!(error.to_string().contains("contour panel cannot carry edge or corner banding"), "error was {error}");
+
+        // A ring has no four nominal ends, so a stored trim is a number nothing reads: the file is
+        // refused instead of loading a board that ignores one of its fields (N31, ADR 0240).
+        let mut trimmed = serde_json::to_value(&panel).expect("json");
+        trimmed["trims"] = serde_json::json!({ "bottom": 2_000, "right": 0, "top": 0, "left": 0 });
+        let error = serde_json::from_value::<Panel>(trimmed).expect_err("a ring carries no trims");
+        assert!(error.to_string().contains("cannot carry end trims"), "error was {error}");
     }
 
     #[test]

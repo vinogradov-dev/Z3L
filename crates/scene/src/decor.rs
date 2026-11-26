@@ -16,7 +16,9 @@
 //! Refuses: an image with no texel, a side of zero, a side past [`MAX_DECOR_SIDE`] (a hostile record
 //! must not become an allocation), and a size that covers no board at all.
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use geom::DVec2;
 use units::Length;
@@ -123,6 +125,79 @@ impl Turns {
 impl Default for Turns {
     fn default() -> Self {
         Self::ALONG
+    }
+}
+
+/// Where a drawable puts its picture on itself: a scale, an offset and a quarter turn (Y15).
+///
+/// The document's own mapping, stated in the terms this crate works in. A material's record says how
+/// much board its picture covers and how its grain runs, and every board cut from that record
+/// inherits both; this value overrides them for one drawable — the door's grain along its height
+/// while the shelf's runs along its width, a small part at a finer scale than a large one.
+///
+/// The picture stays one texture whatever the mapping says: these three numbers change the
+/// coordinate a vertex carries, never the texels the device holds. A quiet node carries no mapping
+/// at all and draws exactly the record's numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecorMapping {
+    scale: Length,
+    offset: [Length; 2],
+    turns: Turns,
+}
+
+impl DecorMapping {
+    /// The mapping that spans `scale` of board per picture width, shifts the picture by `offset`
+    /// along the drawable's own `X` and `Y`, and turns it by `turns` beyond the record's own.
+    pub const fn new(scale: Length, offset: [Length; 2], turns: Turns) -> Self {
+        Self { scale, offset, turns }
+    }
+
+    /// How much board one picture width spans.
+    pub const fn scale(self) -> Length {
+        self.scale
+    }
+
+    /// The shift of the picture along the drawable's own `X` and `Y`, in millimetres of board.
+    pub const fn offset(self) -> [Length; 2] {
+        self.offset
+    }
+
+    /// The quarter turns this mapping adds to the record's own.
+    pub const fn turns(self) -> Turns {
+        self.turns
+    }
+}
+
+/// A drawable's picture with the node's own placement of it, as a vertex builder reads them.
+///
+/// The two travel together because one without the other is a coordinate that two frames would
+/// compute differently: the viewport bakes it into a vertex and the tracer writes it onto a face, and
+/// both call [`Faced::uv`].
+#[derive(Clone, Copy, Debug)]
+pub struct Faced<'a> {
+    decor: &'a Decor,
+    mapping: Option<DecorMapping>,
+}
+
+impl<'a> Faced<'a> {
+    /// The picture `decor`, placed by `mapping` or by the record's own numbers.
+    pub const fn new(decor: &'a Decor, mapping: Option<DecorMapping>) -> Self {
+        Self { decor, mapping }
+    }
+
+    /// The picture itself, which is what a device uploads once per id.
+    pub const fn decor(&self) -> &'a Decor {
+        self.decor
+    }
+
+    /// The node's placement, or `None` for the record's own numbers.
+    pub const fn mapping(&self) -> Option<DecorMapping> {
+        self.mapping
+    }
+
+    /// The texture coordinate of `local`, a point in the drawable's own frame in millimetres.
+    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+        self.decor.uv(local, self.mapping)
     }
 }
 
@@ -243,19 +318,31 @@ impl Decor {
     /// Texels are square: `covers` spans the image's width, and its height follows from the aspect, so
     /// a grain drawn in the picture keeps its proportions on the board.
     ///
+    /// With a `mapping`, the node's own scale replaces `covers`, its offset shifts the picture along
+    /// the drawable's `X` and `Y`, and its turns are added to the record's. One projection, one
+    /// division: a node that says nothing is the record's numbers and nothing else (Y15).
+    ///
     /// A coordinate past the picture is not clamped: the renderer's sampler repeats the image, which
     /// is what a board's decor does — a sample is a window onto a repeating print.
-    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+    pub fn uv(&self, local: DVec2, mapping: Option<DecorMapping>) -> [f32; 2] {
+        let (scale, offset, turns) = match mapping {
+            Some(mapping) => {
+                (mapping.scale, mapping.offset, Turns::new(self.turns.get().wrapping_add(mapping.turns.get())))
+            }
+            None => (self.covers, [Length::ZERO; 2], self.turns),
+        };
         let width = f64::from(self.image.width());
         let height = f64::from(self.image.height());
-        let covered = self.covers.millimetres_f64();
+        let covered = scale.millimetres_f64();
         let across = covered;
         let down = covered * height / width;
-        let (x, y) = match self.turns.get() {
-            1 => (local.y, -local.x),
-            2 => (-local.x, -local.y),
-            3 => (-local.y, local.x),
-            _ => (local.x, local.y),
+        let x = local.x - offset[0].millimetres_f64();
+        let y = local.y - offset[1].millimetres_f64();
+        let (x, y) = match turns.get() {
+            1 => (y, -x),
+            2 => (-x, -y),
+            3 => (-y, x),
+            _ => (x, y),
         };
         if across <= 0.0 || down <= 0.0 {
             return [0.0, 0.0];
@@ -267,6 +354,110 @@ impl Decor {
 impl PartialEq for Decor {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.covers == other.covers && self.turns == other.turns
+    }
+}
+
+/// The picture and the board it covers, as the material library answers a decor.
+///
+/// The value is what a frame build hands [`Decors`] for one record: the texels already as one shared
+/// image, the size the record names and the way its grain runs. It says nothing about where the
+/// picture came from, so nothing here depends on the library's file format.
+#[derive(Clone, Debug)]
+pub struct Picture {
+    image: Arc<DecorImage>,
+    covers: Length,
+    turns: Turns,
+}
+
+impl Picture {
+    /// The picture `image` repeating every `covers` millimetres, turned by `turns`.
+    pub fn new(image: Arc<DecorImage>, covers: Length, turns: Turns) -> Self {
+        Self { image, covers, turns }
+    }
+
+    /// The texels, shared with every drawable faced with this decor.
+    pub fn image(&self) -> &Arc<DecorImage> {
+        &self.image
+    }
+
+    /// How many millimetres of board one image width spans.
+    pub const fn covers(&self) -> Length {
+        self.covers
+    }
+
+    /// The quarter turns the picture is turned by.
+    pub const fn turns(&self) -> Turns {
+        self.turns
+    }
+}
+
+/// The decors one frame's build has read, kept so three boards of one material share one picture.
+///
+/// A material is a record a shop names once; a cabinet of forty boards cut from it is one picture,
+/// one set of texels and one texture on the device. The set is keyed by the library's number for the
+/// material, and it answers one shared [`Decor`] per record — a drawable clones the value, which
+/// shares its texels and copies nothing (`AGENTS.md` §4.2: a derived picture is not document data).
+///
+/// The set belongs to a build and not to a document: [`Decors::follow`] is what tells it the library
+/// moved. Every decor it makes takes a **new** [`DecorId`], never a derived one, because the
+/// renderer and the tracer keep a texture under that number until the frame stops naming it — a
+/// picture a person replaced must therefore arrive under a number nothing has drawn before.
+#[derive(Debug, Default)]
+pub struct Decors {
+    /// The library's revision the entries were read from.
+    generation: u64,
+    /// The next decor id, which is never reused.
+    next: u64,
+    /// One entry per material: its decor, or `None` when the record names none.
+    entries: BTreeMap<u64, Option<Arc<Decor>>>,
+}
+
+impl Decors {
+    /// An empty set, ready for the first frame.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts a build from the library at `generation`: a moved generation drops every decor.
+    ///
+    /// Dropping them is what makes a replaced picture reach the screen: the next frame asks for the
+    /// decor again, reads the new texels and allocates a new id, so the renderer cannot draw the
+    /// picture it kept from the previous generation. The counter itself is not reset, so no id is
+    /// ever handed out twice.
+    pub fn follow(&mut self, generation: u64) {
+        if generation == self.generation {
+            return;
+        }
+        self.generation = generation;
+        self.entries.clear();
+    }
+
+    /// The decor the material `key` names, reading it with `load` the first time it is asked for.
+    ///
+    /// `None` means the record has no decor — a flat colour — and it is remembered like a picture,
+    /// so a banded board does not walk the library once per drawable. A load that refuses is a
+    /// missing decor for this frame and is not remembered: the next build tries again.
+    pub fn decor(&mut self, key: u64, load: impl FnOnce() -> Option<Picture>) -> Option<&Decor> {
+        if !self.entries.contains_key(&key) {
+            let entry = load().and_then(|picture| {
+                self.next = self.next.wrapping_add(1);
+                let id = DecorId::new(self.next)?;
+                let decor = Decor::new(id, picture.image, picture.covers, picture.turns).ok()?;
+                Some(Arc::new(decor))
+            });
+            self.entries.insert(key, entry);
+        }
+        self.entries.get(&key).and_then(|entry| entry.as_deref())
+    }
+
+    /// How many records this set has answered.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the set has answered no record yet.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
@@ -290,13 +481,13 @@ mod tests {
     fn a_decor_covers_the_board_size_it_names_with_square_texels() {
         let decor = decor(Turns::ALONG);
         // 600 mm across the image's eight texels is 75 mm per texel; its four rows cover 300 mm.
-        assert_eq!(decor.uv(DVec2::new(0.0, 0.0)), [0.0, 0.0]);
-        assert_eq!(decor.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0]);
-        assert_eq!(decor.uv(DVec2::new(0.0, 150.0)), [0.0, 0.5]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 0.0), None), [0.0, 0.0]);
+        assert_eq!(decor.uv(DVec2::new(300.0, 0.0), None), [0.5, 0.0]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 150.0), None), [0.0, 0.5]);
         // One whole repeat is one whole picture in both directions.
-        assert_eq!(decor.uv(DVec2::new(600.0, 300.0)), [1.0, 1.0]);
+        assert_eq!(decor.uv(DVec2::new(600.0, 300.0), None), [1.0, 1.0]);
         // Texels stay square: 600 mm of board is two pictures tall, not one.
-        assert_eq!(decor.uv(DVec2::new(0.0, 600.0)), [0.0, 2.0]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 600.0), None), [0.0, 2.0]);
     }
 
     #[test]
@@ -305,15 +496,43 @@ mod tests {
         let across = decor(Turns::ACROSS);
         // The grain is the picture's own width; a point along the board's length is a point along the
         // grain until the decor is turned, and across it afterwards.
-        assert_eq!(along.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0]);
+        assert_eq!(along.uv(DVec2::new(300.0, 0.0), None), [0.5, 0.0]);
         // Turned once, the picture's 600 mm width runs along the board's height and its 300 mm height
         // along the board's length, so the same point is one whole picture down the grain.
-        assert_eq!(across.uv(DVec2::new(300.0, 0.0)), [0.0, -1.0]);
-        assert_eq!(across.uv(DVec2::new(0.0, 150.0)), [0.25, 0.0]);
+        assert_eq!(across.uv(DVec2::new(300.0, 0.0), None), [0.0, -1.0]);
+        assert_eq!(across.uv(DVec2::new(0.0, 150.0), None), [0.25, 0.0]);
         // Two quarter turns are the picture upside down, and three are the mirror of one.
-        assert_eq!(decor(Turns::new(2)).uv(DVec2::new(300.0, 150.0)), [-0.5, -0.5]);
-        assert_eq!(decor(Turns::new(3)).uv(DVec2::new(300.0, 150.0)), [-0.25, 1.0]);
+        assert_eq!(decor(Turns::new(2)).uv(DVec2::new(300.0, 150.0), None), [-0.5, -0.5]);
+        assert_eq!(decor(Turns::new(3)).uv(DVec2::new(300.0, 150.0), None), [-0.25, 1.0]);
         assert_eq!(Turns::new(5), Turns::ACROSS, "a count is a count modulo four");
+    }
+
+    #[test]
+    fn a_nodes_own_mapping_moves_the_coordinate_the_record_gave() {
+        let picture = decor(Turns::ALONG);
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        // Half the board per picture: the same 600 mm picture now repeats every 300 mm, so the point
+        // 300 mm along the grain is one whole picture instead of half of one.
+        let finer = DecorMapping::new(millimetres(300), [Length::ZERO; 2], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(300.0, 0.0), Some(finer)), [1.0, 0.0]);
+        // The picture's own aspect still rules the other axis: 300 mm across is 150 mm down.
+        assert_eq!(picture.uv(DVec2::new(0.0, 150.0), Some(finer)), [0.0, 1.0]);
+        // An offset moves the picture along the board: 150 mm to the right starts the picture there.
+        let shifted = DecorMapping::new(millimetres(600), [millimetres(150), millimetres(-75)], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(150.0, -75.0), Some(shifted)), [0.0, 0.0]);
+        assert_eq!(picture.uv(DVec2::new(450.0, 75.0), Some(shifted)), [0.5, 0.5]);
+        // A turn adds to the record's own, so the same number means the same thing on every board.
+        let turned = DecorMapping::new(millimetres(600), [Length::ZERO; 2], Turns::ACROSS);
+        assert_eq!(picture.uv(DVec2::new(300.0, 0.0), Some(turned)), [0.0, -1.0]);
+        let twice = DecorMapping::new(millimetres(600), [Length::ZERO; 2], Turns::new(3));
+        assert_eq!(
+            picture.uv(DVec2::new(300.0, 0.0), Some(twice)),
+            decor(Turns::new(3)).uv(DVec2::new(300.0, 0.0), None),
+            "the record's turn and the node's add, so three of them is not two"
+        );
+        // A mapping that covers nothing is a coordinate at the picture's origin, never a NaN.
+        let collapsed = DecorMapping::new(Length::ZERO, [Length::ZERO; 2], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(300.0, 150.0), Some(collapsed)), [0.0, 0.0]);
     }
 
     #[test]
@@ -349,6 +568,72 @@ mod tests {
         let covers = Length::from_millimetres(0).expect("zero millimetres");
         assert_eq!(Decor::new(id, image(2, 2), covers, Turns::ALONG).err(), Some(DecorError::Covers { covers }));
         assert_eq!(DecorId::new(0), None, "no decor is number zero");
+    }
+
+    fn picture(texel: [u8; 4]) -> Picture {
+        Picture::new(image_of(vec![texel]), Length::from_millimetres(600).expect("600 mm"), Turns::ALONG)
+    }
+
+    fn image_of(texels: Vec<[u8; 4]>) -> Arc<DecorImage> {
+        Arc::new(DecorImage::new(1, 1, texels).expect("a one-texel image"))
+    }
+
+    #[test]
+    fn three_boards_of_one_material_share_one_picture_and_one_record() {
+        let mut decors = Decors::new();
+        let mut reads = 0;
+        let mut board = |decors: &mut Decors| {
+            decors
+                .decor(7, || {
+                    reads += 1;
+                    Some(picture([200, 100, 50, 255]))
+                })
+                .cloned()
+                .expect("the record names a decor")
+        };
+        let first = board(&mut decors);
+        let second = board(&mut decors);
+        let third = board(&mut decors);
+        assert_eq!(reads, 1, "the picture is read once, not once per board");
+        assert_eq!(decors.len(), 1, "one entry for one record");
+        assert!(std::ptr::eq(first.image(), second.image()), "the texels are one allocation");
+        assert!(std::ptr::eq(second.image(), third.image()));
+        let ids = [first.id(), second.id(), third.id()];
+        assert_eq!(ids[0], ids[1], "and they share the id the renderer keeps the texture under");
+        assert_eq!(ids[1], ids[2]);
+    }
+
+    #[test]
+    fn a_moved_library_reads_a_replaced_picture_under_a_new_id() {
+        let mut decors = Decors::new();
+        decors.follow(0);
+        let before = decors.decor(4, || Some(picture([255, 0, 0, 255]))).cloned().expect("a decor");
+        assert_eq!(before.image().texel(0, 0), Some([255, 0, 0, 255]));
+
+        // The shop replaced the scan: the library moved, so the frame reads the picture again.
+        decors.follow(1);
+        assert!(decors.is_empty(), "a moved generation drops what the old pictures said");
+        let after = decors.decor(4, || Some(picture([0, 0, 255, 255]))).cloned().expect("a decor");
+        assert_eq!(after.image().texel(0, 0), Some([0, 0, 255, 255]), "the new texels are what the frame draws");
+        assert_ne!(after.id(), before.id(), "a replaced picture never reuses the id the renderer kept");
+    }
+
+    #[test]
+    fn a_record_with_no_picture_is_remembered_as_flat() {
+        let mut decors = Decors::new();
+        let mut reads = 0;
+        for _ in 0..3 {
+            assert!(
+                decors
+                    .decor(9, || {
+                        reads += 1;
+                        None
+                    })
+                    .is_none()
+            );
+        }
+        assert_eq!(reads, 1, "a flat board does not walk the library once per drawable");
+        assert_eq!(decors.len(), 1);
     }
 
     #[test]

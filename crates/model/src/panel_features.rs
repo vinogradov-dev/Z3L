@@ -349,13 +349,9 @@ impl PanelTrims {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PanelTrimsWire {
-    #[serde(default)]
     bottom: Length,
-    #[serde(default)]
     right: Length,
-    #[serde(default)]
     top: Length,
-    #[serde(default)]
     left: Length,
 }
 
@@ -529,6 +525,7 @@ mod tests {
                 "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
                 "last_known_thickness": 18000,
                 "outline": {"kind": "rect", "corner_features": corner_features, "edge_bows": edge_bows},
+                "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
             })
         };
 

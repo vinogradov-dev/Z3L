@@ -20,7 +20,7 @@
 //! number of triangles, is an error naming the index rather than a silently missing face.
 
 use geom::{DVec2, DVec3, MeshData};
-use scene::{Decor, Drawable, SceneFrame, Surface};
+use scene::{Decor, Drawable, FaceShading, SceneFrame, Surface};
 
 use crate::FinalError;
 use crate::ray::Triangle;
@@ -85,8 +85,12 @@ pub fn faces_of(frame: &SceneFrame) -> Result<Soup, FinalError> {
 /// The same flattening under a caller's ceiling, which is how the cap is tested without a million
 /// triangles.
 fn flatten(frame: &SceneFrame, max: usize) -> Result<Soup, FinalError> {
+    // A source is not geometry: a window's pane is the frame's picture of a rectangle the tracer
+    // samples from `Lighting::areas`, and a shadow ray must pass through it instead of stopping on
+    // the face that gives the light (L2).
+    let bodies = frame.drawables().iter().filter(|drawable| drawable.faces == FaceShading::Lit);
     let mut count = 0usize;
-    for drawable in frame.drawables() {
+    for drawable in bodies {
         count = count.saturating_add(drawable.mesh.triangle_count());
     }
     if count > max {
@@ -95,6 +99,9 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Soup, FinalError> {
     let mut triangles = Vec::with_capacity(count);
     let mut decors: Vec<Decor> = Vec::new();
     for drawable in frame.drawables() {
+        if drawable.faces == FaceShading::Source {
+            continue;
+        }
         let mesh: &MeshData = &drawable.mesh;
         let transform = drawable.world_transform;
         // The index the faces of this drawable name, added once for the whole picture.
@@ -120,9 +127,10 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Soup, FinalError> {
                 let local = DVec3::new(f64::from(position[0]), f64::from(position[1]), f64::from(position[2]));
                 *point = transform.transform_point3(local);
                 // The coordinate is the panel's own: the same two numbers the viewport bakes into
-                // the vertex, projected by the same function (`scene::Decor::uv`).
-                if let (Some(decor), Some(slot)) = (drawable.decor.as_ref(), uv.get_mut(offset)) {
-                    *slot = decor.uv(DVec2::new(local.x, local.y));
+                // the vertex, projected by the same function (`scene::Decor::uv`) and from the same
+                // pair of picture and placement — the record's numbers, or the node's own (Y15).
+                if let Some(slot) = uv.get_mut(offset) {
+                    *slot = drawable.uv(DVec2::new(local.x, local.y));
                 }
             }
             triangles.push(Face {
@@ -305,5 +313,19 @@ mod tests {
         });
         let error = faces_of(&frame(&[(partial, DMat4::IDENTITY)])).expect_err("half a triangle is refused");
         assert!(matches!(error, FinalError::MalformedMesh { index: 3 }), "{error}");
+    }
+
+    #[test]
+    fn a_light_s_pane_is_a_source_the_tracer_never_traces() {
+        // A window's face is drawn by the viewport and sampled from `Lighting::areas`: it is not a
+        // body, so a shadow ray must pass through it and the BVH must not hold it (L2).
+        let mut scene = frame(&[(quad(100.0), DMat4::IDENTITY)]);
+        let id = id(2);
+        scene.push(Drawable::new(id, quad(50.0), DMat4::IDENTITY, [1.0; 4]).as_source());
+        let soup = faces_of(&scene).expect("the bodies flatten");
+        assert_eq!(soup.faces.len(), 2, "the body's two triangles and nothing of the pane");
+        assert!(soup.faces.iter().all(|face| face.colour == [0.5, 0.5, 0.5]), "no face carries the pane's colour");
+        // The cap counts bodies only, so a huge pane cannot refuse a frame that fits.
+        assert!(flatten(&scene, 2).is_ok(), "the pane is not counted against the triangle cap");
     }
 }

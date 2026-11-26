@@ -173,6 +173,23 @@ const BAND_FILL_ALPHA: u8 = 26;
 /// the container that owns the viewport says so at a glance instead of at a squint.
 pub const HELPER_OPEN_STROKE: f32 = 2.0;
 
+/// The weight of one line of the tiling grid a decorated board can show, in points.
+///
+/// The grid is a guide over the model, like a work plane, so its weight is the guide's and not a
+/// world size: the renderer turns these points into the viewport's own pixels, and a line that grew
+/// with the zoom would read as geometry on the board (ADR 0111, Y16).
+///
+/// A point and a half, the contour weight: the guide has to be read *through* the picture it is laid
+/// over, so it carries the line register the form edges use and not the annotation one.
+pub const DECOR_GRID_STROKE: f32 = 1.5;
+
+/// How much of the guide ink one line of the tiling grid lays over the board.
+///
+/// Below one, so the decor under it still reads: the grid says where the picture repeats and the
+/// picture stays the thing being judged. At the weight above this is the opaquest guide the model
+/// carries, and it still leaves two thirds of every board untouched (Y16).
+pub const DECOR_GRID_INK_ALPHA: f32 = 0.65;
+
 /// The dark half of the work cursor's double outline.
 ///
 /// The pointer is not a guide over the model: it must be found on a white board, a dark board and
@@ -690,6 +707,15 @@ pub fn helper(ui: &egui::Ui) -> Color32 {
 pub fn selection_band() -> (Color32, Color32) {
     let ink = selection_ink();
     (ink, Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), BAND_FILL_ALPHA))
+}
+
+/// The tint of a picture drawn as it is.
+///
+/// A picture — a render, a decor photograph — carries its own colours and its own values, so the ink
+/// it is drawn with is no ink at all: the page that shows one must not tint it, and `Color32::WHITE`
+/// is a colour literal that a feature module may not name (ADR 0063, `cargo xtask ui-rules`).
+pub fn picture(_ui: &egui::Ui) -> Color32 {
+    Color32::WHITE
 }
 
 /// The ink of a picked shape: the renderer's selection cyan, read as chrome ink.
