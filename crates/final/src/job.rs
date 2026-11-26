@@ -8,8 +8,9 @@
 //! refuses, reachable from the UI, the CLI or the assistant without a second code path.
 //!
 //! The order of the steps is the contract a person sees: the frame is uploaded (or reused), every
-//! sample is traced, the strips are filtered (`crate::denoise`), and only then is the image encoded and
-//! written. A cancel at any sample therefore leaves the destination exactly as it was — the old picture
+//! sample is traced — whole frames at a time, each checkpoint publishing a display-sized picture into
+//! the mailbox a surface reads (Y6) — the bands are filtered (`crate::denoise`), and only then is the
+//! image encoded and written. A cancel at any sample therefore leaves the destination exactly as it was — the old picture
 //! is still there and no partial file is beside it — and the session is back to idle the moment the
 //! refusal arrives.
 //!
