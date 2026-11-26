@@ -88,6 +88,7 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
     let request = Request::new(args.width, args.height, args.samples).map_err(describe)?;
     let settings = Settings::new(request, args.exposure, &args.out)
         .and_then(|settings| settings.with_environment(args.studio / 100.0))
+        .map(|settings| if args.no_denoise { settings.without_denoise() } else { settings })
         .map_err(describe)?;
     let (device, queue) = device()?;
     let mut tracer = Tracer::new(&device).map_err(describe)?;
@@ -230,6 +231,7 @@ mod tests {
             exposure: 1.0,
             studio: 30.0,
             camera: super::super::CameraChoice::Fit,
+            no_denoise: false,
         };
         let lines = perform(&args).expect("the demo renders");
         assert!(out.is_file(), "{}", lines.join("\n"));
