@@ -3852,6 +3852,76 @@ fn both_ends_of_a_row_stay_alive_whichever_was_typed_first() {
 }
 
 #[test]
+fn a_rows_two_ends_keep_the_keyboard_through_enter_tab_and_escape() {
+    // X137: the owner laid a row of shelves with «Равномерно» on, typed an air into each end field
+    // and lost the keyboard. Enter moved the row and left no field able to take a number, and
+    // Escape suspended the plates for the rest of the gesture. Both ends are the maker's numbers,
+    // and Tab, Enter and Escape are read here in one sequence: every step must leave a plate that
+    // takes the number typed into it.
+    let (mut harness, lower, _higher) = evenly_harness("frame-fill-row-keys");
+    let context = harness.context();
+    let owns = |harness: &Harness| harness.app.tabs.active().distance_fields.owns_the_keyboard(&context);
+    let active = |harness: &Harness| harness.app.tabs.active().distances.as_ref().and_then(|state| state.active());
+    let airs = |harness: &Harness| {
+        let rows = harness.app.tabs.active().gap_rows().expect("the row measures two airs");
+        [rows[0].value, rows[1].value]
+    };
+    let scene = harness.scene();
+    assert!(scene.contains(lower), "the pointer works inside the work area: {lower:?} in {scene:?}");
+
+    // The pointer names the near air and that plate takes the keyboard with no click.
+    harness.hover(lower);
+    assert!(owns(&harness), "the near plate takes the keyboard from the pointer");
+    assert_eq!(active(&harness), Some(ui::Side::Low));
+
+    // A number in the near field, a Tab and a number in the far field: both airs are what was
+    // typed, with the row re-planned around each one.
+    type_into_field(&mut harness, "80");
+    assert_eq!(airs(&harness)[0], 80.0, "the near air is the number typed into it: {:?}", airs(&harness));
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(owns(&harness), "Tab hands the keyboard to the far plate");
+    assert_eq!(active(&harness), Some(ui::Side::High), "and the far air is the active field");
+    type_into_field(&mut harness, "120");
+    assert_eq!(airs(&harness), [80.0, 120.0], "both ends keep the numbers typed into them");
+
+    // Enter locks the far end where it stands: the glyph comes, the row does not move, and the
+    // keyboard stays in the field that took the key.
+    harness.press(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_eq!(airs(&harness), [80.0, 120.0], "a lock fixes the face and never moves the boards");
+    assert!(owns(&harness), "the locked field still owns the keyboard");
+    // A Tab after the lock still walks to the other end, where a number lands.
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(owns(&harness), "the Tab after a lock still hands the keyboard over");
+    assert_eq!(active(&harness), Some(ui::Side::Low), "to the other end");
+    type_into_field(&mut harness, "90");
+    assert_eq!(airs(&harness), [90.0, 120.0], "and the number typed there is the near air");
+
+    // Escape gives the part back to the pointer: no plate holds the keyboard and the row is the
+    // hand's again. Tab brings the fields back — the next one walks to the other end — so the
+    // gesture never leaves a plate nobody can type into.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!owns(&harness), "Escape hands the part back to the pointer");
+    assert_eq!(active(&harness), None, "and no end is active");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(owns(&harness), "a Tab after Escape returns the keyboard to a plate");
+    harness.press(egui::Key::Tab, egui::Modifiers::NONE);
+    assert!(owns(&harness), "and the second Tab too, on the other end");
+    assert_eq!(active(&harness), Some(ui::Side::High));
+    type_into_field(&mut harness, "70");
+    assert_eq!(airs(&harness)[1], 70.0, "a number typed after Escape lands: {:?}", airs(&harness));
+    assert!(scene.contains(lower), "the whole sequence ran without the pointer leaving the work area");
+
+    // A hand that moves again is the maker back at the gesture: the pointer gives the keyboard
+    // back without a key at all.
+    harness.press(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!owns(&harness), "the second Escape gives the part back again");
+    harness.hover(lower + egui::vec2(2.0, 0.0));
+    assert!(owns(&harness), "a pointer move hands the keyboard to the end the pointer names");
+    type_into_field(&mut harness, "60");
+    assert_eq!(airs(&harness)[0], 60.0, "and the number typed after it lands: {:?}", airs(&harness));
+}
+
+#[test]
 fn a_typed_count_spreads_the_live_row() {
     // U128: the count is the row's third number. It stands beside the hand as a reading and is typed
     // in the inspector's row, where the words are, so both surfaces show one number and neither
@@ -4808,6 +4878,17 @@ fn the_ruler_measures_the_board_inside_a_product_not_its_reserved_box() {
 fn type_text(harness: &mut Harness, text: &str) {
     for character in text.chars() {
         harness.run(vec![egui::Event::Text(character.to_string())]);
+    }
+}
+
+/// Types `text` and lets the field commit it, the way a maker pauses after the last digit.
+///
+/// A field hands its number over once the typing stops ([`crate::DEBOUNCE_SECONDS`] of quiet), so
+/// the frames are run out here instead of reading the measurement in the middle of an edit.
+fn type_into_field(harness: &mut Harness, text: &str) {
+    type_text(harness, text);
+    for _ in 0..12 {
+        harness.frame();
     }
 }
 
