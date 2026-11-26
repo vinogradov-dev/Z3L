@@ -26,7 +26,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use geom::{DMat4, DVec2, DVec3, MeshData};
-use scene::{Decor, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
+use scene::{Faced, Grid, Polyline, ProductEnvelope, ProductEnvelopeState};
 
 use crate::RenderError;
 use crate::pipelines::MAX_STENCIL_OWNERS;
@@ -408,7 +408,7 @@ pub(crate) fn world_vertices(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
-    decor: Option<&Decor>,
+    faced: Option<Faced<'_>>,
 ) -> Result<(Vec<FaceVertex>, Vec<u32>), RenderError> {
     if mesh.positions.is_empty() || mesh.indices.is_empty() || !mesh.indices.len().is_multiple_of(3) {
         return Err(RenderError::EmptyMesh { index });
@@ -430,7 +430,7 @@ pub(crate) fn world_vertices(
     let color = sanitize_color(color);
 
     if mesh.normals.is_empty() {
-        return flat_vertices(index, mesh, transform, color, decor);
+        return flat_vertices(index, mesh, transform, color, faced);
     }
 
     let mut vertices = Vec::with_capacity(mesh.positions.len());
@@ -445,7 +445,7 @@ pub(crate) fn world_vertices(
             position: to_array(position),
             normal: to_array(normal),
             color,
-            uv: decor_uv(decor, local),
+            uv: face_uv(faced, local),
         });
     }
     Ok((vertices, mesh.indices.clone()))
@@ -456,7 +456,7 @@ fn flat_vertices(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
-    decor: Option<&Decor>,
+    faced: Option<Faced<'_>>,
 ) -> Result<(Vec<FaceVertex>, Vec<u32>), RenderError> {
     let triangle_count = mesh.indices.len() / 3;
     let capacity = triangle_count.checked_mul(3).ok_or(RenderError::MeshTooLarge { index })?;
@@ -486,7 +486,7 @@ fn flat_vertices(
                 position: to_array(position),
                 normal: to_array(normal),
                 color,
-                uv: decor_uv(decor, local),
+                uv: face_uv(faced, local),
             });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2]);
@@ -499,10 +499,10 @@ fn flat_vertices(
 /// A drawable with no decor is sampled at one place, which the white texel it is bound to answers
 /// with the same value everywhere: the fragment multiplies its colour by that texel and the picture
 /// changes nothing. Keeping the coordinate finite is what a shader requires; the projection itself
-/// belongs to [`Decor::uv`], where the grain and the size live.
-fn decor_uv(decor: Option<&Decor>, local: DVec3) -> [f32; 2] {
-    match decor {
-        Some(decor) => decor.uv(DVec2::new(local.x, local.y)),
+/// belongs to [`Decor::uv`], where the grain, the size and the node's own placement live (Y15).
+fn face_uv(faced: Option<Faced<'_>>, local: DVec3) -> [f32; 2] {
+    match faced {
+        Some(faced) => faced.uv(DVec2::new(local.x, local.y)),
         None => [0.0, 0.0],
     }
 }

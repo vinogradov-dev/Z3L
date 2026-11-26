@@ -104,6 +104,34 @@ impl Project {
         Ok(next_revision)
     }
 
+    /// Assigns or clears where a node places its material's picture on itself, bumping the revision.
+    ///
+    /// A panel and an object draw a surface, so each may say how its material's picture covers it —
+    /// a scale, an offset and a quarter turn — and a node that says nothing keeps the record's own
+    /// numbers (Y15). A container, a camera and a light draw nothing and are refused. `None` clears
+    /// the mapping, and the frame draws the record's numbers again.
+    ///
+    /// The mapping is stored even when the node names no material: a person may place a picture
+    /// before choosing the board it belongs to, and the order of two commands is not a rule.
+    pub fn set_node_decor(&mut self, id: Id, decor: Option<DecorMapping>) -> Result<Revision, ProjectError> {
+        if id == self.root.id() {
+            return Err(ProjectError::RootImmutable { id });
+        }
+        let next_revision = self.next_revision()?;
+        let Some(node) = find_node_mut(&mut self.root, id) else {
+            return Err(ProjectError::NodeNotFound { id });
+        };
+        match node {
+            Node::Panel(panel) => panel.set_decor(decor),
+            Node::Object(object) => object.set_decor(decor),
+            Node::Container(_) | Node::Camera(_) | Node::Light(_) => {
+                return Err(ProjectError::NodeHasNoDecor { id });
+            }
+        }
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
     /// Checks that `nodes` can be wrapped in one new group.
     ///
     /// Grouping needs at least two distinct non-root nodes that share one parent container, and the
@@ -971,5 +999,48 @@ mod tests {
         assert_eq!(project.set_node_material(root, Some(oak)), Err(ProjectError::RootImmutable { id: root }));
         assert_eq!(project.revision(), revision, "a refused assignment bumps nothing");
         assert_eq!(MaterialRef::new(0), None, "zero is not a material");
+    }
+
+    #[test]
+    fn a_surface_node_places_its_picture_itself_and_a_container_has_none_to_place() {
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        let mapping =
+            DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], Turns::ACROSS).expect("a mapping");
+        let panel = Id::new(2).expect("panel id");
+        let mut project = sample_project();
+        let root = project.root().id();
+
+        assert_eq!(project.set_node_decor(panel, Some(mapping)).expect("a panel places its picture").get(), 1);
+        assert_eq!(project.panel(panel).expect("panel").decor(), Some(mapping));
+        assert_eq!(
+            project.panel(panel).expect("panel").render_material(),
+            None,
+            "the picture is placed, no board is named"
+        );
+        assert_eq!(project.set_node_decor(panel, None).expect("the placement is cleared").get(), 2);
+        assert_eq!(project.panel(panel).expect("panel").decor(), None, "a cleared panel keeps the record's numbers");
+
+        let object = crate::fixtures::sample_object(2);
+        let root_container =
+            Container::new(Id::new(1).expect("root id"), "Root", Placement::IDENTITY, vec![object.into()]);
+        let mut project = Project::new(root_container).expect("a project around one object");
+        let object = Id::new(2).expect("object id");
+        assert_eq!(project.set_node_decor(object, Some(mapping)).expect("an object places its picture").get(), 1);
+        assert_eq!(project.object(object).expect("object").decor(), Some(mapping));
+
+        let mut project = sample_project();
+        let drawer = Id::new(3).expect("drawer id");
+        let revision = project.revision();
+        assert_eq!(
+            project.set_node_decor(drawer, Some(mapping)),
+            Err(ProjectError::NodeHasNoDecor { id: drawer }),
+            "a container draws no surface"
+        );
+        assert_eq!(project.set_node_decor(root, Some(mapping)), Err(ProjectError::RootImmutable { id: root }));
+        assert_eq!(
+            project.set_node_decor(Id::new(99).expect("a free id"), Some(mapping)),
+            Err(ProjectError::NodeNotFound { id: Id::new(99).expect("a free id") })
+        );
+        assert_eq!(project.revision(), revision, "a refused placement bumps nothing");
     }
 }

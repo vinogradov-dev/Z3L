@@ -46,7 +46,7 @@ pub use camera::{
     Camera, CameraError, DEFAULT_FOV_Y, MAX_DISTANCE_MM, MAX_PITCH, MIN_DISTANCE_MM, MIN_PITCH, POLE_TOLERANCE,
     Projection, ProjectionToggle, canonical_up,
 };
-pub use decor::{Decor, DecorError, DecorId, DecorImage, MAX_DECOR_SIDE, Turns};
+pub use decor::{Decor, DecorError, DecorId, DecorImage, DecorMapping, Faced, MAX_DECOR_SIDE, Turns};
 pub use ray::{LINE_PICK_RADIUS_POINTS, Ray, ray_segment, ray_triangle};
 
 /// Gamma-space colour of a selected line chain.
@@ -569,6 +569,12 @@ pub struct Drawable {
     /// value — the viewport samples it in its fragment and the tracer carries it into its own
     /// shader — because a material the two disagree about is two materials.
     pub decor: Option<Decor>,
+    /// Where this drawable puts that picture on itself, or `None` for the record's own numbers.
+    ///
+    /// The document's mapping, carried beside the picture so the coordinate is computed once by
+    /// [`Decor::uv`] for both frames: a scale, an offset and a quarter turn (Y15). It changes the
+    /// vertices and never the texture, so a cabinet's boards still share one picture.
+    pub decor_mapping: Option<DecorMapping>,
     /// The box around the mesh in its own frame, as the mesh cache measured it (X56).
     ///
     /// `None` means the box was never measured, not that the drawable is empty: a view keeps a
@@ -611,6 +617,7 @@ impl Drawable {
             color,
             surface: Surface::MATTE,
             decor: None,
+            decor_mapping: None,
             local_bounds,
             faces: FaceShading::Lit,
         }
@@ -634,6 +641,36 @@ impl Drawable {
     pub fn with_decor(mut self, decor: Decor) -> Self {
         self.decor = Some(decor);
         self
+    }
+
+    /// The same drawable with its picture placed by `mapping` instead of the record's numbers.
+    ///
+    /// A mapping without a picture places nothing: [`Drawable::faced`] answers `None` and the
+    /// drawable keeps its flat colour until a decor arrives (Y15).
+    pub fn with_decor_mapping(mut self, mapping: DecorMapping) -> Self {
+        self.decor_mapping = Some(mapping);
+        self
+    }
+
+    /// The picture and the node's placement of it, or `None` for a surfaced drawable with no decor.
+    ///
+    /// This is what a vertex builder reads: one value, so the viewport and the tracer cannot take
+    /// the picture without the placement that belongs to it.
+    pub fn faced(&self) -> Option<Faced<'_>> {
+        let decor = self.decor.as_ref()?;
+        Some(Faced::new(decor, self.decor_mapping))
+    }
+
+    /// The texture coordinate of `local`, a point in the drawable's own frame in millimetres.
+    ///
+    /// A drawable with no decor answers the picture's origin, which the white texel it is bound to
+    /// reads as "the colour alone". The projection itself belongs to [`Decor::uv`], where the grain,
+    /// the size and the node's own numbers live.
+    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+        match self.faced() {
+            Some(faced) => faced.uv(local),
+            None => [0.0, 0.0],
+        }
     }
 
     /// The box around the drawable in world space, or `None` when its extent was never measured.
@@ -1271,6 +1308,42 @@ mod tests {
     /// The relative luminance of a gamma-space colour: enough to tell paper from slate.
     fn luminance(color: [f32; 4]) -> f32 {
         0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+    }
+
+    #[test]
+    fn a_drawable_answers_the_coordinate_of_its_picture_and_the_nodes_placement() {
+        let millimetres = |value: i64| units::Length::from_millimetres(value).expect("whole millimetres");
+        let image = Arc::new(DecorImage::new(2, 1, vec![[200, 120, 60, 255]; 2]).expect("a two-texel image"));
+        let decor =
+            Decor::new(DecorId::new(1).expect("a decor"), image, millimetres(600), Turns::ALONG).expect("a decor");
+        let mesh = Arc::new(MeshData::default());
+        let plain = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None);
+        assert_eq!(plain.uv(DVec2::new(300.0, 0.0)), [0.0, 0.0], "a drawable with no picture answers its origin");
+        assert!(plain.faced().is_none());
+
+        let faced = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+            .with_decor(decor.clone());
+        assert_eq!(faced.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0], "the record's 600 mm covers the board");
+        let mapping = DecorMapping::new(millimetres(300), [millimetres(75), units::Length::ZERO], Turns::ACROSS);
+        let placed = Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+            .with_decor(decor.clone())
+            .with_decor_mapping(mapping);
+        let read = placed.faced().expect("a faced drawable");
+        assert_eq!(read.mapping(), Some(mapping), "the placement travels with the picture");
+        assert_eq!(
+            placed.uv(DVec2::new(300.0, 0.0)),
+            [0.0, -1.5],
+            "the node's own scale, offset and turn reach the coordinate"
+        );
+        let coarser =
+            Drawable::with_box(Id::new(1).expect("an id"), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4], None)
+                .with_decor(decor)
+                .with_decor_mapping(DecorMapping::new(millimetres(1200), [units::Length::ZERO; 2], Turns::ALONG));
+        assert_eq!(
+            placed.decor.as_ref().map(Decor::id),
+            coarser.decor.as_ref().map(Decor::id),
+            "two placements of one picture are one texture"
+        );
     }
 
     #[test]

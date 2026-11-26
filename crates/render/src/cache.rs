@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use geom::{DMat4, MeshData};
-use scene::{Decor, DecorId};
+use scene::{DecorId, Faced};
 
 use crate::RenderError;
 
@@ -148,31 +148,60 @@ pub(crate) struct FaceKey {
     decor: Option<DecorKey>,
 }
 
-/// What a drawable's decor contributes to its vertices: which picture, how large, how turned.
+/// What a drawable's decor contributes to its vertices: which picture, how large, how turned, and
+/// where the node put it.
 ///
 /// The coordinate is baked into the vertex, so a decor that changes size or turns the grain changes
 /// every coordinate of the drawable and the buffers are built again. The picture's texels are not
 /// part of it: they are a texture, not a vertex, and the device keeps one copy of them per id.
+/// A node's own mapping is part of the key for the same reason as the record's numbers: two boards
+/// of one mesh, one placement and one picture, placed differently, carry different coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct DecorKey {
     id: DecorId,
     covers: i64,
     turns: u8,
+    mapping: Option<MappingKey>,
+}
+
+/// What a node's own placement of its picture contributes to the vertices (Y15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MappingKey {
+    scale: i64,
+    offset: [i64; 2],
+    turns: u8,
+}
+
+impl MappingKey {
+    fn new(mapping: scene::DecorMapping) -> Self {
+        let offset = mapping.offset();
+        Self {
+            scale: mapping.scale().micrometres(),
+            offset: [offset[0].micrometres(), offset[1].micrometres()],
+            turns: mapping.turns().get(),
+        }
+    }
 }
 
 impl DecorKey {
-    fn new(decor: &Decor) -> Self {
-        Self { id: decor.id(), covers: decor.covers().micrometres(), turns: decor.turns().get() }
+    fn new(faced: &Faced<'_>) -> Self {
+        let decor = faced.decor();
+        Self {
+            id: decor.id(),
+            covers: decor.covers().micrometres(),
+            turns: decor.turns().get(),
+            mapping: faced.mapping().map(MappingKey::new),
+        }
     }
 }
 
 impl FaceKey {
-    /// The key of the buffers `mesh`, `transform`, `color` and `decor` would be built into.
-    pub(crate) fn new(mesh: &Arc<MeshData>, transform: DMat4, color: [f32; 4], decor: Option<&Decor>) -> Self {
+    /// The key of the buffers `mesh`, `transform`, `color` and `faced` would be built into.
+    pub(crate) fn new(mesh: &Arc<MeshData>, transform: DMat4, color: [f32; 4], faced: Option<Faced<'_>>) -> Self {
         Self {
             placement: PlacementKey::new(mesh, transform),
             color: color.map(f32::to_bits),
-            decor: decor.map(DecorKey::new),
+            decor: faced.as_ref().map(DecorKey::new),
         }
     }
 }

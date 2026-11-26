@@ -24,6 +24,7 @@ mod container;
 mod contour;
 mod contour_edit;
 mod contour_frames;
+mod decor;
 #[cfg(test)]
 mod fixtures;
 mod footprint;
@@ -59,6 +60,7 @@ pub use contour::{
 };
 pub use contour_edit::{ContourEditError, CornerMove, PathCorner};
 pub use contour_frames::{ArcFrame, CircleFrame, PolygonFrame, RectangleFrame};
+pub use decor::{DecorMapping, DecorMappingError, MAX_DECOR_EXTENT, Turns};
 pub use footprint::{Footprint, FootprintError};
 pub use frame::{Anchored, FrameAnchor, FrameError, Rebased, rebase_origin_at};
 pub use ids::{ContourSegmentId, EdgeId, Id, ItemId, ItemIdError, MachiningId, MaterialRef, Revision, VertexId};

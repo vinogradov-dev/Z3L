@@ -284,6 +284,7 @@ static COMMANDS: &[CommandSpec] = &[
     node_cmds::NODE_PLACEMENT_SET,
     node_cmds::NODE_PLACEMENT_WORLD_ZERO,
     node_cmds::NODE_PLACEMENT_SET_MANY,
+    node_cmds::NODE_DECOR_SET,
     node_cmds::NODE_PIVOT_SET,
     node_cmds::NODE_PIVOT_CENTER,
     node_cmds::NODE_ORIGIN_REBASE,
@@ -679,7 +680,11 @@ mod tests {
         // (Y11, ADR 0249).
         let lens = registry.get("camera.lens.set").expect("camera.lens.set is registered");
         assert_eq!(lens.label().text(Lang::En), "Set camera lens");
-        assert_eq!(registry.specs().len(), 70);
+        // A node's own picture placement is its own command: the numbers belong to the board, not
+        // to the record the library holds (Y15).
+        let decor = registry.get("node.decor.set").expect("node.decor.set is registered");
+        assert_eq!(decor.label().text(Lang::En), "Place the material's picture");
+        assert_eq!(registry.specs().len(), 71);
     }
 
     #[test]

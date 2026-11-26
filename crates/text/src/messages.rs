@@ -1683,6 +1683,7 @@ messages! {
     CmdPlaceAtWorldZero = ["Place at world zero", "На начало мира"],
     CmdPlaceSelection = ["Place selection", "Разместить выделение"],
     CmdSetPivot = ["Set pivot", "Задать пивот"],
+    CmdSetDecor = ["Place the material's picture", "Задать раскладку декора"],
     CmdCenterPivot = ["Center pivot", "Центрировать пивот"],
     CmdRebaseOrigin = ["Rebase origin", "Переякорить начало"],
     CmdSetProperty = ["Set property", "Задать свойство"],

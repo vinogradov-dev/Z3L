@@ -128,6 +128,79 @@ impl Default for Turns {
     }
 }
 
+/// Where a drawable puts its picture on itself: a scale, an offset and a quarter turn (Y15).
+///
+/// The document's own mapping, stated in the terms this crate works in. A material's record says how
+/// much board its picture covers and how its grain runs, and every board cut from that record
+/// inherits both; this value overrides them for one drawable — the door's grain along its height
+/// while the shelf's runs along its width, a small part at a finer scale than a large one.
+///
+/// The picture stays one texture whatever the mapping says: these three numbers change the
+/// coordinate a vertex carries, never the texels the device holds. A quiet node carries no mapping
+/// at all and draws exactly the record's numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecorMapping {
+    scale: Length,
+    offset: [Length; 2],
+    turns: Turns,
+}
+
+impl DecorMapping {
+    /// The mapping that spans `scale` of board per picture width, shifts the picture by `offset`
+    /// along the drawable's own `X` and `Y`, and turns it by `turns` beyond the record's own.
+    pub const fn new(scale: Length, offset: [Length; 2], turns: Turns) -> Self {
+        Self { scale, offset, turns }
+    }
+
+    /// How much board one picture width spans.
+    pub const fn scale(self) -> Length {
+        self.scale
+    }
+
+    /// The shift of the picture along the drawable's own `X` and `Y`, in millimetres of board.
+    pub const fn offset(self) -> [Length; 2] {
+        self.offset
+    }
+
+    /// The quarter turns this mapping adds to the record's own.
+    pub const fn turns(self) -> Turns {
+        self.turns
+    }
+}
+
+/// A drawable's picture with the node's own placement of it, as a vertex builder reads them.
+///
+/// The two travel together because one without the other is a coordinate that two frames would
+/// compute differently: the viewport bakes it into a vertex and the tracer writes it onto a face, and
+/// both call [`Faced::uv`].
+#[derive(Clone, Copy, Debug)]
+pub struct Faced<'a> {
+    decor: &'a Decor,
+    mapping: Option<DecorMapping>,
+}
+
+impl<'a> Faced<'a> {
+    /// The picture `decor`, placed by `mapping` or by the record's own numbers.
+    pub const fn new(decor: &'a Decor, mapping: Option<DecorMapping>) -> Self {
+        Self { decor, mapping }
+    }
+
+    /// The picture itself, which is what a device uploads once per id.
+    pub const fn decor(&self) -> &'a Decor {
+        self.decor
+    }
+
+    /// The node's placement, or `None` for the record's own numbers.
+    pub const fn mapping(&self) -> Option<DecorMapping> {
+        self.mapping
+    }
+
+    /// The texture coordinate of `local`, a point in the drawable's own frame in millimetres.
+    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+        self.decor.uv(local, self.mapping)
+    }
+}
+
 /// The texels of one decor image, eight-bit sRGB RGBA, row-major from the top.
 #[derive(Clone, Debug)]
 pub struct DecorImage {
@@ -245,19 +318,31 @@ impl Decor {
     /// Texels are square: `covers` spans the image's width, and its height follows from the aspect, so
     /// a grain drawn in the picture keeps its proportions on the board.
     ///
+    /// With a `mapping`, the node's own scale replaces `covers`, its offset shifts the picture along
+    /// the drawable's `X` and `Y`, and its turns are added to the record's. One projection, one
+    /// division: a node that says nothing is the record's numbers and nothing else (Y15).
+    ///
     /// A coordinate past the picture is not clamped: the renderer's sampler repeats the image, which
     /// is what a board's decor does — a sample is a window onto a repeating print.
-    pub fn uv(&self, local: DVec2) -> [f32; 2] {
+    pub fn uv(&self, local: DVec2, mapping: Option<DecorMapping>) -> [f32; 2] {
+        let (scale, offset, turns) = match mapping {
+            Some(mapping) => {
+                (mapping.scale, mapping.offset, Turns::new(self.turns.get().wrapping_add(mapping.turns.get())))
+            }
+            None => (self.covers, [Length::ZERO; 2], self.turns),
+        };
         let width = f64::from(self.image.width());
         let height = f64::from(self.image.height());
-        let covered = self.covers.millimetres_f64();
+        let covered = scale.millimetres_f64();
         let across = covered;
         let down = covered * height / width;
-        let (x, y) = match self.turns.get() {
-            1 => (local.y, -local.x),
-            2 => (-local.x, -local.y),
-            3 => (-local.y, local.x),
-            _ => (local.x, local.y),
+        let x = local.x - offset[0].millimetres_f64();
+        let y = local.y - offset[1].millimetres_f64();
+        let (x, y) = match turns.get() {
+            1 => (y, -x),
+            2 => (-x, -y),
+            3 => (-y, x),
+            _ => (x, y),
         };
         if across <= 0.0 || down <= 0.0 {
             return [0.0, 0.0];
@@ -396,13 +481,13 @@ mod tests {
     fn a_decor_covers_the_board_size_it_names_with_square_texels() {
         let decor = decor(Turns::ALONG);
         // 600 mm across the image's eight texels is 75 mm per texel; its four rows cover 300 mm.
-        assert_eq!(decor.uv(DVec2::new(0.0, 0.0)), [0.0, 0.0]);
-        assert_eq!(decor.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0]);
-        assert_eq!(decor.uv(DVec2::new(0.0, 150.0)), [0.0, 0.5]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 0.0), None), [0.0, 0.0]);
+        assert_eq!(decor.uv(DVec2::new(300.0, 0.0), None), [0.5, 0.0]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 150.0), None), [0.0, 0.5]);
         // One whole repeat is one whole picture in both directions.
-        assert_eq!(decor.uv(DVec2::new(600.0, 300.0)), [1.0, 1.0]);
+        assert_eq!(decor.uv(DVec2::new(600.0, 300.0), None), [1.0, 1.0]);
         // Texels stay square: 600 mm of board is two pictures tall, not one.
-        assert_eq!(decor.uv(DVec2::new(0.0, 600.0)), [0.0, 2.0]);
+        assert_eq!(decor.uv(DVec2::new(0.0, 600.0), None), [0.0, 2.0]);
     }
 
     #[test]
@@ -411,15 +496,43 @@ mod tests {
         let across = decor(Turns::ACROSS);
         // The grain is the picture's own width; a point along the board's length is a point along the
         // grain until the decor is turned, and across it afterwards.
-        assert_eq!(along.uv(DVec2::new(300.0, 0.0)), [0.5, 0.0]);
+        assert_eq!(along.uv(DVec2::new(300.0, 0.0), None), [0.5, 0.0]);
         // Turned once, the picture's 600 mm width runs along the board's height and its 300 mm height
         // along the board's length, so the same point is one whole picture down the grain.
-        assert_eq!(across.uv(DVec2::new(300.0, 0.0)), [0.0, -1.0]);
-        assert_eq!(across.uv(DVec2::new(0.0, 150.0)), [0.25, 0.0]);
+        assert_eq!(across.uv(DVec2::new(300.0, 0.0), None), [0.0, -1.0]);
+        assert_eq!(across.uv(DVec2::new(0.0, 150.0), None), [0.25, 0.0]);
         // Two quarter turns are the picture upside down, and three are the mirror of one.
-        assert_eq!(decor(Turns::new(2)).uv(DVec2::new(300.0, 150.0)), [-0.5, -0.5]);
-        assert_eq!(decor(Turns::new(3)).uv(DVec2::new(300.0, 150.0)), [-0.25, 1.0]);
+        assert_eq!(decor(Turns::new(2)).uv(DVec2::new(300.0, 150.0), None), [-0.5, -0.5]);
+        assert_eq!(decor(Turns::new(3)).uv(DVec2::new(300.0, 150.0), None), [-0.25, 1.0]);
         assert_eq!(Turns::new(5), Turns::ACROSS, "a count is a count modulo four");
+    }
+
+    #[test]
+    fn a_nodes_own_mapping_moves_the_coordinate_the_record_gave() {
+        let picture = decor(Turns::ALONG);
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        // Half the board per picture: the same 600 mm picture now repeats every 300 mm, so the point
+        // 300 mm along the grain is one whole picture instead of half of one.
+        let finer = DecorMapping::new(millimetres(300), [Length::ZERO; 2], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(300.0, 0.0), Some(finer)), [1.0, 0.0]);
+        // The picture's own aspect still rules the other axis: 300 mm across is 150 mm down.
+        assert_eq!(picture.uv(DVec2::new(0.0, 150.0), Some(finer)), [0.0, 1.0]);
+        // An offset moves the picture along the board: 150 mm to the right starts the picture there.
+        let shifted = DecorMapping::new(millimetres(600), [millimetres(150), millimetres(-75)], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(150.0, -75.0), Some(shifted)), [0.0, 0.0]);
+        assert_eq!(picture.uv(DVec2::new(450.0, 75.0), Some(shifted)), [0.5, 0.5]);
+        // A turn adds to the record's own, so the same number means the same thing on every board.
+        let turned = DecorMapping::new(millimetres(600), [Length::ZERO; 2], Turns::ACROSS);
+        assert_eq!(picture.uv(DVec2::new(300.0, 0.0), Some(turned)), [0.0, -1.0]);
+        let twice = DecorMapping::new(millimetres(600), [Length::ZERO; 2], Turns::new(3));
+        assert_eq!(
+            picture.uv(DVec2::new(300.0, 0.0), Some(twice)),
+            decor(Turns::new(3)).uv(DVec2::new(300.0, 0.0), None),
+            "the record's turn and the node's add, so three of them is not two"
+        );
+        // A mapping that covers nothing is a coordinate at the picture's origin, never a NaN.
+        let collapsed = DecorMapping::new(Length::ZERO, [Length::ZERO; 2], Turns::ALONG);
+        assert_eq!(picture.uv(DVec2::new(300.0, 150.0), Some(collapsed)), [0.0, 0.0]);
     }
 
     #[test]
