@@ -145,9 +145,8 @@ pub struct Panel {
     bevels: Vec<EdgeBevel>,
     /// The end trims, one signed number per nominal edge (ADR 0240).
     ///
-    /// An ordinary board keeps the field out of the file: a scene that never had a front in it is
-    /// written exactly as it was before the trims existed.
-    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
+    /// The field is written on every panel, zeros included: it is one of the four numbers that
+    /// describe a board, and a file that omits it would be a second layout to keep (ADR 0096).
     trims: PanelTrims,
     properties: Properties,
 }
@@ -1002,7 +1001,6 @@ pub(crate) struct PanelWire {
     band_order: Vec<SegmentSource>,
     #[serde(default)]
     bevels: Vec<EdgeBevel>,
-    #[serde(default, skip_serializing_if = "PanelTrims::is_zero")]
     trims: PanelTrims,
     #[serde(default)]
     properties: Properties,

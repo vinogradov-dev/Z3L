@@ -2,7 +2,7 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 36,
+    "schema_version": 37,
     "revision": 13,
     "next_id": 16,
     "root": {
@@ -117,6 +117,12 @@
                 "angle": 45000
               }
             ],
+            "trims": {
+              "bottom": 0,
+              "right": 0,
+              "top": 0,
+              "left": 0
+            },
             "properties": {
               "plug.confirmat": {
                 "kind": "item",
@@ -802,6 +808,12 @@
                   "ring_banding": [],
                   "band_order": [],
                   "bevels": [],
+                  "trims": {
+                    "bottom": 0,
+                    "right": 0,
+                    "top": 0,
+                    "left": 0
+                  },
                   "properties": {}
                 }
               }

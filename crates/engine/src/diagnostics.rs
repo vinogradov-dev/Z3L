@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn a_broken_banding_is_a_diagnostic_not_a_load_error() {
         let broken = r#"{
-            "schema_version": 36,
+            "schema_version": 37,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -324,6 +324,7 @@ mod tests {
                     "id": 2,
                     "name": "Broken",
                     "nominal_size": {"length": 700000, "width": 500000},
+                    "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
                     "last_known_thickness": 18000,
                     "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
                     "machining": [],
@@ -346,7 +347,7 @@ mod tests {
     #[test]
     fn machining_outside_the_core_is_a_diagnostic() {
         let broken = r#"{
-            "schema_version": 36,
+            "schema_version": 37,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -357,6 +358,7 @@ mod tests {
                     "id": 2,
                     "name": "Panel",
                     "nominal_size": {"length": 700000, "width": 500000},
+                    "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
                     "last_known_thickness": 18000,
                     "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
                     "machining": [{
@@ -384,7 +386,7 @@ mod tests {
 
     fn project_with_through_cutout(x: i64, y: i64, width: i64, height: i64) -> Project {
         let value = serde_json::json!({
-            "schema_version": 36,
+            "schema_version": 37,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -395,6 +397,7 @@ mod tests {
                     "id": 2,
                     "name": "Panel",
                     "nominal_size": {"length": 700000, "width": 500000},
+                    "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
                     "last_known_thickness": 18000,
                     "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
                     "machining": [{
@@ -428,7 +431,7 @@ mod tests {
 
     fn project_with_contour_cutout(points: &[[i64; 2]], depth: serde_json::Value) -> Project {
         let value = serde_json::json!({
-            "schema_version": 36,
+            "schema_version": 37,
             "revision": 0,
             "next_id": 20,
             "root": {
@@ -439,6 +442,7 @@ mod tests {
                     "id": 2,
                     "name": "Panel",
                     "nominal_size": {"length": 700000, "width": 500000},
+                    "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
                     "last_known_thickness": 18000,
                     "placement": {"translation": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]},
                     "machining": [{

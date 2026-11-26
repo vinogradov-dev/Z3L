@@ -687,6 +687,7 @@ mod tests {
                 "last_known_thickness": 18000,
                 "outline": {"kind": "rect", "corner_features": corner_features},
                 "corner_banding": corner_banding,
+                "trims": {"bottom": 0, "right": 0, "top": 0, "left": 0},
             })
         };
         let chamfer =
