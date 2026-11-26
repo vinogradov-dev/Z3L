@@ -195,6 +195,17 @@ pub fn encode_rgba8(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, F
     Ok(bytes)
 }
 
+/// Writes `image` to `path` as one PNG at `exposure`.
+///
+/// This is the save a surface performs: a run hands radiance back and the file is written when the
+/// person says where (Y12), so the exposure applied is the one the page shows now rather than the one
+/// the run began with. Encoding and the atomic rename stay here, so the crate owns the one format it
+/// writes and no second encoder appears beside it.
+pub fn save(image: &Image, exposure: f32, path: &Path) -> Result<(), FinalError> {
+    let bytes = encode_png(image, exposure)?;
+    write_atomic(path, &bytes)
+}
+
 /// Writes encoded bytes to `path`, through a temporary file beside it.
 ///
 /// The rename is what makes a cancelled or failed render leave the previous image untouched: a
@@ -349,6 +360,28 @@ mod tests {
         // A buffer that is not four bytes per pixel of the size is a picture that does not exist.
         assert!(matches!(encode_rgba8(2, 2, &pixels[..12]), Err(FinalError::ImageSize { .. })));
         assert!(matches!(encode_rgba8(0, 2, &[]), Err(FinalError::ImageSize { .. })));
+    }
+
+    #[test]
+    fn a_save_writes_the_png_the_exposure_names_and_a_second_save_writes_another() {
+        let directory = scratch_dir("final-save");
+        let picture = image();
+        let first = directory.join("one.png");
+        let second = directory.join("two.png");
+        save(&picture, 1.0, &first).expect("the picture is saved");
+        save(&picture, 4.0, &second).expect("a second save writes another file");
+        assert!(first.is_file() && second.is_file(), "two saves, two files");
+        // The file is the curve the exposure names, not the one the image was made with.
+        assert_eq!(std::fs::read(&first).expect("the first file"), encode_png(&picture, 1.0).expect("encoded"));
+        assert_eq!(std::fs::read(&second).expect("the second file"), encode_png(&picture, 4.0).expect("encoded"));
+        assert_ne!(
+            std::fs::read(&first).expect("the first file"),
+            std::fs::read(&second).expect("the second file"),
+            "a stop of exposure is another picture"
+        );
+        // A second save onto the same name replaces it rather than adding a suffix.
+        save(&picture, 1.0, &second).expect("the same name again");
+        assert_eq!(std::fs::read(&second).expect("the replaced file"), std::fs::read(&first).expect("the first"));
     }
 
     #[test]
