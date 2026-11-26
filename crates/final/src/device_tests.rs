@@ -978,6 +978,101 @@ fn a_pane_darkens_what_is_behind_it_by_the_tint_and_the_path_it_travels_inside()
 }
 
 #[test]
+fn a_frosted_pane_spreads_the_bar_behind_it_and_the_clear_one_does_not() {
+    // Y10's clause, in the picture: the same bright bar under a pane of roughness zero and of 0.6. The
+    // clear one is a sharp bar and the picture the tracer took before this entry, sample for sample;
+    // the frosted one carries the bar's light into the dark air beside it, and the noise that spreads it
+    // is the variance the entry adds, measured against a reference of the same frame.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to frost a pane on");
+        return;
+    };
+    let incidence = 40.0f64.to_radians();
+    let forward = DVec3::new(incidence.sin(), 0.0, -incidence.cos());
+    let right = DVec3::new(incidence.cos(), 0.0, incidence.sin());
+    let up = right.cross(forward);
+    // A wide orthographic view, so the bar stays a bar while the lobe spreads it: the half-height is
+    // 1200 mm, and the spread of a 0.6 pane over a 400 mm slab covers a tenth of the frame.
+    let camera = Camera::default()
+        .looked_from(DVec3::new(-2000.0, 0.0, 2400.0), right, up, forward)
+        .with_projection(scene::Projection::Orthographic { height: 1200.0 });
+    let bar = |frame: &mut SceneFrame| {
+        // A black floor and one white bar across it: the room of a uniform environment returns exactly
+        // its own radiance from a white board (the furnace), so the bar is the room and the floor is
+        // nothing.
+        for (object, from, to, colour) in [
+            (1u64, -6000.0f32, -60.0f32, [0.0f32, 0.0, 0.0, 1.0]),
+            (2, -60.0, 60.0, [1.0, 1.0, 1.0, 1.0]),
+            (3, 60.0, 6000.0, [0.0, 0.0, 0.0, 1.0]),
+        ] {
+            frame.push(Drawable::new(id(object), plate(from, -6000.0, to, 6000.0, 0.0), DMat4::IDENTITY, colour));
+        }
+        frame.lighting.key_color = [0.0; 3];
+        frame.lighting.points.clear();
+        frame.lighting.environment = [1.0, 1.0, 1.0];
+    };
+    let pane = |roughness: f32| -> Vec<Drawable> {
+        slab(
+            100.0,
+            400.0,
+            scene::Surface {
+                roughness,
+                metallic: 0.0,
+                ior: 1.5,
+                transmission: 1.0,
+                absorption: [0.0; 3],
+                coat: scene::Coat::NONE,
+            },
+        )
+    };
+    let size = Request::new(96, 72, 1).expect("a small image");
+    let request = |samples: u32| Request::new(size.width(), size.height(), samples).expect("a sample count");
+
+    let mut measured = [(0.0f64, 0.0f64); 2];
+    for (slot, roughness) in [0.0f32, 0.6].into_iter().enumerate() {
+        let mut frame = SceneFrame::default();
+        bar(&mut frame);
+        for drawable in pane(roughness) {
+            frame.push(drawable);
+        }
+        let reference = linear_of(&trace_linear(&device, &queue, &frame, camera, request(2048)));
+        let sampled = linear_of(&trace_linear(&device, &queue, &frame, camera, request(64)));
+        // The noise a pane of this width adds, as the mean distance from the converged picture: the
+        // mean is the measure, not the root mean square, because a frosted pane finds its caustics by
+        // chance and one bright sample would otherwise speak for the whole image.
+        let noise = sampled
+            .iter()
+            .zip(&reference)
+            .map(|(sampled, reference)| f64::from((sampled[0] - reference[0]).abs()))
+            .sum::<f64>()
+            / sampled.len() as f64;
+        // The bar's own light in the picture: the plain pane reflects the studio at nine percent of it
+        // and the bar itself reads half again, so everything above fifteen percent is the bar and what a
+        // lobe spreads it into.
+        let lit =
+            |picture: &[[f32; 3]]| picture.iter().filter(|pixel| pixel[0] > 0.15).count() as f64 / picture.len() as f64;
+        println!(
+            "roughness {roughness}: noise {noise:.4}, {:.1}% of the picture carries the bar above fifteen percent",
+            lit(&reference) * 100.0
+        );
+        if let Some(entry) = measured.get_mut(slot) {
+            *entry = (noise, lit(&reference));
+        }
+    }
+    let [(clear_noise, clear_lit), (frosted_noise, frosted_lit)] = measured;
+    assert!(clear_lit > 0.0, "the clear pane shows the bar");
+    assert!(
+        frosted_lit > 2.0 * clear_lit,
+        "a frosted pane spreads the bar over twice the picture: {clear_lit:.3} then {frosted_lit:.3}"
+    );
+    assert!(
+        frosted_noise > 1.5 * clear_noise,
+        "the spread is noise the lobe adds: {clear_noise:.4} then {frosted_noise:.4}"
+    );
+    assert!(clear_noise > 0.0, "a clear pane is still a picture the sampler draws");
+}
+
+#[test]
 fn the_radiance_clamp_is_out_of_reach_and_measurably_biased_when_it_is_not() {
     // Y2 carries one clamp on what a single sample may bring, and owes its bias measured rather than
     // felt. The measurement is two renders of the same plate under a lamp of two powers: light is
