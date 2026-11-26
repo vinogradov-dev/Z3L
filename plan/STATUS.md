@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=ff99183 updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=2f3d60a updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -52,7 +52,7 @@ still opens with a catalogue record that refers to a library material instead of
 
 ## Next
 
-Nothing is scheduled: 14 open tasks wait in `## Next`.
+Nothing is scheduled: 12 open tasks wait in `## Next`.
 
 ## Index
 

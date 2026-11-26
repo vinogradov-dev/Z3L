@@ -63,59 +63,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
 ## Bugs
-- `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
-  Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
-   chosen on the tool card): a number typed into one of the row's two end fields cannot be
-   followed by a Tab into the other end and a number there; Enter on an end fixes that end and
-   afterwards the number cannot be overwritten and Tab does not reach the other end; Escape
-   clears the lock, but Tab never gives the cursor back to a field. Reproduced headless over
-   `evenly_harness` (a shelf fill with `FillSpread::Even`, the pointer on the near plate): the
-   near air takes 80 mm and the far plate takes 120 mm after a Tab, so the plain path works;
-   Enter on the far plate then locks it and the row's two airs jump from 80/120 to 600/120
-   although a lock must not move the boards; the plate still owns the keyboard, and the Tab
-   after it leaves the low side active with no field owning the keyboard, so a number typed
-   then lands nowhere (twenty idle frames and the values do not move). Escape clears both locks
-   and re-spreads the row (351/351), and from there neither Tab nor a typed number changes
-   anything: the row keeps three plates on screen that cannot be typed into, and the plate
-   takes no pointer, so the maker has to leave the work area and come back. Expectation: Enter
-   locks the face where it stands and draws the glyph without moving the row; Tab always walks
-   to the other end and that field takes the numbers typed into it, locked or not; Escape gives
-   the part back to the pointer but the next Tab or pointer move hands the keyboard to the end
-   the pointer names, so the gesture never leaves a plate nobody can type into. Suspected
-   cause: the keyboard is `DistanceFields`' own state — `begin` consumes Tab and asks `Scrub`
-   for the focus, `end` writes `focused_id` from `ui.memory().focused()` and re-activates
-   whichever row reported `focused`, so a request made while the locked plate still holds
-   egui's focus is dropped and `focused_id` keeps the other plate's id; and Escape sets
-   `suspended`, which only `reset`/`dismiss` clear, so `begin` stops auto-activating a side and
-   `tab()` has no active side to walk from (crates/ui/src/distance.rs, 656-750). The lock
-   moving the row is `plan_row` fed by `pinned_start`/`pinned_gap` in `update_row`.
-  Done: Tests over `evenly_harness` in `app/src/frame_tests.rs`: a number typed into the near
-   plate, a Tab and a number typed into the far plate leave both airs at what was typed; Enter
-   on an end leaves the row's two airs where they stood, and a Tab after it still hands the
-   keyboard to the other end, where a typed number lands; Escape gives the part back, and a Tab
-   after it (and a second one) returns the keyboard to a plate and a typed number lands; the
-   whole sequence runs without the pointer leaving the work area; cargo xtask ci is green.
-  `files: crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs`
-- `[ ]` **X138** the render place shows the work area's drawing pointer over its own margins
-  Why: Observation (the owner): with the Render place open, the pointer over the place's
-   margins — the rail of numbers, the status row, the air beside the picture — is the work
-   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
-   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
-   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
-   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
-   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
-   document's scene rectangle still names the workspace's area, so the work cursor keeps the
-   place it no longer has.
-  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
-   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
-   the work area is absent) and the system arrow stays everywhere in the place, the picture
-   included. The viewport keeps its own cursor untouched: this is one condition at the call
-   site, not a second pointer rule.
-  Done: A headless frame test: with the place open, the pointer over the rail and over the air
-   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
-   the shell's square again; cargo xtask ci is green.
-  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs`
-
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -268,6 +215,60 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **X138** the render place shows the work area's drawing pointer over its own margins
+  Why: Observation (the owner): with the Render place open, the pointer over the place's
+   margins — the rail of numbers, the status row, the air beside the picture — is the work
+   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
+   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
+   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
+   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
+   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
+   document's scene rectangle still names the workspace's area, so the work cursor keeps the
+   place it no longer has.
+  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
+   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
+   the work area is absent) and the system arrow stays everywhere in the place, the picture
+   included. The viewport keeps its own cursor untouched: this is one condition at the call
+   site, not a second pointer rule.
+  Done: A headless frame test: with the place open, the pointer over the rail and over the air
+   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
+   the shell's square again; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs` — `2f3d60a`
+
+- `[x]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
+  Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
+   chosen on the tool card): a number typed into one of the row's two end fields cannot be
+   followed by a Tab into the other end and a number there; Enter on an end fixes that end and
+   afterwards the number cannot be overwritten and Tab does not reach the other end; Escape
+   clears the lock, but Tab never gives the cursor back to a field. Reproduced headless over
+   `evenly_harness` (a shelf fill with `FillSpread::Even`, the pointer on the near plate): the
+   near air takes 80 mm and the far plate takes 120 mm after a Tab, so the plain path works;
+   Enter on the far plate then locks it and the row's two airs jump from 80/120 to 600/120
+   although a lock must not move the boards; the plate still owns the keyboard, and the Tab
+   after it leaves the low side active with no field owning the keyboard, so a number typed
+   then lands nowhere (twenty idle frames and the values do not move). Escape clears both locks
+   and re-spreads the row (351/351), and from there neither Tab nor a typed number changes
+   anything: the row keeps three plates on screen that cannot be typed into, and the plate
+   takes no pointer, so the maker has to leave the work area and come back. Expectation: Enter
+   locks the face where it stands and draws the glyph without moving the row; Tab always walks
+   to the other end and that field takes the numbers typed into it, locked or not; Escape gives
+   the part back to the pointer but the next Tab or pointer move hands the keyboard to the end
+   the pointer names, so the gesture never leaves a plate nobody can type into. Suspected
+   cause: the keyboard is `DistanceFields`' own state — `begin` consumes Tab and asks `Scrub`
+   for the focus, `end` writes `focused_id` from `ui.memory().focused()` and re-activates
+   whichever row reported `focused`, so a request made while the locked plate still holds
+   egui's focus is dropped and `focused_id` keeps the other plate's id; and Escape sets
+   `suspended`, which only `reset`/`dismiss` clear, so `begin` stops auto-activating a side and
+   `tab()` has no active side to walk from (crates/ui/src/distance.rs, 656-750). The lock
+   moving the row is `plan_row` fed by `pinned_start`/`pinned_gap` in `update_row`.
+  Done: Tests over `evenly_harness` in `app/src/frame_tests.rs`: a number typed into the near
+   plate, a Tab and a number typed into the far plate leave both airs at what was typed; Enter
+   on an end leaves the row's two airs where they stood, and a Tab after it still hands the
+   keyboard to the other end, where a typed number lands; Escape gives the part back, and a Tab
+   after it (and a second one) returns the keyboard to a plate and a typed number lands; the
+   whole sequence runs without the pointer leaving the work area; cargo xtask ci is green.
+  `files: crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs` — `18b0dae`
 
 - `[x]` **U129** U129 a person gives a node one of the workshop's materials, and the card lists the library
   Why: Y7 made every surface of a panel or an object wear one record of the render's library,

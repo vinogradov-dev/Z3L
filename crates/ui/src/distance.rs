@@ -21,9 +21,13 @@
 //!
 //! - typing leaves the pointer behind for that direction and pins the face where the number says;
 //! - Enter locks the pinned face and draws the lock glyph, so the opposite distance is measured from
-//!   the locked face rather than from the original reference;
-//! - Tab moves to the opposite direction, skipping one with no neighbour;
-//! - Escape returns the direction to the pointer and leaves no trace;
+//!   the locked face rather than from the original reference — except on a row, whose two ends are
+//!   two airs and each keeps its own wall as its reference (X137);
+//! - Tab moves to the opposite direction, skipping one with no neighbour, and always hands the end
+//!   it walked to the keyboard, lock or no lock;
+//! - Escape returns the direction to the pointer and leaves no trace; the end the pointer names
+//!   takes the keyboard back on the next Tab or pointer move, so a plate is never left that nobody
+//!   can type into;
 //! - the field's menu offers «По центру» / *Centred*, which places the part in the middle of the
 //!   void and yields a computed coordinate.
 //!
@@ -33,7 +37,7 @@
 
 use core::ops::RangeInclusive;
 
-use egui::{Id, Key, Modifiers, Pos2, Rect, Ui};
+use egui::{FocusDirection, Id, Key, Modifiers, Pos2, Rect, Ui};
 
 use text::Message;
 
@@ -249,7 +253,19 @@ impl Distances {
     }
 
     /// The face a field measures from: the part's own face, or the locked opposite face.
+    ///
+    /// A row is the exception: its two ends are two airs, each measured from its own wall, so a
+    /// lock on one end never turns the other field into the span across the row (X137). A rigid
+    /// part is the other way round — a locked face is the reference the opposite field measures
+    /// from, which is what makes the second number of a carried piece the span it can still be
+    /// put in.
     pub fn reference(&self, side: Side) -> f64 {
+        if self.ends {
+            return match side {
+                Side::Low => self.low,
+                Side::High => self.high,
+            };
+        }
         match side {
             Side::Low => {
                 if self.locks[Side::High.index()] {
@@ -524,7 +540,7 @@ pub struct DistanceFields {
     focus: Option<Side>,
     error: Option<Message>,
     /// Escape handed the part back to the pointer: no field takes the keyboard again until the
-    /// maker clicks one or a new gesture starts.
+    /// maker clicks one, presses Tab, moves the pointer, or a new gesture starts.
     suspended: bool,
     /// The egui focus id of the field that held the keyboard, so a vanishing overlay can give it
     /// back instead of leaving every shortcut behind a field nobody can see.
@@ -665,15 +681,37 @@ impl DistanceFields {
         state: &mut Distances,
         placements: &[FieldPlacement],
     ) -> (Option<Side>, bool, bool) {
-        // Tab belongs to the gesture, not to egui's focus order: consume it before a text edit
-        // sees it, so the field's own Tab cannot move the keyboard somewhere else.
+        // Tab belongs to the gesture, not to egui's focus order. Consuming the key stops a text
+        // edit from seeing it, but `egui` latched its own focus walk when the frame began, and that
+        // walk runs as the frame ends: it moved the keyboard off the end this gesture had just
+        // asked for, which is how a lock left the row with no field at all (X137). The direction
+        // is cleared here, so the walk finds nothing to do.
         let tab = ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Tab));
-        if tab
-            && state.active().is_some()
-            && let Some(next) = state.tab()
-        {
-            self.focus = Some(next);
-            self.error = None;
+        if tab {
+            ui.memory_mut(|memory| memory.move_focus(FocusDirection::None));
+            // Tab is also the maker asking for the fields again: it lifts the suspension Escape
+            // left, and while no field holds the keyboard it hands it to the end the pointer
+            // names, so the next Tab walks to the other one.
+            self.suspended = false;
+            match state.active() {
+                Some(_) => {
+                    if let Some(next) = state.tab() {
+                        self.focus = Some(next);
+                        self.error = None;
+                    }
+                }
+                None => {
+                    if let Some(side) = nearest(placements, ui) {
+                        state.activate(Some(side));
+                        self.focus = Some(side);
+                    }
+                }
+            }
+        }
+        // A hand that moves again is the maker back at the gesture, so a pointer move gives the
+        // keyboard back as well; a still pointer leaves Escape's answer standing.
+        if self.suspended && ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
+            self.suspended = false;
         }
         // A fresh gesture gives the field nearest the pointer the keyboard, so a number can be
         // typed without aiming at a row first. Escape suspends that until the maker asks again.
@@ -849,6 +887,20 @@ mod tests {
         assert_eq!(state.value(Side::Low), Some(100.0));
         assert_eq!(state.value(Side::High), Some(482.0));
         assert_eq!(state.range(), 0.0..=600.0);
+    }
+
+    #[test]
+    fn a_rows_locked_end_leaves_the_other_air_its_own_number() {
+        // X137: Enter on the far plate of a row left the near field showing the span across the
+        // whole row, because a rigid part measures its second number from the locked face. A
+        // row's ends are two airs and the lock belongs to one of them.
+        let mut row = Distances::row_ends(Some(0.0), Some(600.0), 80.0, 480.0).expect("a row of boards");
+        assert_eq!(row.value(Side::Low), Some(80.0));
+        row.lock(Side::High).expect("the far end has a wall");
+        assert!(row.locked(Side::High));
+        assert_eq!(row.value(Side::Low), Some(80.0), "the near air is still its own number");
+        assert_eq!(row.reference(Side::Low), 80.0, "and measures from its own face, not the locked one");
+        assert_eq!(row.value(Side::High), Some(120.0), "while the far air reads the same");
     }
 
     #[test]
