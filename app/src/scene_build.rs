@@ -780,12 +780,13 @@ impl<'a> Evaluation<'a> {
         let surface = paint.map_or(Surface::MATTE, |paint| paint.surface);
         let band_color = paint.map_or(EDGE_BAND_COLOR, |paint| paint.color);
         let decor = self.materials.decor_of(reference);
+        let mapping = panel.decor();
         let mut bounds = Bounds::empty();
         if let Some(body) = evaluated.body() {
             include_body(&mut bounds, evaluated.body_bounds(), transform);
             let drawable = Drawable::with_box(panel.id(), Arc::clone(body), transform, color, evaluated.body_bounds())
                 .with_surface(surface);
-            let drawable = faced(drawable, decor.as_ref());
+            let drawable = faced(drawable, decor.as_ref(), mapping);
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
         }
         for (index, mesh) in evaluated.bands().iter().enumerate() {
@@ -793,7 +794,7 @@ impl<'a> Evaluation<'a> {
             include_body(&mut bounds, band_bounds, transform);
             let drawable = Drawable::with_box(panel.id(), Arc::clone(mesh), transform, band_color, band_bounds)
                 .with_surface(surface);
-            let drawable = faced(drawable, decor.as_ref());
+            let drawable = faced(drawable, decor.as_ref(), mapping);
             self.frame.push(with_cached_edges(
                 drawable,
                 evaluated.band_edges().get(index),
@@ -842,7 +843,7 @@ impl<'a> Evaluation<'a> {
             let decor = self.materials.decor_of(object.render_material());
             let drawable = Drawable::with_box(object.id(), Arc::clone(mesh), transform, color, evaluated.body_bounds())
                 .with_surface(surface);
-            let drawable = faced(drawable, decor.as_ref());
+            let drawable = faced(drawable, decor.as_ref(), object.decor());
             self.frame.push(with_cached_edges(drawable, evaluated.body_edges(), evaluated.body_all_edges()));
             return Ok(bounds);
         }
@@ -850,12 +851,29 @@ impl<'a> Evaluation<'a> {
     }
 }
 
-/// Attaches a material's decor to a drawable, or leaves the flat colour it was given.
-fn faced(drawable: Drawable, decor: Option<&Decor>) -> Drawable {
-    match decor {
-        Some(decor) => drawable.with_decor(decor.clone()),
+/// Attaches a material's decor and the node's own placement of it to a drawable.
+///
+/// A node with no material, or with a record that names no picture, keeps the flat colour it was
+/// given; a node that carries no mapping draws the record's own coverage and turn (Y15).
+fn faced(drawable: Drawable, decor: Option<&Decor>, mapping: Option<model::DecorMapping>) -> Drawable {
+    let Some(decor) = decor else {
+        return drawable;
+    };
+    let drawable = drawable.with_decor(decor.clone());
+    match mapping {
+        Some(mapping) => drawable.with_decor_mapping(frame_mapping(mapping)),
         None => drawable,
     }
+}
+
+/// The document's mapping in the frame's own terms.
+///
+/// `scene` never reads a `model` type, so the one place the two meet converts the three numbers: the
+/// document's quarter count and the frame's are both a count of quarter turns, and both are lengths
+/// in exact micrometres.
+fn frame_mapping(mapping: model::DecorMapping) -> scene::DecorMapping {
+    let offset = mapping.offset();
+    scene::DecorMapping::new(mapping.scale(), offset, scene::Turns::new(mapping.turns().get()))
 }
 
 /// Attaches the cached form edges and the full triangulation edges to a drawable.
@@ -2341,6 +2359,15 @@ mod tests {
 
     /// A session of one shelf wearing `slot`, with `library` in the session's hand.
     fn shelf_session(slot: Option<MaterialRef>, library: Library) -> Session {
+        shelf_session_placed(slot, library, None)
+    }
+
+    /// A session of one shelf wearing `slot` and, when it has one, its own decor mapping.
+    fn shelf_session_placed(
+        slot: Option<MaterialRef>,
+        library: Library,
+        mapping: Option<model::DecorMapping>,
+    ) -> Session {
         let root = Container::new(id(1).expect("root"), "Root", Placement::IDENTITY, Vec::new());
         let mut project = Project::new(root).expect("a project");
         let root = project.root().id();
@@ -2350,6 +2377,7 @@ mod tests {
             .add_panel(root, "Shelf", size, None, millimetres(18).expect("thickness"), Placement::IDENTITY)
             .expect("a shelf");
         project.set_node_material(shelf, slot).expect("the material slot");
+        project.set_node_decor(shelf, mapping).expect("the picture's placement");
         Session::new(project).with_materials(library)
     }
 
@@ -2399,10 +2427,57 @@ mod tests {
         let turned = Turns::ACROSS;
         assert_ne!(along.get(), turned.get(), "the two runs are different values");
         assert!(decor.id().get() > 0, "the frame allocates the id the device keeps the texture under");
-        let across = decor.uv(geom::DVec2::new(0.0, 300.0));
-        let down = decor.uv(geom::DVec2::new(300.0, 0.0));
+        let across = decor.uv(geom::DVec2::new(0.0, 300.0), None);
+        let down = decor.uv(geom::DVec2::new(300.0, 0.0), None);
         assert_ne!(across, down, "a turned grain reads the two board axes differently");
         assert!(across[0].abs() > down[0].abs(), "the turned picture's width runs along the board's Y");
+    }
+
+    #[test]
+    fn a_nodes_own_mapping_places_the_picture_its_record_gave() {
+        // The record's picture covers 600 mm and runs along the board; the shelf says 300 mm, shifts
+        // it and turns it, and every surface of that shelf follows — the frame composes the two in one
+        // place, so the viewport and the tracer still read one `scene::Decor` (Y15).
+        let decor =
+            materials::Decor::new("textures/stripes.png", millimetres(600).expect("covers"), materials::Turns::ALONG)
+                .expect("a decor");
+        let (store, library) = store_of("scene-build-decor-placement", [board(1, [0.6, 0.45, 0.25], Some(decor))]);
+        write_png(&store.textures().join("stripes.png"), 2, 1, &[[255, 0, 0, 255], [0, 0, 255, 255]]);
+        let mapping = model::DecorMapping::new(
+            millimetres(300).expect("a scale"),
+            [millimetres(40).expect("an offset"), Length::ZERO],
+            model::Turns::ACROSS,
+        )
+        .expect("a mapping");
+
+        let quiet = paint(&shelf_session(Some(material(1)), library.clone()), &store);
+        let placed = paint(&shelf_session_placed(Some(material(1)), library, Some(mapping)), &store);
+        let point = geom::DVec2::new(200.0, 90.0);
+        assert_eq!(
+            quiet.frame.drawables[0].faced().and_then(|faced| faced.mapping()),
+            None,
+            "a node that says nothing draws the record's own numbers"
+        );
+        let framed = placed.frame.drawables[0].faced().expect("the shelf is faced");
+        assert_eq!(
+            framed.mapping(),
+            Some(scene::DecorMapping::new(
+                millimetres(300).expect("a scale"),
+                [millimetres(40).expect("an offset"), Length::ZERO],
+                Turns::ACROSS,
+            )),
+            "the node's three numbers reach the frame"
+        );
+        assert_ne!(
+            placed.frame.drawables[0].uv(point),
+            quiet.frame.drawables[0].uv(point),
+            "and they move the coordinate the viewport and the tracer read"
+        );
+        assert_eq!(
+            framed.decor().id(),
+            quiet.frame.drawables[0].decor.as_ref().expect("the record's picture").id(),
+            "one picture however many boards place it differently"
+        );
     }
 
     #[test]

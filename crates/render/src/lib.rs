@@ -41,7 +41,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use geom::{Aabb, DMat4, DVec3, MeshData};
 use scene::{
-    Camera, ContactShadows, Decor, DecorId, FaceShading, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline,
+    Camera, ContactShadows, DecorId, FaceShading, Faced, Frustum, Grid, Lighting, MAX_POINT_LIGHTS, Polyline,
     ProductEnvelope, SceneFrame, ShadingStyle,
 };
 use thiserror::Error;
@@ -722,7 +722,7 @@ impl ViewportRenderer {
                 None => Arc::clone(&white),
             };
             let faces = self.faces.slot(
-                FaceKey::new(&drawable.mesh, drawable.world_transform, drawable.color, drawable.decor.as_ref()),
+                FaceKey::new(&drawable.mesh, drawable.world_transform, drawable.color, drawable.faced()),
                 || {
                     build_mesh(
                         device,
@@ -730,7 +730,7 @@ impl ViewportRenderer {
                         &drawable.mesh,
                         drawable.world_transform,
                         drawable.color,
-                        drawable.decor.as_ref(),
+                        drawable.faced(),
                     )
                 },
             )?;
@@ -1180,9 +1180,9 @@ fn build_mesh(
     mesh: &MeshData,
     transform: DMat4,
     color: [f32; 4],
-    decor: Option<&Decor>,
+    faced: Option<Faced<'_>>,
 ) -> Result<GpuMesh, RenderError> {
-    let (vertices, indices) = world_vertices(index, mesh, transform, color, decor)?;
+    let (vertices, indices) = world_vertices(index, mesh, transform, color, faced)?;
     let index_count = u32::try_from(indices.len()).map_err(|_| RenderError::MeshTooLarge { index })?;
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Z3L drawable vertices"),
@@ -1242,7 +1242,7 @@ mod tests {
     use crate::pipelines::{FACE_DEPTH_BIAS, MAX_STENCIL_OWNERS, STENCIL_MASK, face_depth_state, floor_depth_state};
     use geom::{DMat4, DVec2, MeshData};
     use model::Id;
-    use scene::{Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
+    use scene::{Decor, Drawable, Grid, Polyline, ProductEnvelope, ProductEnvelopeState, SceneColors};
 
     fn triangle() -> MeshData {
         MeshData {
@@ -2242,6 +2242,20 @@ mod tests {
         renderer.upload(&device, &queue, &frame).expect("the turned decor uploads");
         assert_eq!(renderer.decors.len(), 1, "a turn changes the coordinate, not the picture");
         assert_eq!(renderer.faces.len(), 2, "the turned board is built again, its two copies are not");
+
+        // A board placed by its own mapping is a third coordinate for the same picture: a node's
+        // scale, offset and turn are part of what the vertices carry, so the buffers are built again
+        // while the texture stays the one id (Y15).
+        frame.drawables[1] = Drawable::new(id(2), Arc::clone(&mesh), DMat4::IDENTITY, [1.0; 4])
+            .with_decor(striped(600, scene::Turns::ALONG))
+            .with_decor_mapping(scene::DecorMapping::new(
+                units::Length::from_millimetres(300).expect("a length"),
+                [units::Length::ZERO; 2],
+                scene::Turns::ALONG,
+            ));
+        renderer.upload(&device, &queue, &frame).expect("the mapped board uploads");
+        assert_eq!(renderer.decors.len(), 1, "a node's own scale changes the coordinate, not the picture");
+        assert_eq!(renderer.faces.len(), 3, "the mapped board is built again, its quiet copies are not");
     }
 
     #[test]

@@ -127,9 +127,10 @@ fn flatten(frame: &SceneFrame, max: usize) -> Result<Soup, FinalError> {
                 let local = DVec3::new(f64::from(position[0]), f64::from(position[1]), f64::from(position[2]));
                 *point = transform.transform_point3(local);
                 // The coordinate is the panel's own: the same two numbers the viewport bakes into
-                // the vertex, projected by the same function (`scene::Decor::uv`).
-                if let (Some(decor), Some(slot)) = (drawable.decor.as_ref(), uv.get_mut(offset)) {
-                    *slot = decor.uv(DVec2::new(local.x, local.y));
+                // the vertex, projected by the same function (`scene::Decor::uv`) and from the same
+                // pair of picture and placement — the record's numbers, or the node's own (Y15).
+                if let Some(slot) = uv.get_mut(offset) {
+                    *slot = drawable.uv(DVec2::new(local.x, local.y));
                 }
             }
             triangles.push(Face {
