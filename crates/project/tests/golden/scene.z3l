@@ -2,7 +2,7 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 34,
+    "schema_version": 35,
     "revision": 12,
     "next_id": 16,
     "root": {
@@ -655,6 +655,10 @@
             "projection": {
               "kind": "perspective",
               "fov_y": 50000
+            },
+            "lens": {
+              "aperture": 45000,
+              "focus": 2000000
             }
           }
         },

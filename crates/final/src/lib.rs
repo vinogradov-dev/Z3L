@@ -88,12 +88,6 @@ pub const MIN_SAMPLES: u32 = 1;
 /// enough for a print and short enough that its progress and its cancel still mean something.
 pub const MAX_SAMPLES: u32 = 4096;
 
-/// The widest lens a render accepts, in millimetres of radius.
-///
-/// It is the camera's own cap, re-exported so a surface that offers the field reads the number the
-/// tracer will refuse past instead of keeping a second copy of it (Y5).
-pub const MAX_APERTURE_MM: f64 = scene::camera::MAX_APERTURE_MM;
-
 /// What a final render was asked for: an image size and a sample count.
 ///
 /// Every field is inside the range the crate can allocate, because the only constructor checks them;

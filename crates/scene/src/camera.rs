@@ -209,7 +209,8 @@ impl Default for Camera {
             far: MAX_DISTANCE_MM,
             fixed: None,
             // The default camera is a pinhole: a viewport has no film, and a sharp picture is what a
-            // catalogue image usually wants. A lens is set by whoever renders, not by the view (Y5).
+            // catalogue image usually wants. A lens is the camera's own and the document's — this is
+            // the frame's copy of it (Y11, ADR 0249).
             aperture: 0.0,
             focus: DEFAULT_FOCUS_MM,
         }
@@ -286,8 +287,9 @@ impl Camera {
     /// Gives the camera a lens: a radius in millimetres and the distance it focuses at, both along
     /// the view's forward axis.
     ///
-    /// A radius of zero is a pinhole, which is what every camera was before this existed, and it is
-    /// the state the viewport and the document keep: a lens is set by the render that wants one (Y5).
+    /// A radius of zero is a pinhole, which is what every camera was before this existed. The document
+    /// keeps the lens on its camera node ([`model::CameraLens`]) and the frame carries it here, so the
+    /// tracer reads the picture the scene was authored with (Y11, ADR 0249).
     /// A radius or a focus outside the accepted range is [`CameraError::InvalidLens`].
     pub fn with_lens(mut self, aperture: f64, focus: f64) -> Result<Self, CameraError> {
         if !aperture.is_finite() || !(0.0..=MAX_APERTURE_MM).contains(&aperture) {

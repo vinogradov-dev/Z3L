@@ -1,5 +1,6 @@
 //! Commands that add and edit the camera and light objects the user authors.
 
+use crate::camera::valid_lens as lens_is_valid;
 use crate::light::{valid_light_color, valid_light_intensity, valid_light_size};
 use crate::tree::{find_container_mut, find_node_mut};
 use crate::*;
@@ -64,6 +65,23 @@ impl Project {
             return Err(ProjectError::CameraNotFound { id });
         };
         camera.set_projection(projection)?;
+        self.revision = next_revision;
+        Ok(next_revision)
+    }
+
+    /// Replaces a camera's lens and bumps the revision once.
+    ///
+    /// The lens is validated by [`CameraLens::new`] and again here, before anything changes; an id that
+    /// is not a camera is [`ProjectError::CameraNotFound`].
+    pub fn set_camera_lens(&mut self, id: Id, lens: CameraLens) -> Result<Revision, ProjectError> {
+        if !lens_is_valid(lens) {
+            return Err(CameraError::InvalidLens.into());
+        }
+        let next_revision = self.next_revision()?;
+        let Some(camera) = find_node_mut(&mut self.root, id).and_then(Node::as_camera_mut) else {
+            return Err(ProjectError::CameraNotFound { id });
+        };
+        camera.set_lens(lens)?;
         self.revision = next_revision;
         Ok(next_revision)
     }

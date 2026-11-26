@@ -1,6 +1,8 @@
 # 0248. A lens is the render's setting, and a sample is a point of the aperture
 
-- Status: Accepted
+- Status: Superseded by [0249](0249-a-cameras-lens-is-document-data.md) in the home of the two
+  numbers; the thin lens, the disc sampler and the circle of confusion stand. The lens is the
+  camera's and is saved with it.
 - Date: 2026-11-26
 
 ## Context

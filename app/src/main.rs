@@ -1554,7 +1554,9 @@ impl App {
     fn start_render(&mut self, ctx: &egui::Context) {
         let document = self.tabs.active();
         let frame = document.drawn_frame().clone();
-        let camera = document.camera();
+        // The image is the document's camera when it has one — with that camera's lens — and the view's
+        // own camera otherwise, which is exactly what the viewport draws through (Y11).
+        let camera = crate::scene_build::scene_camera(document.session.project(), document.camera());
         let revision = document.session.project().revision().get();
         let state = self.render_state.clone();
         if let Err(reason) = self.render_place.start(ctx, state.as_ref(), frame, camera, revision) {

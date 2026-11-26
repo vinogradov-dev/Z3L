@@ -87,6 +87,63 @@ impl<'de> Deserialize<'de> for CameraProjection {
     }
 }
 
+/// The lens an authored camera carries, or the pinhole it is born with.
+///
+/// A camera in a photograph is its lens: the aperture decides how much of the picture is sharp, and
+/// the focus distance decides where. Both are the document's own lengths, so a saved scene renders
+/// the picture its author framed, from the window, the command line and the assistant alike
+/// (ADR 0249). A radius of zero is a pinhole — the camera every scene had before there was a lens —
+/// and then the focus is a number nothing reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CameraLens {
+    /// The radius of the aperture in the document's units; zero is a pinhole.
+    aperture: Length,
+    /// The distance from the eye to the plane the lens focuses on, in the document's units.
+    focus: Length,
+}
+
+impl CameraLens {
+    /// A pinhole: no aperture and the default focus.
+    pub const PINHOLE: Self = Self { aperture: Length::ZERO, focus: CameraNode::DEFAULT_FOCUS };
+
+    /// Creates a lens after checking the aperture against its range and the focus against its own.
+    pub fn new(aperture: Length, focus: Length) -> Result<Self, CameraError> {
+        if !valid_aperture(aperture) || !valid_focus(focus) {
+            return Err(CameraError::InvalidLens);
+        }
+        Ok(Self { aperture, focus })
+    }
+
+    /// The aperture radius in the document's units; zero is a pinhole.
+    pub const fn aperture(self) -> Length {
+        self.aperture
+    }
+
+    /// The distance the lens focuses at, in the document's units.
+    pub const fn focus(self) -> Length {
+        self.focus
+    }
+
+    /// Whether the lens is a pinhole, which renders everything sharp.
+    pub const fn is_pinhole(self) -> bool {
+        self.aperture.micrometres() <= 0
+    }
+}
+
+/// Whether a lens is inside both of its ranges, which the project's command reads too.
+pub(crate) fn valid_lens(lens: CameraLens) -> bool {
+    valid_aperture(lens.aperture) && valid_focus(lens.focus)
+}
+
+fn valid_aperture(aperture: Length) -> bool {
+    (Length::ZERO..=CameraNode::MAX_APERTURE).contains(&aperture)
+}
+
+fn valid_focus(focus: Length) -> bool {
+    (CameraNode::MIN_FOCUS..=CameraNode::MAX_FOCUS).contains(&focus)
+}
+
 /// A camera the user authored.
 ///
 /// The built-in viewport camera is a default, not a node. An authored camera is a scene object:
@@ -104,6 +161,7 @@ pub struct CameraNode {
     #[serde(default)]
     properties: Properties,
     projection: CameraProjection,
+    lens: CameraLens,
 }
 
 impl CameraNode {
@@ -113,6 +171,14 @@ impl CameraNode {
     pub const MAX_FOV: Degrees = Degrees::from_millidegrees(179_000);
     /// Largest accepted orthographic height: one kilometre.
     pub const MAX_ORTHOGRAPHIC_HEIGHT: Length = Length::from_micrometres(1_000_000_000);
+    /// Largest accepted aperture radius: half a metre, which is the renderer's own cap.
+    pub const MAX_APERTURE: Length = Length::from_micrometres(500_000);
+    /// Smallest accepted focus distance: a millimetre in front of the eye.
+    pub const MIN_FOCUS: Length = Length::from_micrometres(1_000);
+    /// Largest accepted focus distance: a kilometre, which is infinity for a furniture scene.
+    pub const MAX_FOCUS: Length = Length::from_micrometres(1_000_000_000);
+    /// The focus a camera is born with: a metre and a fifth, the distance the default view orbits at.
+    pub const DEFAULT_FOCUS: Length = Length::from_micrometres(1_200_000);
 
     /// Creates a camera after validating its projection.
     pub fn new(
@@ -131,6 +197,7 @@ impl CameraNode {
             pivot_local: PivotLocal::ZERO,
             properties: Properties::new(),
             projection,
+            lens: CameraLens::PINHOLE,
         })
     }
 
@@ -165,6 +232,26 @@ impl CameraNode {
             return Err(CameraError::InvalidProjection);
         }
         self.projection = projection;
+        Ok(())
+    }
+
+    /// The lens the camera carries: its aperture radius and the distance it focuses at.
+    pub const fn lens(&self) -> CameraLens {
+        self.lens
+    }
+
+    /// The same camera with `lens`, or the refusal it would answer.
+    pub fn with_lens(mut self, lens: CameraLens) -> Result<Self, CameraError> {
+        self.set_lens(lens)?;
+        Ok(self)
+    }
+
+    /// Replaces the lens after validating it.
+    pub fn set_lens(&mut self, lens: CameraLens) -> Result<(), CameraError> {
+        if !valid_lens(lens) {
+            return Err(CameraError::InvalidLens);
+        }
+        self.lens = lens;
         Ok(())
     }
 
@@ -210,6 +297,9 @@ pub enum CameraError {
     /// The field of view or the orthographic height is outside its range.
     #[error("camera projection is outside its accepted range")]
     InvalidProjection,
+    /// The aperture radius or the focus distance is outside its range.
+    #[error("a camera's lens takes an aperture of 0 to 500 mm of radius and a focus of 1 mm to 1 km")]
+    InvalidLens,
 }
 
 /// Serialized form of [`CameraNode`]; validation happens in its `TryFrom` implementation.
@@ -224,6 +314,7 @@ struct CameraNodeWire {
     #[serde(default)]
     properties: Properties,
     projection: CameraProjection,
+    lens: CameraLens,
 }
 
 impl TryFrom<CameraNodeWire> for CameraNode {
@@ -233,6 +324,9 @@ impl TryFrom<CameraNodeWire> for CameraNode {
         if !wire.projection.is_valid() {
             return Err(CameraError::InvalidProjection);
         }
+        if !valid_lens(wire.lens) {
+            return Err(CameraError::InvalidLens);
+        }
         Ok(Self {
             id: wire.id,
             name: wire.name,
@@ -240,6 +334,7 @@ impl TryFrom<CameraNodeWire> for CameraNode {
             pivot_local: wire.pivot_local,
             properties: wire.properties,
             projection: wire.projection,
+            lens: wire.lens,
         })
     }
 }
@@ -285,6 +380,57 @@ mod tests {
         assert!(!text.contains("active_camera"), "an unset active camera is not written");
         let decoded: Project = serde_json::from_str(&text).expect("deserialize");
         assert_eq!(decoded, project);
+    }
+
+    #[test]
+    fn a_camera_is_born_a_pinhole_and_keeps_a_lens_inside_the_range() {
+        // A camera without a lens is the camera this tree always had, and the lens is the document's
+        // own pair of lengths, so a saved scene renders the picture its author framed (ADR 0249).
+        let mut project = sample_project();
+        let root = project.root().id();
+        let camera =
+            project.add_camera(root, "Camera", Placement::IDENTITY, CameraProjection::DEFAULT).expect("add camera");
+        let node = project.camera(camera).expect("the camera");
+        assert_eq!(node.lens(), CameraLens::PINHOLE);
+        assert!(node.lens().is_pinhole());
+        assert_eq!(node.lens().aperture(), Length::ZERO);
+        assert_eq!(node.lens().focus(), CameraNode::DEFAULT_FOCUS, "a pinhole still carries a focus");
+
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("a length");
+        let lens = CameraLens::new(millimetres(45), millimetres(2_000)).expect("a lens");
+        let before = project.revision();
+        project.set_camera_lens(camera, lens).expect("a lens on a camera");
+        assert_eq!(project.revision(), before.checked_next().expect("one revision"), "a lens is one edit");
+        assert_eq!(project.camera(camera).expect("the camera").lens(), lens);
+        // The lens survives the wire and an unchanged camera round-trips whole.
+        let text = serde_json::to_string(&project).expect("serialize");
+        assert!(text.contains("\"lens\":{"), "the lens is written: {text}");
+        let decoded: Project = serde_json::from_str(&text).expect("deserialize");
+        assert_eq!(decoded.camera(camera).expect("the camera").lens(), lens);
+
+        // Both ends are accepted and just outside them is a sentence, on the value and on the file.
+        assert!(CameraLens::new(CameraNode::MAX_APERTURE, millimetres(1)).is_ok());
+        assert!(CameraLens::new(CameraNode::MAX_APERTURE, millimetres(1_000_000)).is_ok());
+        for (aperture, focus) in [
+            (millimetres(-1), millimetres(2_000)),
+            (millimetres(501), millimetres(2_000)),
+            (millimetres(45), Length::ZERO),
+            (millimetres(45), millimetres(1_000_001)),
+        ] {
+            assert_eq!(CameraLens::new(aperture, focus), Err(CameraError::InvalidLens), "{aperture:?} at {focus:?}");
+        }
+        // The node refuses it too, so a document built in memory cannot hold what the wire refuses.
+        let mut node =
+            CameraNode::new(Id::new(9).expect("id"), "Camera", Placement::IDENTITY, CameraProjection::DEFAULT)
+                .expect("a camera");
+        let too_wide = CameraLens { aperture: millimetres(900), focus: millimetres(2_000) };
+        assert_eq!(node.set_lens(too_wide), Err(CameraError::InvalidLens));
+        assert_eq!(node.lens(), CameraLens::PINHOLE, "a refusal writes nothing");
+        // A broken lens on disk is a readable error and leaves the document's own lens alone.
+        let mut broken: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+        broken["root"]["children"][0]["camera"]["lens"]["aperture"] = serde_json::json!(-5);
+        assert!(serde_json::from_value::<Project>(broken).is_err(), "a negative aperture is refused");
+        assert_eq!(project.camera(camera).expect("the camera").lens(), lens);
     }
 
     #[test]

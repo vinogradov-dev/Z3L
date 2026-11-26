@@ -899,6 +899,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Context(ActsOn::Camera),
         icon: None,
     },
+    // A camera's lens is an inspector field like its projection, and its numbers are the camera's own
+    // (Y11, ADR 0249).
+    Row {
+        id: "camera.lens.set",
+        label: Message::CmdSetCameraLens,
+        places: &[Place::Card],
+        applies: Applies::Context(ActsOn::Camera),
+        icon: None,
+    },
     Row {
         id: "light.params.set",
         label: Message::CmdSetLightParameters,

@@ -1596,6 +1596,14 @@ messages! {
     CmdCreateLight = ["Create light", "Создать источник света"],
     CmdSetActiveCamera = ["Set active camera", "Сделать камеру активной"],
     CmdSetCameraProjection = ["Set camera projection", "Задать проекцию камеры"],
+    CmdSetCameraLens = ["Set camera lens", "Задать объектив камеры"],
+    SectionLens = ["Lens", "Объектив"],
+    LensAperture = ["Aperture radius", "Радиус диафрагмы"],
+    LensFocus = ["Focus distance", "Дистанция фокуса"],
+    LensRange = [
+        "A camera's lens takes an aperture of {} to {} mm of radius and a focus of {} to {} mm.",
+        "Объектив камеры: радиус диафрагмы от {} до {} мм, дистанция фокуса от {} до {} мм."
+    ],
     CmdSetLightParameters = ["Set light parameters", "Задать параметры света"],
     CmdCreateAssembly = ["Create assembly", "Создать сборку"],
     CmdCreateProduct = ["Create product frame", "Создать каркас изделия"],

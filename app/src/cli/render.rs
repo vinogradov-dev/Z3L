@@ -29,19 +29,12 @@ use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;
 use project::SceneFile;
 use ui::ViewFlags;
-use units::Length;
 
 use super::{CliError, RenderArgs};
 
 /// The image size a run makes when the line does not name one: 1920 by 1080 is a catalogue plate at
 /// the size a workshop screen shows, and it costs a fraction of the A4 print the interface asks for.
 pub const DEFAULT_SIZE: (u32, u32) = (1920, 1080);
-
-/// The distance a run's lens focuses at when the line does not name one, in millimetres.
-///
-/// It is the default camera's own distance, so a lens switched on over an untouched view focuses on
-/// the point the viewport orbits (Y5).
-pub const DEFAULT_FOCUS_MM: f32 = 1_200.0;
 
 /// The samples per pixel a run takes when the line does not name a count.
 ///
@@ -66,14 +59,6 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
     let request = Request::new(args.width, args.height, args.samples).map_err(describe)?;
     let settings = Settings::new(request, args.exposure, &args.out)
         .and_then(|settings| settings.with_environment(args.studio / 100.0))
-        // The line reads millimetres and the render speaks the document's own length: the one place the
-        // two vocabularies meet is here, beside the studio's percentage (Y5).
-        .and_then(|settings| {
-            settings.with_lens(
-                Length::from_millimetres_f64(f64::from(args.aperture)).unwrap_or(Length::ZERO),
-                Length::from_millimetres_f64(f64::from(args.focus)).unwrap_or(Length::ZERO),
-            )
-        })
         .map_err(describe)?;
     let (device, queue) = device()?;
     let mut tracer = Tracer::new(&device).map_err(describe)?;
@@ -202,8 +187,6 @@ mod tests {
             samples: 64,
             exposure: 1.0,
             studio: 30.0,
-            aperture: 40.0,
-            focus: 2_000.0,
             camera: super::super::CameraChoice::Fit,
         };
         let lines = perform(&args).expect("the demo renders");

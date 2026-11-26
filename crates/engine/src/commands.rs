@@ -313,6 +313,7 @@ static COMMANDS: &[CommandSpec] = &[
     scene_cmds::LIGHT_CREATE,
     scene_cmds::SCENE_ACTIVE_CAMERA_SET,
     scene_cmds::CAMERA_PROJECTION_SET,
+    scene_cmds::CAMERA_LENS_SET,
     scene_cmds::LIGHT_PARAMS_SET,
 ];
 
@@ -674,7 +675,11 @@ mod tests {
         // An end trim is its own command: the number belongs to the end, not to a delta (U124).
         let trim = registry.get("panel.trim.set").expect("panel.trim.set is registered");
         assert_eq!(trim.label().text(Lang::En), "Set an end trim");
-        assert_eq!(registry.specs().len(), 69);
+        // A camera's lens is its own command, because the number is the camera's and not the render's
+        // (Y11, ADR 0249).
+        let lens = registry.get("camera.lens.set").expect("camera.lens.set is registered");
+        assert_eq!(lens.label().text(Lang::En), "Set camera lens");
+        assert_eq!(registry.specs().len(), 70);
     }
 
     #[test]

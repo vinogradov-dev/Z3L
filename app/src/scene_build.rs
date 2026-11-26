@@ -897,8 +897,12 @@ pub fn authored_camera(project: &Project) -> Option<Camera> {
     let up = rotation * DVec3::Y;
     let forward = rotation * -DVec3::Z;
     let target = eye + forward * AUTHORED_CAMERA_DISTANCE_MM;
+    // The lens is the camera's own, saved with it (Y11, ADR 0249): the frame the tracer reads carries
+    // the aperture and the focus the document does, so every door renders one picture.
+    let lens = project.camera(id)?.lens();
     Camera::new(target, AUTHORED_CAMERA_DISTANCE_MM)
         .ok()
+        .and_then(|camera| camera.with_lens(lens.aperture().millimetres_f64(), lens.focus().millimetres_f64()).ok())
         .map(|camera| camera.looked_from(eye, right, up, forward).with_projection(projection))
 }
 
@@ -1043,6 +1047,33 @@ mod tests {
             camera.projection(),
             Projection::Orthographic { height: Length::from_millimetres(500).expect("height").millimetres_f64() }
         );
+    }
+
+    #[test]
+    fn an_authored_camera_carries_its_lens_into_the_frame() {
+        // The clause about the document: the lens is saved with the camera and reaches the picture
+        // through the frame, so a scene renders what its author framed from every door (Y11).
+        let root = Container::new(id(1).expect("id"), "Root", Placement::IDENTITY, Vec::new());
+        let mut project = Project::new(root).expect("project");
+        let root = project.root().id();
+        let camera =
+            project.add_camera(root, "Presentation", Placement::IDENTITY, CameraProjection::DEFAULT).expect("camera");
+        project.set_active_camera(Some(camera)).expect("active camera");
+        let plain = authored_camera(&project).expect("the authored camera");
+        assert!(plain.is_pinhole(), "a camera without a lens is a pinhole");
+        assert_eq!(plain.focus(), model::CameraNode::DEFAULT_FOCUS.millimetres_f64());
+
+        let lens = model::CameraLens::new(millimetres(45).expect("a radius"), millimetres(2_000).expect("a focus"))
+            .expect("a lens");
+        project.set_camera_lens(camera, lens).expect("the camera's lens");
+        let lensed = authored_camera(&project).expect("the authored camera");
+        assert_eq!(lensed.aperture(), 45.0);
+        assert_eq!(lensed.focus(), 2_000.0);
+        assert!(!lensed.is_pinhole(), "the frame carries the aperture the document holds");
+        // The lens is the picture's and never the framing's: the eye and the basis are untouched.
+        assert_eq!(lensed.eye(), plain.eye());
+        assert_eq!(lensed.forward(), plain.forward());
+        assert_eq!(lensed.projection(), plain.projection());
     }
 
     #[test]
