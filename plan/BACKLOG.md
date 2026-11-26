@@ -63,26 +63,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
 ## Bugs
-- `[ ]` **X138** the render place shows the work area's drawing pointer over its own margins
-  Why: Observation (the owner): with the Render place open, the pointer over the place's
-   margins — the rail of numbers, the status row, the air beside the picture — is the work
-   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
-   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
-   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
-   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
-   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
-   document's scene rectangle still names the workspace's area, so the work cursor keeps the
-   place it no longer has.
-  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
-   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
-   the work area is absent) and the system arrow stays everywhere in the place, the picture
-   included. The viewport keeps its own cursor untouched: this is one condition at the call
-   site, not a second pointer rule.
-  Done: A headless frame test: with the place open, the pointer over the rail and over the air
-   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
-   the shell's square again; cargo xtask ci is green.
-  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs`
-
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
   Why: ADR 0192 makes learning data: the workshop profile becomes skill cards and a card
@@ -235,6 +215,26 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **X138** the render place shows the work area's drawing pointer over its own margins
+  Why: Observation (the owner): with the Render place open, the pointer over the place's
+   margins — the rail of numbers, the status row, the air beside the picture — is the work
+   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
+   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
+   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
+   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
+   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
+   document's scene rectangle still names the workspace's area, so the work cursor keeps the
+   place it no longer has.
+  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
+   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
+   the work area is absent) and the system arrow stays everywhere in the place, the picture
+   included. The viewport keeps its own cursor untouched: this is one condition at the call
+   site, not a second pointer rule.
+  Done: A headless frame test: with the place open, the pointer over the rail and over the air
+   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
+   the shell's square again; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs` — `2f3d60a`
 
 - `[x]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
