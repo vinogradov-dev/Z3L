@@ -448,7 +448,11 @@ impl Default for Lighting {
 /// shades as a repaired surface rather than poisoning an image (`crates/final/src/bsdf.rs`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
-    /// Microfacet roughness of the metal or the pane, `0..=1`.
+    /// Microfacet roughness of the metal or of the pane, `0..=1`.
+    ///
+    /// A pane's width is both interfaces': it scatters what it reflects and what it transmits, so a
+    /// glass front with a width is a frosted one (`crates/final/src/bsdf.rs`). A roughness of zero is
+    /// the smooth interface float glass has, which is the picture every clear pane was before it.
     pub roughness: f32,
     /// `0` for a dielectric, `1` for a metal.
     pub metallic: f32,

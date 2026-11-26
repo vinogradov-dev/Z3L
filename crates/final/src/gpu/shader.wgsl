@@ -601,7 +601,9 @@ fn distribution(cos_h: f32, alpha: f32) -> f32 {
 }
 
 fn lambda_(cos: f32, alpha: f32) -> f32 {
-    let c = clamp(cos, 1.0e-6, 1.0);
+    // The term is a function of the angle from the normal, so a transmitted direction enters it with
+    // the magnitude of its cosine: `bsdf::lambda`.
+    let c = clamp(abs(cos), 1.0e-6, 1.0);
     let tan2 = (1.0 - c * c) / (c * c);
     let root = 1.0 + alpha * alpha * tan2;
     if (!(root < 1.0e30)) {
@@ -639,10 +641,53 @@ fn fresnel_dielectric(cos_i_in: f32, eta: f32) -> f32 {
 }
 
 fn refract(wo: vec3<f32>, eta: f32) -> vec3<f32> {
-    let cos_i = clamp(wo.z, 0.0, 1.0);
+    return refract_about(wo, vec3<f32>(0.0, 0.0, 1.0), eta);
+}
+
+// The transmitted direction through a microfacet faced by `h`: Snell's law at the microsurface, which
+// is `bsdf::refract_about`. An invalid direction is the caller's rejection, `safe_normalize`'s zero.
+fn refract_about(wo: vec3<f32>, h: vec3<f32>, eta: f32) -> vec3<f32> {
+    let cos_i = clamp(dot(wo, h), 0.0, 1.0);
     let sin2_t = (1.0 - cos_i * cos_i) / (eta * eta);
+    if (sin2_t >= 1.0) {
+        // Total internal reflection at this microfacet: nothing crosses it, and the zero direction is
+        // how the caller reads the refusal.
+        return vec3<f32>(0.0);
+    }
     let cos_t = sqrt(max(0.0, 1.0 - sin2_t));
-    return vec3<f32>(-wo.x / eta, -wo.y / eta, -cos_t);
+    return safe_normalize(-wo / eta + h * (cos_i / eta - cos_t));
+}
+
+// The microfacet that refracts `wo` towards `wi`, which is `bsdf::transmissive_normal`.
+fn transmissive_normal(wo: vec3<f32>, wi: vec3<f32>, eta: f32) -> vec3<f32> {
+    let sum = safe_normalize(wo + wi * eta);
+    let h = select(sum, -sum, eta > 1.0);
+    if (h.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    return h;
+}
+
+// The density of one transmitted direction under visible-normal sampling, which is
+// `bsdf::transmission_pdf`: the density of the normal times the Jacobian of the refraction.
+fn transmission_pdf(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, eta: f32) -> f32 {
+    if (wo.z <= 0.0 || wi.z >= 0.0) {
+        return 0.0;
+    }
+    let h = transmissive_normal(wo, wi, eta);
+    let cos_h = dot(wo, h);
+    let length_squared = dot(wo + wi * eta, wo + wi * eta);
+    if (cos_h <= 0.0 || !(length_squared > 0.0)) {
+        return 0.0;
+    }
+    let g1 = 1.0 / (1.0 + lambda_(wo.z, alpha));
+    let density = distribution(h.z, alpha) * g1 * cos_h / wo.z;
+    let jacobian = eta * eta * abs(dot(wi, h)) / length_squared;
+    let value = density * jacobian;
+    if (!(value > 0.0)) {
+        return 0.0;
+    }
+    return value;
 }
 
 // Heitz's visible-normal sampling, with the warp that makes it the visible distribution rather than a
@@ -824,7 +869,8 @@ fn probabilities_of(material: Material, wo: vec3<f32>, inside: bool) -> Probabil
     probabilities.completion = 0.0;
     probabilities.transmitted = 0.0;
     if (is_pane(material)) {
-        // A pane is its own interface and is never a coat (ADR 0243): what is not reflected is crossed.
+        // A pane is its own interface and is never a coat (ADR 0243): what is not reflected is crossed,
+        // smoothly at zero roughness and about the visible normal above it.
         let reflectance = fresnel_dielectric(wo.z, interface_ratio(material, inside));
         probabilities.specular = reflectance;
         probabilities.transmitted = 1.0 - reflectance;
@@ -875,9 +921,9 @@ fn bsdf_eval(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> 
 // The mixture density of the surface's continuous lobes at `(wo, wi)`, which is `bsdf::pdf`.
 //
 // A light sample is taken with this weight: the path it finds could also have been found by a sample
-// of the surface, so the two strategies share it instead of counting it twice. A pane's transmitted
-// beam is smooth and its density is not part of the sum, so `probabilities_of` gives it no cosine
-// term and the formula is the one the Rust writes.
+// of the surface, so the two strategies share it instead of counting it twice. Only the lobes above the
+// surface are in the sum: a pane's transmitted beam crosses below, and the density of the direction
+// `sample_bsdf` draws there is what the scatter carries.
 fn bsdf_pdf(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> f32 {
     if (wo.z <= 0.0 || wi.z <= 0.0) {
         return 0.0;
@@ -936,11 +982,39 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
         if (probabilities.transmitted <= 0.0) {
             return scatter;
         }
-        let wi = refract(wo, ratio);
+        // A clear pane keeps the smooth beam it always had: a roughness of zero draws no normal, so the
+        // picture is yesterday's, sample for sample (ADR 0243 keeps a pane off the coat's path).
+        if (material.roughness <= 0.0) {
+            let wi = refract(wo, ratio);
+            scatter.valid = true;
+            scatter.direction = wi;
+            scatter.weight = vec3<f32>(material.transmission * ratio * ratio);
+            scatter.pdf = max(probabilities.transmitted, 1.0e-9);
+            scatter.transmitted = true;
+            return scatter;
+        }
+        // A frosted pane meets the same visible normal the reflection lobe draws and refracts about it
+        // (Walter et al. 2007, §4): the weight is the face's Fresnel over the split's own, its `eta²`
+        // radiance gain and the microfacet's `G2 / G1`, because the Jacobian of the refraction cancels
+        // against the density the normal is drawn with. A facet past the critical angle crosses nothing.
+        let h = sample_visible_normal(wo, alpha, u);
+        let cos_h = dot(wo, h);
+        if (cos_h <= 0.0) {
+            return scatter;
+        }
+        let wi = refract_about(wo, h, ratio);
+        if (dot(wi, wi) <= 0.0 || wi.z >= 0.0) {
+            return scatter;
+        }
+        let crossing = 1.0 - fresnel_dielectric(clamp(cos_h, 0.0, 1.0), ratio);
+        if (!(crossing > 0.0)) {
+            return scatter;
+        }
+        let keep = masking(wo.z, wi.z, alpha) * (1.0 + lambda_(wo.z, alpha));
         scatter.valid = true;
         scatter.direction = wi;
-        scatter.weight = vec3<f32>(material.transmission * ratio * ratio);
-        scatter.pdf = max(probabilities.transmitted, 1.0e-9);
+        scatter.weight = vec3<f32>(material.transmission * crossing * ratio * ratio * keep / max(probabilities.transmitted, 1.0e-9));
+        scatter.pdf = probabilities.transmitted * transmission_pdf(wo, wi, alpha, ratio);
         scatter.transmitted = true;
         return scatter;
     }

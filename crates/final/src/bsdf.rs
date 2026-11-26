@@ -18,10 +18,13 @@
 //! is checked and not merely present.
 //!
 //! The glass lobe is a dielectric interface with the exact Fresnel equations: a reflection that
-//! follows the same rough-conductor lobe, and a smooth refracted beam, which is what float glass is.
-//! Total internal reflection falls out of the Fresnel term rather than being special-cased, and the
-//! tint is Beer and Lambert's law applied by the integrator along the distance the ray travels inside,
-//! because that is a property of the glass and not of one bounce.
+//! follows the same rough-conductor lobe, and a transmitted beam drawn about the same microfacet
+//! normal (Walter et al. 2007, §4), which is what makes a frosted front scatter what stands behind
+//! it. A roughness of zero draws no normal at all and keeps the smooth refracted beam float glass has,
+//! so a clear pane is the picture it always was. Total internal reflection falls out of the Fresnel
+//! term rather than being special-cased, and the tint is Beer and Lambert's law applied by the
+//! integrator along the distance the ray travels inside, because that is a property of the glass and
+//! not of one bounce.
 //!
 //! All of it is expressed in the shading frame: the surface normal is `+Z`, `wo` points from the
 //! surface towards the viewer and has a positive `z`, and a transmitted direction has a negative one.
@@ -278,8 +281,11 @@ pub fn distribution(cos_h: f64, alpha: f64) -> f64 {
 }
 
 /// The Smith masking term's `Λ`, which is what the height-correlated `G2` is built from.
+///
+/// The term is a function of the angle from the normal and not of the side the beam is on, so a
+/// transmitted direction enters it with the magnitude of its cosine.
 pub fn lambda(cos: f64, alpha: f64) -> f64 {
-    let c = cos.clamp(1.0e-6, 1.0);
+    let c = cos.abs().clamp(1.0e-6, 1.0);
     let tan2 = (1.0 - c * c) / (c * c);
     let root = 1.0 + alpha * alpha * tan2;
     if !root.is_finite() {
@@ -326,10 +332,22 @@ pub fn fresnel_dielectric(cos_i: f64, eta: f64) -> f64 {
 /// The transmitted direction of a beam arriving along `wo`, or `None` past the critical angle.
 ///
 /// The returned direction has a negative `z`: it goes into the surface, which is the sign the
-/// integrator reads as "the beam crossed the interface".
+/// integrator reads as "the beam crossed the interface". This is the smooth interface, the one a pane
+/// of zero roughness keeps; a frosted pane meets its beam on a tilted microfacet, [`refract_about`].
 pub fn refract(wo: DVec3, eta: f64) -> Option<DVec3> {
-    let cos_i = wo.z.clamp(0.0, 1.0);
-    if !eta.is_finite() || eta <= 0.0 {
+    refract_about(wo, DVec3::Z, eta)
+}
+
+/// The transmitted direction of a beam arriving along `wo` through a microfacet faced by `h`.
+///
+/// Snell's law at the microfacet, in the form Walter, Marschner, Li and Torrance (2007, eq. 17) write
+/// it: the tangential part of the beam is divided by the ratio and the rest is carried by the normal.
+/// `wo` points from the surface towards the viewer, so `wo · h` is the cosine on the incident side.
+/// A ratio that turns the transmitted sine imaginary is total internal reflection at that microfacet
+/// and answers `None`, exactly as the smooth interface does past its critical angle.
+pub fn refract_about(wo: DVec3, h: DVec3, eta: f64) -> Option<DVec3> {
+    let cos_i = wo.dot(h).clamp(0.0, 1.0);
+    if !eta.is_finite() || eta <= 0.0 || !h.is_finite() {
         return None;
     }
     let sin2_t = (1.0 - cos_i * cos_i) / (eta * eta);
@@ -337,7 +355,7 @@ pub fn refract(wo: DVec3, eta: f64) -> Option<DVec3> {
         return None;
     }
     let cos_t = (1.0 - sin2_t).sqrt();
-    let direction = DVec3::new(-wo.x / eta, -wo.y / eta, -cos_t);
+    let direction = -wo / eta + h * (cos_i / eta - cos_t);
     let length = direction.length();
     if length <= 0.0 || !direction.is_finite() {
         return None;
@@ -389,6 +407,43 @@ pub fn ggx_pdf(wo: DVec3, wi: DVec3, alpha: f64) -> f64 {
         return 0.0;
     }
     density / (4.0 * wo.dot(h).abs().max(1.0e-9))
+}
+
+/// The microfacet that refracts `wo` towards `wi`: Walter et al.'s transmission half vector.
+///
+/// The half vector of a refraction is `wo + eta · wi` up to its sign, and the sign is not free: entering
+/// a denser medium the sum points into the surface and the normal is its negation, leaving it the sum
+/// is the normal. Flipping whichever sign comes out positive would answer the same normal for a beam
+/// that never crossed anything — the reflection-like root — and count its direction twice in a density.
+fn transmissive_normal(wo: DVec3, wi: DVec3, eta: f64) -> Option<DVec3> {
+    let h = (wo + wi * eta).try_normalize()?;
+    let h = if eta > 1.0 { -h } else { h };
+    if h.z <= 0.0 {
+        return None;
+    }
+    Some(h)
+}
+
+/// The density of one transmitted direction under visible-normal sampling, without the draw's share.
+///
+/// The draw is the one the reflection lobe makes — a visible microfacet normal — carried through the
+/// refraction, so the density in `wi` is the density of `h` times the Jacobian of that map,
+/// `eta² |wi · h| / |wo + eta wi|²`, the change of variables that is `1 / (4 wo · h)` for a reflection.
+pub fn transmission_pdf(wo: DVec3, wi: DVec3, alpha: f64, eta: f64) -> f64 {
+    if wo.z <= 0.0 || wi.z >= 0.0 || !wo.is_finite() || !wi.is_finite() {
+        return 0.0;
+    }
+    let Some(h) = transmissive_normal(wo, wi, eta) else { return 0.0 };
+    let cos_h = wo.dot(h);
+    let length_squared = (wo + wi * eta).length_squared();
+    if cos_h <= 0.0 || length_squared <= 0.0 || !length_squared.is_finite() {
+        return 0.0;
+    }
+    let g1 = 1.0 / (1.0 + lambda(wo.z, alpha));
+    let density = distribution(h.z, alpha) * g1 * cos_h / wo.z;
+    let jacobian = eta * eta * wi.dot(h).abs() / length_squared;
+    let value = density * jacobian;
+    if value.is_finite() { value.max(0.0) } else { 0.0 }
 }
 
 /// The GGX reflection lobe's value, `f_ss`, with `fresnel` giving the reflectance of one half angle.
@@ -604,7 +659,8 @@ pub struct Probabilities {
     pub completion: f64,
     /// The clear layer's own reflection.
     pub coat: f64,
-    /// A pane's transmitted beam, which is a delta lobe and carries no density of its own.
+    /// A pane's transmitted beam, below the surface: a smooth delta at zero roughness and a microfacet
+    /// lobe above it, so the split is always the interface's one Fresnel.
     pub transmitted: f64,
 }
 
@@ -645,9 +701,9 @@ pub fn probabilities(material: Material, wo: DVec3, inside: bool) -> Probabiliti
 
 /// The value of the surface's continuous lobes at `(wo, wi)`, without the cosine.
 ///
-/// The smooth refracted beam is not part of it: a delta lobe has no density to weight against a light
-/// sample, which is the same reason a point light is not sampled from the camera. The integrator takes
-/// it through [`sample`] and carries its weight there.
+/// Only the lobes above the surface are here: a light sample is a direction towards an emitter, and an
+/// emitter below the surface is a lamp the beam reaches and not one a shadow ray finds. A pane's
+/// transmitted lobe lives below, and [`sample`] carries its weight.
 pub fn eval(material: Material, wo: DVec3, wi: DVec3, inside: bool) -> DVec3 {
     let material = material.sanitised();
     if wo.z <= 0.0 || wi.z <= 0.0 || !wo.is_finite() || !wi.is_finite() {
@@ -686,7 +742,9 @@ pub fn eval(material: Material, wo: DVec3, wi: DVec3, inside: bool) -> DVec3 {
 /// The mixture density of the surface's continuous lobes at `(wo, wi)`.
 ///
 /// A light sample is weighted by this density, and a light sample that would have to divide by a delta
-/// lobe's zero gets nothing to weight against: the transmitted beam is simply not part of the sum.
+/// lobe's zero gets nothing to weight against: a clear pane's transmitted beam is simply not part of
+/// the sum. A frosted pane's lobe is below the surface and so is not a light sample's direction either;
+/// the density of the direction [`sample`] draws is what [`Scatter::pdf`] carries.
 pub fn pdf(material: Material, wo: DVec3, wi: DVec3, inside: bool) -> f64 {
     let material = material.sanitised();
     if wo.z <= 0.0 || wi.z <= 0.0 || !wo.is_finite() || !wi.is_finite() {
@@ -743,11 +801,38 @@ pub fn sample(material: Material, wo: DVec3, u: DVec2, pick: f64, inside: bool) 
             let pdf = probabilities.specular * ggx_pdf(wo, wi, alpha);
             return Some(Scatter { direction: wi, weight, pdf, transmitted: false });
         }
-        let wi = refract(wo, ratio)?;
-        // Radiance changes by `eta^2` across an interface; the two crossings of a pane are one factor
-        // of one, so a window carries the room and does not light it.
-        let weight = DVec3::splat(f64::from(material.transmission) * ratio * ratio);
-        let pdf = probabilities.transmitted.max(1.0e-9);
+        // A clear pane is the smooth interface it always was: a roughness of zero draws no normal, so
+        // the picture is yesterday's, sample for sample (ADR 0243 keeps a pane off the coat's path).
+        let transmission = f64::from(material.transmission);
+        if material.roughness <= 0.0 {
+            let wi = refract(wo, ratio)?;
+            // Radiance changes by `eta^2` across an interface; the two crossings of a pane are one
+            // factor of one, so a window carries the room and does not light it.
+            let weight = DVec3::splat(transmission * ratio * ratio);
+            let pdf = probabilities.transmitted.max(1.0e-9);
+            return Some(Scatter { direction: wi, weight, pdf, transmitted: true });
+        }
+        // A frosted pane meets the same visible normal the reflection lobe draws and refracts about it
+        // (Walter et al. 2007, §4). The event is still split by the one Fresnel the material's own
+        // angle gives, so the weight carries the face's Fresnel over that split's — `(1 - F(h))` over
+        // `(1 - F(wo.z))` — and the microfacet's own `G2 / G1`; the Jacobian of the refraction cancels
+        // against the density the normal is drawn with, leaving the `eta²` radiance gain a clear pane
+        // has. A microfacet past the critical angle crosses nothing and the draw is dropped, which is
+        // total internal reflection at a surface the macro angle does not see.
+        let h = sample_visible_normal(wo, alpha, u)?;
+        let cos_h = wo.dot(h);
+        if cos_h <= 0.0 {
+            return None;
+        }
+        let wi = refract_about(wo, h, ratio)?;
+        if wi.z >= 0.0 {
+            return None;
+        }
+        let crossing = 1.0 - fresnel_dielectric(cos_h.clamp(0.0, 1.0), ratio);
+        let keep = masking(wo.z, wi.z, alpha) * (1.0 + lambda(wo.z, alpha));
+        let share = probabilities.transmitted.max(1.0e-9);
+        let weight = DVec3::splat(transmission * crossing * ratio * ratio * keep / share);
+        let pdf = probabilities.transmitted * transmission_pdf(wo, wi, alpha, ratio);
         return Some(Scatter { direction: wi, weight, pdf, transmitted: true });
     }
     let metal = f64::from(material.metallic);
@@ -1235,5 +1320,260 @@ mod tests {
         // The table is the device's layout too: sixteen rows of sixteen cells and sixteen averages.
         assert_eq!(table.values().len(), ENERGY_STEPS);
         assert_eq!(table.averages().len(), ENERGY_STEPS);
+    }
+
+    /// The direction from the surface towards a viewer at `cos_o`, in the shading frame.
+    fn viewing(cos_o: f64) -> DVec3 {
+        DVec3::new((1.0 - cos_o * cos_o).max(0.0).sqrt(), 0.0, cos_o)
+    }
+
+    /// Every transmitted draw of one pane at `cos_o`: its direction, its weight and the microfacet the
+    /// beam met, which is what names the lobe it was drawn from.
+    fn transmitted_draws(roughness: f32, cos_o: f64, samples: u32) -> Vec<(DVec3, f64, DVec3)> {
+        let pane = Material::glass(1.5, roughness, [0.0; 3]);
+        let wo = viewing(cos_o);
+        let mut draws = Vec::new();
+        for index in 0..samples {
+            let u = crate::sampler::sample_2d(0, index, 0x9e37_79b9);
+            let pick = f64::from(crate::sampler::sample_1d(2, index, 0x9e37_79b9));
+            let Some(scatter) = sample(pane, wo, DVec2::new(f64::from(u[0]), f64::from(u[1])), pick, false) else {
+                continue;
+            };
+            if !scatter.transmitted {
+                continue;
+            }
+            let Some(h) = transmissive_normal(wo, scatter.direction, 1.5) else { continue };
+            draws.push((scatter.direction, scatter.weight.x, h));
+        }
+        draws
+    }
+
+    /// The share of one pane's transmitted draws whose microfacet lies inside `tangent` widths.
+    ///
+    /// The directions are conditioned on the beam crossing, which is the only thing besides the lobe
+    /// that decides where it goes: the sampling rejects a normal whose refraction leaves the far side or
+    /// crosses nothing, so the reference distribution is the visible-normal density over the normals
+    /// that do cross — integrated here over the normals themselves, with no sampler in it and the
+    /// masking, which is the same for every normal of one view, divided out.
+    fn transmitted_normal_cdf(cos_o: f64, alpha: f64, eta: f64, tangent: f64) -> (f64, f64) {
+        let wo = viewing(cos_o);
+        let angular = 2048usize;
+        let around = 128usize;
+        let width = 50.0f64.max(tangent);
+        let step = width / angular as f64;
+        let mut inside = 0.0;
+        let mut total = 0.0;
+        for i in 0..angular {
+            let x = (i as f64 + 0.5) * step;
+            let theta = (alpha * x).atan();
+            let d_theta = alpha * step / (1.0 + (alpha * x) * (alpha * x));
+            let (sin_h, cos_h) = theta.sin_cos();
+            for j in 0..around {
+                let phi = 2.0 * PI * (j as f64 + 0.5) / around as f64;
+                let h = DVec3::new(sin_h * phi.cos(), sin_h * phi.sin(), cos_h);
+                let dot = wo.dot(h);
+                if dot <= 0.0 {
+                    continue;
+                }
+                let Some(wi) = refract_about(wo, h, eta) else { continue };
+                if wi.z >= 0.0 {
+                    continue;
+                }
+                let mass = distribution(cos_h, alpha) * (dot / cos_o) * sin_h * d_theta * (2.0 * PI / around as f64);
+                total += mass;
+                if x < tangent {
+                    inside += mass;
+                }
+            }
+        }
+        (inside, total)
+    }
+
+    #[test]
+    fn a_frosted_pane_scatters_the_beam_it_transmits_about_the_normals_its_roughness_names() {
+        // A clear pane's beam is Snell's refraction exactly, and a frosted one's is that beam carried
+        // through the microfacet normals the roughness draws. The clause is that the beam lies in the
+        // lobe the roughness names, so the normals behind the transmitted directions are compared with
+        // the visible-normal density the same width gives, read by quadrature over the normals.
+        let ratio = 1.5f64;
+        let wo = DVec3::new(0.6, 0.0, 0.8);
+        let mirror = refract(wo, ratio).expect("the smooth beam");
+        let clear = Material::glass(1.5, 0.0, [0.0; 3]);
+        let exact = sample(clear, wo, DVec2::new(0.37, 0.61), 0.9, false).expect("a transmitted beam");
+        assert_eq!(exact.direction, mirror, "a roughness of zero is today's refraction, bit for bit");
+        assert!((exact.weight.x - ratio * ratio).abs() < 1.0e-12, "and today's weight");
+
+        let mut spread = 0.0f64;
+        for roughness in [0.1f32, 0.5, 1.0] {
+            let draws = transmitted_draws(roughness, wo.z, 1 << 15);
+            let alpha = Material::glass(1.5, roughness, [0.0; 3]).alpha();
+            let rms = draws
+                .iter()
+                .map(|(direction, _, _)| {
+                    let deviation = mirror.dot(*direction).clamp(-1.0, 1.0).acos();
+                    deviation * deviation
+                })
+                .sum::<f64>()
+                / draws.len() as f64;
+            let rms = rms.sqrt();
+            assert!(!draws.is_empty(), "a frosted pane transmits at roughness {roughness}");
+            assert!(rms > spread, "the beam is wider than at the narrower lobe: {rms} after {spread}");
+            spread = rms;
+            for widths in [1.0f64, 2.0, 4.0, 8.0] {
+                let crossed = draws
+                    .iter()
+                    .filter(|(_, _, h)| (1.0 - h.z * h.z).max(0.0).sqrt() / h.z.max(1.0e-9) < widths * alpha)
+                    .count() as f64
+                    / draws.len() as f64;
+                let (inside, total) = transmitted_normal_cdf(wo.z, alpha, ratio, widths);
+                let named = inside / total;
+                println!(
+                    "roughness {roughness} (alpha {alpha:.3}): {:.1}% of the normals inside {widths} widths, the lobe names {:.1}%, beam rms {rms:.4} rad",
+                    crossed * 100.0,
+                    named * 100.0
+                );
+                assert!(
+                    (crossed - named).abs() < 0.01,
+                    "roughness {roughness}, {widths} widths: the sampler reads {crossed:.4}, the lobe {named:.4}"
+                );
+            }
+        }
+    }
+
+    /// The power one transmitted interface passes, integrated over the microfacet normals themselves.
+    ///
+    /// The estimator draws a visible normal, refracts about it and weights the crossing; this integral
+    /// is the same statement written over the normal instead, with no `wi`-space density and no
+    /// Jacobian in it, so the two readings of one number are independent of each other's algebra.
+    fn transmitted_power_by_quadrature(cos_o: f64, alpha: f64, eta: f64) -> f64 {
+        let wo = viewing(cos_o);
+        let angular = 1024usize;
+        let around = 128usize;
+        let width = 50.0;
+        let step = width / angular as f64;
+        let mut total = 0.0;
+        for i in 0..angular {
+            let tangent = (i as f64 + 0.5) * step * alpha;
+            let theta = tangent.atan();
+            // `theta = atan(alpha x)`, so `dtheta = alpha dx / (1 + alpha² x²)`.
+            let d_theta = alpha * step / (1.0 + tangent * tangent);
+            let (sin_h, cos_h) = theta.sin_cos();
+            for j in 0..around {
+                let phi = 2.0 * PI * (j as f64 + 0.5) / around as f64;
+                let h = DVec3::new(sin_h * phi.cos(), sin_h * phi.sin(), cos_h);
+                let dot = wo.dot(h);
+                if dot <= 0.0 {
+                    continue;
+                }
+                let Some(wi) = refract_about(wo, h, eta) else { continue };
+                if wi.z >= 0.0 {
+                    continue;
+                }
+                let crossing = 1.0 - fresnel_dielectric(dot.clamp(0.0, 1.0), eta);
+                // `D` weighted by `wo·h / cos_o` is the visible-normal density without its `G1`; the
+                // masking `G2` is what the pair of directions shares, and the `G1` cancels.
+                let value = distribution(cos_h, alpha) * (dot / cos_o) * crossing * masking(cos_o, wi.z, alpha);
+                total += value * sin_h * d_theta * (2.0 * PI / around as f64);
+            }
+        }
+        total
+    }
+
+    #[test]
+    fn a_pane_reflects_and_transmits_what_the_model_alters_and_never_more() {
+        // The energy a pane owes: what it reflects plus what it lets through, in the measure of the side
+        // it arrived from, is what the masking the model already has leaves. At zero roughness that is
+        // one exactly — a clear pane neither gains nor loses light — and a frosted one answers the same
+        // integral read over the microfacet normals instead of over the directions.
+        let draws = 1u32 << 17;
+        for (roughness, cos_o) in [(0.0f32, 0.8f64), (0.1, 0.8), (0.5, 0.8), (1.0, 0.8), (0.5, 0.2)] {
+            let pane = Material::glass(1.5, roughness, [0.0; 3]);
+            let alpha = pane.alpha();
+            let ratio = 1.5f64;
+            let wo = viewing(cos_o);
+            let mut reflected = 0.0;
+            let mut transmitted = 0.0;
+            for index in 0..draws {
+                let u = crate::sampler::sample_2d(0, index, 0x1234_5678);
+                let pick = f64::from(crate::sampler::sample_1d(2, index, 0x1234_5678));
+                let Some(scatter) = sample(pane, wo, DVec2::new(f64::from(u[0]), f64::from(u[1])), pick, false) else {
+                    continue;
+                };
+                if scatter.transmitted {
+                    transmitted += scatter.weight.x;
+                } else {
+                    reflected += scatter.weight.x;
+                }
+            }
+            let count = f64::from(draws);
+            // The transmitted weight carries the radiance gain of entering a denser medium; the power
+            // that crossed is that gain divided back out.
+            let measured = reflected / count + transmitted / count / (ratio * ratio);
+            let predicted = transmitted_power_by_quadrature(cos_o, alpha, ratio);
+            let through = transmitted / count / (ratio * ratio);
+            println!(
+                "roughness {roughness} at cos {cos_o}: reflected {:.4}, transmitted {:.4}, sum {:.4}; \
+                 quadrature reads {:.4}",
+                reflected / count,
+                through,
+                measured,
+                predicted
+            );
+            assert!(measured <= 1.0 + 5.0e-3, "a pane never gains light: {measured} at roughness {roughness}");
+            assert!(
+                (through - predicted).abs() < 0.01,
+                "the sampler reads {through:.4} and the half-vector quadrature {predicted:.4}"
+            );
+            if roughness == 0.0 {
+                assert!((measured - 1.0).abs() < 1.0e-5, "a clear pane is one: {measured}");
+            } else {
+                // The only light a frosted pane loses is the masking the single-scattering lobe already
+                // pays for, the same loss the conductor's completion puts back: a fraction of a percent
+                // until the surface is as rough as a sandblasted pane, and a sixth there.
+                assert!(measured > 0.8, "a frosted pane keeps four fifths: {measured} at roughness {roughness}");
+            }
+        }
+    }
+    #[test]
+    fn the_transmission_density_is_the_density_the_sampler_draws_from() {
+        // A frosted pane's density carries the Jacobian of the refraction, and a Jacobian that is
+        // missing or doubled would still shade a picture — it would only bias the noise a path carries
+        // into an emitter. The mass the density puts on the transmitted hemisphere is the frequency the
+        // sampler crosses, read on a grid of the transmitted directions themselves.
+        let ratio = 1.5f64;
+        let steps = 1024usize;
+        for roughness in [0.5f32, 1.0] {
+            let pane = Material::glass(1.5, roughness, [0.0; 3]);
+            let alpha = pane.alpha();
+            let wo = viewing(0.6);
+            let share = probabilities(pane, wo, false).transmitted;
+            let mut integrated = 0.0;
+            for i in 0..steps {
+                let cos_i = (i as f64 + 0.5) / steps as f64;
+                let sin_i = (1.0 - cos_i * cos_i).max(0.0).sqrt();
+                for j in 0..steps {
+                    let phi = 2.0 * PI * (j as f64 + 0.5) / steps as f64;
+                    let wi = DVec3::new(sin_i * phi.cos(), sin_i * phi.sin(), -cos_i);
+                    integrated += transmission_pdf(wo, wi, alpha, ratio);
+                }
+            }
+            integrated *= 2.0 * PI / (steps * steps) as f64;
+            let draws = 1u32 << 16;
+            let mut crossed = 0u32;
+            for index in 0..draws {
+                let u = crate::sampler::sample_2d(0, index, 0x0f0f_0f0f);
+                let pick = f64::from(crate::sampler::sample_1d(2, index, 0x0f0f_0f0f));
+                if let Some(scatter) = sample(pane, wo, DVec2::new(f64::from(u[0]), f64::from(u[1])), pick, false)
+                    && scatter.transmitted
+                {
+                    crossed += 1;
+                }
+            }
+            // The density is one lobe of the draw, so its mass over the transmitted hemisphere is the
+            // share of the transmission draws that crossed, not the share of every draw.
+            let measured = f64::from(crossed) / f64::from(draws) / share;
+            println!("roughness {roughness}: density mass {integrated:.4}, sampler crosses {measured:.4}");
+            assert!((integrated - measured).abs() < 0.01, "density {integrated} against draws {measured}");
+        }
     }
 }
