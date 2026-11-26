@@ -291,23 +291,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    library's names and refuses nothing when the library is empty; a node whose record is gone
    is a finding the inspector prints; cargo xtask ci is green.
   `files: crates/ui/src,crates/engine/src,app/src`
-- `[ ]` **Y16** the viewport shows the decor's tiling as a grid, so the scale and the seam are seen before a render
-  Why: The mapping is invisible until a final render is drawn: a person cannot tell whether a
-   veneer's picture covers 600 mm or 1200 mm, where the seam falls on a door, or whether the
-   grain runs along the board. A 3D editor the person knows shows a UV or checker grid for
-   exactly this, and the viewport already samples the same `scene::Decor` the tracer does, so
-   the grid is a view mode and not a document change.
-  Shape: A view toggle beside the existing display switches (`view.decor_grid`), off by default
-   and remembered per tab like the other view flags: while it is on, every decorated drawable
-   draws the decor's tiling as a checker — or the decor with a grid over it — so the scale, the
-   turn and the seam are read at a glance, and a surface with no decor keeps its plain tone.
-   The line weight and the step come from the theme and from the decor's own `covers`, never
-   from a literal in a shader. The one `scene::Decor::uv` runs for the overlay, the viewport's
-   shading and the tracer, so the grid cannot disagree with the print.
-  Done: Tests: the toggle is view state and moves no revision; a fixture drawable shows one
-   tiling per `covers` millimetres with the seam where the coordinate wraps; the overlay is off
-   by default and survives a document switch; cargo xtask ci is green.
-  `files: crates/ui/src,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/render/src`
 - `[ ]` **Y17** the card edits a node's decor mapping beside the slot its material sits in
   Why: Y15 landed the field, the command and the frame's composition, and nothing draws a field
   for them: the capability is an `Api` row and the `[ui]` debt entry says why. Its place is
@@ -328,6 +311,24 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **Y16** the viewport shows the decor's tiling as a grid, so the scale and the seam are seen before a render
+  Why: The mapping is invisible until a final render is drawn: a person cannot tell whether a
+   veneer's picture covers 600 mm or 1200 mm, where the seam falls on a door, or whether the
+   grain runs along the board. A 3D editor the person knows shows a UV or checker grid for
+   exactly this, and the viewport already samples the same `scene::Decor` the tracer does, so
+   the grid is a view mode and not a document change.
+  Shape: A view toggle beside the existing display switches (`view.decor_grid`), off by default
+   and remembered per tab like the other view flags: while it is on, every decorated drawable
+   draws the decor's tiling as a checker — or the decor with a grid over it — so the scale, the
+   turn and the seam are read at a glance, and a surface with no decor keeps its plain tone.
+   The line weight and the step come from the theme and from the decor's own `covers`, never
+   from a literal in a shader. The one `scene::Decor::uv` runs for the overlay, the viewport's
+   shading and the tracer, so the grid cannot disagree with the print.
+  Done: Tests: the toggle is view state and moves no revision; a fixture drawable shows one
+   tiling per `covers` millimetres with the seam where the coordinate wraps; the overlay is off
+   by default and survives a document switch; cargo xtask ci is green.
+  `files: crates/ui/src,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/render/src` — `91e6a47`
 
 - `[x]` **Y15** each object carries its own decor mapping — a scale, an offset and a turn — instead of inheriting the record's
   Why: `scene::Decor::uv` projects a drawable's local XY by the record's `covers` and `turns`,

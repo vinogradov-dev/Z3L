@@ -572,10 +572,3 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   nothing visible to move it against. The entry is `Api` until the card lands, and Y17 is that card; Y15's note
   (`plan/notes/Y15.md`) records the model, the command and the one shared coordinate function it
   would draw, and the card arrives with U129 (Y15, Y17).
-
-- `[plan]` `cargo xtask file` takes a reference file's new body as one `--body` argument, so it cannot
-  rewrite a file larger than the kernel's single-argument limit (128 KiB on Linux): `plan/map.md` was
-  157 588 bytes when Y15 added its row and the command answered "argument list too long". The other
-  writers already read from a channel instead — `task note` and `state where` take `--stdin` — and
-  `file` needs the same switch, or a whole-file rewrite of a reference file past that size has no
-  path through the tool (Y15).

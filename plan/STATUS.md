@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=1e67073 updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=91e6a47 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -14,7 +14,12 @@ file manager and copied beside the file, and a swatch tiles it at its own covera
 (Y14, ADR 0251). A board may wear its material's picture its own way: a node carries a scale, an
 offset and a quarter turn that the frame composes with its record's decor, so the door's grain
 runs along its height while the shelf's runs along its width and one picture still textures the
-whole cabinet (Y15, ADR 0252). A record may be deleted while objects name it — they keep the
+whole cabinet (Y15, ADR 0252). The viewport draws that tiling over a decorated board, as a display
+switch beside the ground shadow's: a line falls where the coordinate is a whole number, so one cell
+is one picture, the seam is where the sampler repeats and the guide cannot disagree with the print;
+the weight and the ink are the theme's points, an axis whose cell is narrower than its lines fades,
+a surface with no picture keeps its plain tone, and a fresh view starts with the guide off (Y16, ADR
+0253). A record may be deleted while objects name it — they keep the
 reference, the window lists that id in the danger ink, and the frame draws them with the default
 material. A catalogue plate shows the board's own grain: the final render's denoiser stops at a
 woodgrain's step rather than at a paint line, and the guide it reads is one ray from the pixel's
@@ -40,9 +45,8 @@ opens with a catalogue record that refers to a library material instead of descr
 ## Next
 
 Nothing is scheduled: eighteen open tasks wait in `## Next`, the order opens with a catalogue record
-that refers to a library material (O16), and the render stream's next entries are Y16 and Y17 — the
-tiling grid the viewport draws, and the card that edits a node's mapping, which waits on the
-material slot U129 adds.
+that refers to a library material (O16), and the render stream's next entry is Y17 — the card that
+edits a node's own picture placement, which waits on the render material slot U129 adds.
 
 ## Index
 
