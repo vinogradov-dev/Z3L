@@ -273,3 +273,4 @@ The code and `AGENTS.md` stay the authority for rules; a record keeps the reason
 | [0247](0247-a-rectangular-light-is-a-face-at-watts.md) | A rectangular light is a face at watts, and the tracer samples it by solid angle | Accepted; extends 0039 and 0213, and gives multiple importance sampling its second strategy |
 | [0248](0248-a-lens-is-the-renders-setting-and-a-sample-is-a-point-of-the-aperture.md) | A lens is the render's setting, and a sample is a point of the aperture | Superseded by 0249 in the home of the two numbers; the thin lens, the disc sampler and the circle of confusion stand |
 | [0249](0249-a-cameras-lens-is-document-data.md) | A camera's lens is document data | Accepted; supersedes 0248's home, and builds on 0036's camera node |
+| [0250](0250-the-render-place-is-a-picture-with-a-rail.md) | The render place is a picture with a rail, and the picture stays | Accepted; answers 0211's deferred preview and pays off the `[ui]` debt entry |
