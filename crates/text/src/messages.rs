@@ -461,6 +461,7 @@ messages! {
     WidthField = ["Width: {}", "Ширина: {}"],
     SectionResolved = ["Resolved", "Расчётные"],
     SectionMaterial = ["Material", "Материал"],
+    SectionSurface = ["Surface", "Поверхность"],
     SectionShape = ["Shape", "Форма"],
     SectionBanding = ["Banding", "Кромка"],
     PanelClassNoBanding = ["The class does not allow edge banding.", "Класс не допускает кромление."],
@@ -472,6 +473,10 @@ messages! {
         "Материал панели {} отсутствует в каталоге."
     ],
     MissingMaterial = ["Missing material {}", "Материал {} отсутствует"],
+    MaterialSlotMissing = [
+        "The library has no material {}; choose another one.",
+        "В библиотеке нет материала {}; выберите другой."
+    ],
     NoMaterial = ["No material", "Нет материала"],
     SectionOutline = ["Outline", "Контур"],
     SectionFootprint = ["Base outline", "Контур основания"],
@@ -992,6 +997,10 @@ messages! {
     PaletteNeedsNewName = [
         "Needs a new name; rename the node in the inspector.",
         "Нужно новое имя; переименуйте узел в инспекторе."
+    ],
+    PaletteNeedsMaterial = [
+        "Needs a material; choose it on the node's card in the inspector.",
+        "Нужен материал; выберите его в карточке узла в инспекторе."
     ],
     PaletteNeedsTwoNodes = ["Needs two or more selected nodes.", "Нужно два или больше выделенных узла."],
     PaletteNeedsCamera = ["Needs a selected camera.", "Нужна выделенная камера."],
@@ -1686,6 +1695,7 @@ messages! {
     CmdPlaceSelection = ["Place selection", "Разместить выделение"],
     CmdSetPivot = ["Set pivot", "Задать пивот"],
     CmdSetDecor = ["Place the material's picture", "Задать раскладку декора"],
+    CmdSetMaterial = ["Assign material", "Назначить материал"],
     CmdCenterPivot = ["Center pivot", "Центрировать пивот"],
     CmdRebaseOrigin = ["Rebase origin", "Переякорить начало"],
     CmdSetProperty = ["Set property", "Задать свойство"],

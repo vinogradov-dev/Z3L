@@ -285,6 +285,7 @@ static COMMANDS: &[CommandSpec] = &[
     node_cmds::NODE_PLACEMENT_WORLD_ZERO,
     node_cmds::NODE_PLACEMENT_SET_MANY,
     node_cmds::NODE_DECOR_SET,
+    node_cmds::NODE_MATERIAL_SET,
     node_cmds::NODE_PIVOT_SET,
     node_cmds::NODE_PIVOT_CENTER,
     node_cmds::NODE_ORIGIN_REBASE,
@@ -684,7 +685,11 @@ mod tests {
         // to the record the library holds (Y15).
         let decor = registry.get("node.decor.set").expect("node.decor.set is registered");
         assert_eq!(decor.label().text(Lang::En), "Place the material's picture");
-        assert_eq!(registry.specs().len(), 71);
+        // The slot the frame reads is written by its own command, so the card, the palette and the
+        // assistant all take one undo entry per assignment (U129, ADR 0245).
+        let slot = registry.get("node.material.set").expect("node.material.set is registered");
+        assert_eq!(slot.label().text(Lang::En), "Assign material");
+        assert_eq!(registry.specs().len(), 72);
     }
 
     #[test]

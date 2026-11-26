@@ -55,9 +55,9 @@ pub use inspect::{Code, Finding, Severity, SuggestedCommand, inspect};
 pub use mesh_cmds::{MESH_VERTICES_MOVE_ID, MESH_VERTICES_MOVE_LABEL, MeshVertexMove, MeshVerticesMove};
 pub use no_contact::NoContact;
 pub use node_cmds::{
-    AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodePivotCenter,
-    NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero, NodeProperty,
-    NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
+    AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup, NodeMaterialSet,
+    NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany, NodePlacementWorldZero,
+    NodeProperty, NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename, NodeUngroup,
 };
 pub use object_cmds::{
     OBJECT_BOOLEAN_REMOVE_ID, OBJECT_BOOLEAN_SET_ID, OBJECT_TOOL_SET_ID, ObjectBooleanRemove, ObjectBooleanSet,

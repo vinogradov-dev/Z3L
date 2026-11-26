@@ -1,5 +1,5 @@
-//! Commands that create, rename, place, copy, group and remove scene nodes, and edit their
-//! properties.
+//! Commands that create, rename, place, copy, group and remove scene nodes, edit their properties
+//! and give a surface-bearing node the render material it wears.
 //!
 //! A panel is an atomic leaf: it owns its geometry and machining and is never split into child
 //! nodes. A container is either an ordinary group or a furniture component; a component is marked
@@ -13,8 +13,8 @@ use std::collections::HashSet;
 
 use catalog::Directory;
 use model::{
-    ClassCode, DecorMapping, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange,
-    PropertyValue, SYSTEM_CLASS,
+    ClassCode, DecorMapping, FrameAnchor, Id, MaterialRef, PivotLocal, Placement, Project, ProjectError,
+    PropertyChange, PropertyValue, SYSTEM_CLASS,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -615,6 +615,59 @@ fn node_decor_set_run(
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodeDecorSet>(params, NODE_DECOR_SET_ID)?;
     project.set_node_decor(params.node, params.mapping)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the render material assignment command.
+pub const NODE_MATERIAL_SET_ID: &str = "node.material.set";
+
+/// User-facing label of the render material assignment command.
+pub const NODE_MATERIAL_SET_LABEL: Message = Message::CmdSetMaterial;
+
+/// Parameters for `node.material.set`.
+///
+/// The command gives a panel or an object the one record of the workshop's render library that
+/// every surface of it wears, or clears the slot so the frame draws the placeholder tone (ADR 0245).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NodeMaterialSet {
+    /// Node that wears the material; a panel and an object draw a surface, and a container, a
+    /// camera and a light are refused.
+    pub node: Id,
+    /// The record to wear, or `None` to keep no material at all.
+    ///
+    /// A reference the workshop's library does not hold is accepted: a scene travels between
+    /// workshops with the numbers it named, and the frame draws that node in the placeholder tone
+    /// (ADR 0245).
+    #[serde(default)]
+    pub material: Option<MaterialRef>,
+}
+
+/// The `node.material.set` command.
+pub(crate) const NODE_MATERIAL_SET: CommandSpec = CommandSpec::new::<NodeMaterialSet>(
+    NODE_MATERIAL_SET_ID,
+    NODE_MATERIAL_SET_LABEL,
+    node_material_set_enabled,
+    node_material_set_run,
+);
+
+fn node_material_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<NodeMaterialSet>(params, NODE_MATERIAL_SET_ID) else {
+        return false;
+    };
+    let project = session.project();
+    let id = params.node;
+    id != project.root().id() && (project.panel(id).is_some() || project.object(id).is_some())
+}
+
+fn node_material_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<NodeMaterialSet>(params, NODE_MATERIAL_SET_ID)?;
+    project.set_node_material(params.node, params.material)?;
     Ok(CommandOutcome::changed())
 }
 
