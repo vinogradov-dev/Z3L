@@ -261,7 +261,7 @@ impl FileMenu {
             mode,
             folder: folder_of(current),
             name: match mode {
-                PickMode::Open | PickMode::Prices => None,
+                PickMode::Open | PickMode::Prices | PickMode::Picture => None,
                 // The render place builds its own order: the image's name comes from the scene's.
                 PickMode::Image => Some(format!("render.{}", crate::file_picker::IMAGE_EXTENSION)),
                 PickMode::Save => Some(name.unwrap_or_else(|| format!("scene.{EXTENSION}"))),
