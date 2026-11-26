@@ -167,6 +167,9 @@ impl Project {
         candidate.set_nominal_size(nominal_size);
         candidate.set_outline(outline);
         candidate.nominal_contour()?;
+        if candidate.is_contour() && !trims.is_zero() {
+            return Err(ProjectError::PanelTrimNeedsRectangle { id });
+        }
         candidate.set_bevels(bevels.to_vec());
         // The trims are the plan's own answer, not a second move of the ends: the size above already
         // holds the board they describe.
@@ -225,6 +228,10 @@ impl Project {
         candidate.move_frame_to(min)?;
         candidate.set_nominal_size(nominal_size);
         candidate.set_outline(PanelOutline::Contour { contour: anchored });
+        // A ring has no four nominal ends: the trims are already in the ring the bake drew, so the
+        // numbers that made it are dropped instead of stored against an outline that never reads
+        // them (N31, ADR 0240).
+        candidate.set_trims(PanelTrims::ZERO);
         candidate.set_contour_banding(baked.banding().to_vec(), baked.order().to_vec());
         candidate.set_bevels(baked.bevels().to_vec());
         candidate.geometry_with_fallbacks()?;
@@ -1833,6 +1840,83 @@ mod tests {
             Err(ProjectError::PanelContour(PanelContourError::AlreadyContour))
         );
         assert_eq!(project.revision(), stored, "a refused conversion changes nothing");
+    }
+
+    #[test]
+    fn a_resize_keeps_the_end_trims_and_a_ring_refuses_them() {
+        // A resize writes the nominal size and nothing else: the trims are what the shop does to the
+        // board, so they stay put and the material follows the new frame (N31, ADR 0240).
+        let mut project = sample_project();
+        let root = project.root().id();
+        let panel = project
+            .add_panel(root, "Front", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
+            .expect("a panel");
+        project.set_panel_trim(panel, RectEdge::Bottom.id(), millimetres(2)).expect("a cut end");
+        project.set_panel_trim(panel, RectEdge::Top.id(), millimetres(-14)).expect("a lap");
+        let wider = PanelNominalSize::new(millimetres(700), millimetres(600)).expect("a size");
+        project.set_panel_nominal_size(panel, wider).expect("a resize");
+        let resized = project.panel(panel).expect("the panel");
+        assert_eq!(resized.trims().get(RectEdge::Bottom.id()), millimetres(2), "the cut end stays");
+        assert_eq!(resized.trims().get(RectEdge::Top.id()), millimetres(-14), "and so does the lap");
+        assert_eq!(
+            resized.manufactured_size().expect("the board").width(),
+            millimetres(612),
+            "the board grows with the frame it is cut from"
+        );
+
+        // A ring has no four nominal ends, so a shape write that names one is refused by name rather
+        // than storing a number the ring never reads.
+        let ring = Contour::from_polygon(
+            [
+                [Length::ZERO, Length::ZERO],
+                [millimetres(300), Length::ZERO],
+                [millimetres(300), millimetres(200)],
+                [Length::ZERO, millimetres(200)],
+            ]
+            .to_vec(),
+        )
+        .expect("a ring");
+        let framed = project
+            .add_panel(root, "Ring", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
+            .expect("a panel");
+        let refused = project.set_panel_shape(
+            framed,
+            PanelNominalSize::new(millimetres(300), millimetres(200)).expect("a size"),
+            PanelOutline::Contour { contour: ring },
+            &[],
+            PanelTrims::new(Length::ZERO, Length::ZERO, Length::ZERO, millimetres(5)).expect("a trim"),
+        );
+        assert!(
+            matches!(refused, Err(ProjectError::PanelTrimNeedsRectangle { .. })),
+            "a ring refuses the number by name: {refused:?}"
+        );
+        assert_eq!(project.panel(framed).expect("the panel").nominal_size(), sample_nominal(), "nothing was written");
+    }
+
+    #[test]
+    fn converting_a_trimmed_board_bakes_the_board_and_drops_the_numbers() {
+        // The trims are read by the rectangle generator, so the bake already drew them into the
+        // ring: the panel that comes out is the board, the numbers that made it are gone, and the
+        // world points the person cut stay exactly where they were (N31, ADR 0240).
+        let mut project = sample_project();
+        let panel_id = Id::new(2).expect("id");
+        project.set_panel_trim(panel_id, RectEdge::Bottom.id(), millimetres(2)).expect("a cut end");
+        project.set_panel_trim(panel_id, RectEdge::Top.id(), millimetres(-14)).expect("a lap");
+        let board = project.panel(panel_id).expect("panel").manufactured_size().expect("the board");
+        let placed = project.panel(panel_id).expect("panel").placement();
+
+        project.convert_panel_to_contour(panel_id).expect("convert");
+        let panel = project.panel(panel_id).expect("panel");
+        assert!(panel.is_contour(), "the board is a ring now");
+        assert!(panel.trims().is_zero(), "a ring has no four ends to trim");
+        assert_eq!(panel.nominal_size(), board, "the frame is the board the shop cuts");
+        assert_eq!(panel.outline_contour().expect("ring").bounds_micrometres(), ([0, 0], [700_000, 512_000]));
+        assert_eq!(panel.placement().translation().x, placed.translation().x, "the frame stays at its X");
+        assert_eq!(
+            panel.placement().translation().y,
+            placed.translation().y + 2.0,
+            "and follows the ring to keep the world points still"
+        );
     }
 
     #[test]

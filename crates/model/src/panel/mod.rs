@@ -919,6 +919,9 @@ pub enum PanelError {
     /// A contour panel stored edge or corner banding, which belongs to a rectangle.
     #[error("a contour panel cannot carry edge or corner banding, only ring banding")]
     ContourWithBanding,
+    /// A contour panel stored end trims, whose four nominal ends a ring does not have.
+    #[error("a contour panel has no nominal ends, so it cannot carry end trims")]
+    ContourWithTrims,
     /// A rectangular panel stored banding against contour ring segments.
     #[error("a rectangular panel cannot carry banding on a contour ring segment")]
     RectWithRingBanding,
@@ -1016,6 +1019,9 @@ impl TryFrom<PanelWire> for Panel {
             PanelOutline::Contour { contour } => {
                 if !wire.edge_banding.is_empty() || !wire.corner_banding.is_empty() {
                     return Err(PanelError::ContourWithBanding);
+                }
+                if !wire.trims.is_zero() {
+                    return Err(PanelError::ContourWithTrims);
                 }
                 validate_ring_banding(contour, &wire.ring_banding)?;
                 let contour_size = contour_nominal_size(contour)?;
@@ -1311,6 +1317,13 @@ mod tests {
         }]);
         let error = serde_json::from_value::<Panel>(banded).expect_err("rectangle banding is not a ring");
         assert!(error.to_string().contains("contour panel cannot carry edge or corner banding"), "error was {error}");
+
+        // A ring has no four nominal ends, so a stored trim is a number nothing reads: the file is
+        // refused instead of loading a board that ignores one of its fields (N31, ADR 0240).
+        let mut trimmed = serde_json::to_value(&panel).expect("json");
+        trimmed["trims"] = serde_json::json!({ "bottom": 2_000, "right": 0, "top": 0, "left": 0 });
+        let error = serde_json::from_value::<Panel>(trimmed).expect_err("a ring carries no trims");
+        assert!(error.to_string().contains("cannot carry end trims"), "error was {error}");
     }
 
     #[test]
