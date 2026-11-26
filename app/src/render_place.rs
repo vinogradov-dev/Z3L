@@ -513,6 +513,40 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_run_keeps_the_picture_it_had_and_writes_no_file() {
+        // Cancelling is a thing a person does after looking at the picture: the place keeps the last
+        // one it published, and the destination stays as it was because nothing was written (Y6).
+        let Ok(state) = crate::ui_shots::render_state() else {
+            println!("this machine has no GPU adapter to cancel a render on");
+            return;
+        };
+        let ctx = eframe::egui::Context::default();
+        let (frame, camera) = fixture();
+        let mut place = RenderPlace::new();
+        let path = testkit::scratch_dir("render-place-cancel").join("plate.png");
+        place.set_path(path.clone());
+        place.settings().width = 48;
+        place.settings().height = 32;
+        place.settings().samples = 512;
+        place.start(&ctx, Some(&state), frame, camera, 1).expect("the run starts");
+        // The first checkpoint arrives within a sample or two of a small image; the loop is bounded so
+        // a machine that cannot publish at all fails on the assertion rather than hanging.
+        let mut waited = 0;
+        while place.picture().is_none() && waited < 2000 {
+            place.poll(&ctx, Some(&state));
+            std::thread::sleep(Duration::from_millis(2));
+            waited += 1;
+        }
+        let shown = place.picture().expect("the run published a picture before the cancel");
+        place.cancel();
+        place.wait(&ctx, Some(&state));
+        assert!(matches!(place.stage(), Stage::Cancelled(_)), "the run reports a cancel: {:?}", place.stage());
+        assert_eq!(place.picture(), Some(shown), "the picture the cancel interrupted stays on the page");
+        assert!(!path.exists(), "a cancelled run writes no file");
+        place.release(&state);
+    }
+
+    #[test]
     fn a_run_without_a_device_or_a_destination_is_a_sentence_not_a_thread() {
         let ctx = eframe::egui::Context::default();
         let mut place = RenderPlace::new();
