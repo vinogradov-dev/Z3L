@@ -374,6 +374,55 @@ fn a_catalogue_without_stock_writes_no_sheet_row_and_no_currency() {
 }
 
 #[test]
+fn a_trimmed_part_is_exported_as_the_board_the_shop_cuts() {
+    // N31: the frame and the board are two numbers and the package states both — the nominal columns
+    // are the frame the part is placed by, the measured ones and the contour table are the board the
+    // saw cuts, so the end trims reach every reader and a lap is never a second story about the size
+    // (ADR 0240).
+    let (mut project, product) = testkit::sample_product_project();
+    let catalog = testkit::sample_catalog();
+    let panel = project
+        .add_panel(
+            product,
+            "Front",
+            model::PanelNominalSize::new(millimetres(600), millimetres(700)).expect("a size"),
+            Some(sample_material_id()),
+            millimetres(18),
+            model::Placement::IDENTITY,
+        )
+        .expect("a panel");
+    project.set_panel_trim(panel, model::RectEdge::Bottom.id(), millimetres(2)).expect("a cut end");
+    project.set_panel_trim(panel, model::RectEdge::Top.id(), millimetres(-14)).expect("a lap at the other");
+    let package = OrderPackage::build(&project, &catalog, golden_options(&project)).expect("a package");
+
+    let parts = package.table("parts").expect("the parts table");
+    let row =
+        parts.rows().iter().find(|row| row.first() == Some(&Cell::Integer(panel.get() as i64))).expect("the part row");
+    assert_eq!(row.get(5), Some(&Cell::Integer(600_000)), "the frame's length");
+    assert_eq!(row.get(6), Some(&Cell::Integer(700_000)), "and its width");
+    assert_eq!(row.get(7), Some(&Cell::Integer(600_000)), "the board is the frame along X");
+    assert_eq!(row.get(8), Some(&Cell::Integer(712_000)), "and 12 mm wider: 2 cut in, 14 let out");
+    assert_eq!(row.get(9), Some(&Cell::Integer(600 * 712)), "the core area is the cut area");
+
+    // The outline is the board, not the frame: it starts 2 mm inside the frame at the cut end and its
+    // top edge stands 14 mm past the nominal one.
+    let contours = package.table("contours").expect("the contours table");
+    let mut of_part: Vec<&Vec<Cell>> =
+        contours.rows().iter().filter(|row| row.first() == Some(&Cell::Integer(panel.get() as i64))).collect();
+    of_part.sort_by_key(|row| match row.get(2) {
+        Some(Cell::Integer(seq)) => *seq,
+        _ => 0,
+    });
+    assert_eq!(of_part.len(), 4, "a rectangle is four segments");
+    assert_eq!(of_part.first().and_then(|row| row.get(5)), Some(&Cell::Integer(2_000)), "the cut end");
+    assert_eq!(
+        of_part.get(1).and_then(|row| row.get(7)),
+        Some(&Cell::Integer(714_000)),
+        "the far end laps 14 mm past the frame"
+    );
+}
+
+#[test]
 fn a_rule_takes_the_trim_from_both_sides() {
     assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_length(2_800_000), 2_780_000);
     assert_eq!(Rules { kerf_um: 4_000, trim_um: 10_000 }.usable_width(2_070_000), 2_050_000);

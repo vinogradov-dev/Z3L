@@ -1138,6 +1138,49 @@ mod tests {
     }
 
     #[test]
+    fn a_trimmed_board_answers_the_size_and_the_ring_the_two_numbers_name() {
+        // The task's own case (N31): a 700 x 500 frame cut 2 mm in at one end and let 14 mm out at
+        // the opposite one is a 700 x 512 board, and the ring the outline generator draws is that
+        // rectangle, 2 mm inside the frame at the cut end. One derivation answers both, so the
+        // card, the exporter and the mesh cannot tell three stories about one board (ADR 0240).
+        let mut project = sample_project();
+        let root = project.root().id();
+        let panel = project
+            .add_panel(root, "Front", sample_nominal(), None, sample_thickness(), Placement::IDENTITY)
+            .expect("a panel");
+        let frame = sample_nominal();
+        project.set_panel_trim(panel, RectEdge::Bottom.id(), millimetres(2)).expect("a cut end");
+        project.set_panel_trim(panel, RectEdge::Top.id(), millimetres(-14)).expect("a lap at the other");
+        let panel = project.panel(panel).expect("the panel");
+        assert_eq!(panel.nominal_size(), frame, "the frame is where it was");
+
+        let made = panel.manufactured_size().expect("the board resolves");
+        assert_eq!(made.length(), frame.length(), "the length is untouched");
+        assert_eq!(made.width(), frame.width().checked_add(millimetres(12)).expect("a width"));
+
+        let (ring, sources) = panel.contour_with_sources().expect("the ring");
+        assert_eq!(sources.len(), 4, "a rectangle draws four segments");
+        let (low, high) = ring.bounds().expect("the ring has bounds");
+        assert!((low.y - 2.0).abs() < 1.0e-6, "the cut end sits 2 mm inside the frame: {low:?}");
+        assert!(
+            (high.y - frame.width().millimetres_f64() - 14.0).abs() < 1.0e-6,
+            "and the lap runs 14 mm past it: {high:?}"
+        );
+        assert!(low.x.abs() < 1.0e-6 && (high.x - frame.length().millimetres_f64()).abs() < 1.0e-6);
+        assert!(
+            (high.y - low.y - made.width().millimetres_f64()).abs() < 1.0e-6,
+            "the ring spans the size the board answers"
+        );
+
+        // A board with no trim is the frame to the micrometre, so an ordinary panel is unaffected.
+        let id = panel.id();
+        project.set_panel_trim(id, RectEdge::Bottom.id(), Length::ZERO).expect("the cut end is put back");
+        project.set_panel_trim(id, RectEdge::Top.id(), Length::ZERO).expect("and the lap");
+        let plain = project.panel(id).expect("the panel");
+        assert_eq!(plain.manufactured_size().expect("the board resolves"), frame, "an untrimmed board is its frame");
+    }
+
+    #[test]
     fn a_trim_does_not_accumulate_and_the_first_number_puts_the_end_back() {
         // The number belongs to the end: the same number twice moves nothing, and the number the end
         // had puts the material back exactly — the defect a delta-shaped field would have.
