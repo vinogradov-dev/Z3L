@@ -1110,6 +1110,7 @@ messages! {
     ToolStyle = ["Display style", "Стиль отображения"],
     ToolContours = ["Contours", "Контуры"],
     ToolShadows = ["Shadows", "Тени"],
+    ToolDecorGrid = ["Tiling grid", "Сетка декора"],
     ToolSection = ["Section", "Сечение"],
     ToolLayoutOne = ["One view", "Один вид"],
     ToolLayoutTwo = ["Two views", "Два вида"],

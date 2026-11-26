@@ -151,6 +151,8 @@ pub enum ToolAction {
     ToggleSnapMode,
     /// Turns the ground shadow of the active view on or off (U107).
     ToggleShadows,
+    /// Turns the tiling grid of the active view on or off (Y16).
+    ToggleDecorGrid,
     /// Arms the ruler, or disarms it when it already is: two clicks measure a length (ADR 0118).
     Measure,
     /// Arms one contour boolean over the selection, or drops it when it is already armed (G3).
@@ -354,6 +356,8 @@ pub struct RibbonView {
     pub snap_mode: model::SnapMode,
     /// The active view draws the ground shadow (U107).
     pub shadows: bool,
+    /// The active view draws a decorated board's tiling grid (Y16).
+    pub decor_grid: bool,
 }
 
 /// What one ribbon click asked the shell's view to do.
@@ -371,6 +375,8 @@ pub enum RibbonViewAction {
     ToggleSnapMode,
     /// Turn the active view's ground shadow on or off (U107).
     ToggleShadows,
+    /// Turn the active view's tiling grid on or off (Y16).
+    ToggleDecorGrid,
 }
 
 /// What drawing the ribbon changed: whether a tool started, and the one view action it asked for.
@@ -438,6 +444,8 @@ pub struct RibbonContext {
     pub snap_mode: model::SnapMode,
     /// Whether the active view draws the ground shadow (U107).
     pub shadows: bool,
+    /// Whether the active view draws the tiling grid of a decorated board (Y16).
+    pub decor_grid: bool,
     /// A running draft: its tool, how many points it has, and whether it is closed.
     pub draft: Option<(DrawTool, usize, bool)>,
     /// What the next click of the Panel cell makes: the class and the build the card holds (U123).
@@ -899,6 +907,7 @@ mod tests {
             snaps: model::SnapKinds::ALL,
             snap_mode: model::SnapMode::default(),
             shadows: true,
+            decor_grid: false,
             draft: None,
             build: crate::editor::PanelBuild::default(),
         }
@@ -1076,6 +1085,7 @@ mod tests {
                     "Shadows  (S)",
                     "Switch the projection  (O)",
                     "Tangent",
+                    "Tiling grid",
                     "World axes",
                 ],
             ),

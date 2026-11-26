@@ -1810,6 +1810,19 @@ fn the_display_group_asks_the_shell_for_the_shadow_switch() {
 }
 
 #[test]
+fn the_display_group_asks_the_shell_for_the_tiling_grid_switch() {
+    // Y16: the grid is the second view switch beside the shadow's, so a press leaves `ui` as a view
+    // action and writes no document.
+    let mut session = Session::with_directory(sample_project(), sample_catalog());
+    let mut editor = Editor::new();
+    let toggled = editor
+        .apply_ribbon_actions(&mut session, vec![ToolAction::ToggleDecorGrid], text::Lang::En)
+        .expect("the switch runs");
+    assert_eq!(toggled.view, Some(RibbonViewAction::ToggleDecorGrid));
+    assert_eq!(session.project().revision().get(), 0, "a view switch writes no document");
+}
+
+#[test]
 fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
     let (project, _panel) = contour_panel_project();
     let mut session = Session::with_directory(project, sample_catalog());
@@ -1821,6 +1834,7 @@ fn the_ribbon_marks_the_tool_that_owns_the_next_click() {
         snaps: model::SnapKinds::ALL,
         snap_mode: model::SnapMode::default(),
         shadows: true,
+        decor_grid: false,
     };
 
     let mut fill = None;

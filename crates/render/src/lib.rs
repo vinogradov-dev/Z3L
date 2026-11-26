@@ -215,6 +215,11 @@ struct CameraUniform {
     /// The plate's alpha comes from here, because a change is read at draw time: a drag of the
     /// slider costs one uniform write and no upload of any buffer (U109).
     floor_opacity: [f32; 4],
+    /// `x` whether this view draws a decorated board's tiling, `y` one line's half-width in physical
+    /// pixels (Y16).
+    decor_grid: [f32; 4],
+    /// The grid's ink in gamma space and, in `a`, how much of it one line lays over the board.
+    decor_grid_ink: [f32; 4],
 }
 
 struct RenderTargets {
@@ -295,7 +300,8 @@ impl ViewRegion {
 /// The style travels per view, so two neighbours in one workspace can draw the same scene with
 /// different passes while one texture and one edge buffer still serve them (ADR 0070). The shadow
 /// travels with it: its strength and colour are the workspace's, its switch is this view's, so one
-/// cell of a split may darken the floor while its neighbour does not (U107).
+/// cell of a split may darken the floor while its neighbour does not (U107). The tiling grid travels
+/// the same way (Y16).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewSpec {
     /// The camera this view looks through.
@@ -307,6 +313,83 @@ pub struct ViewSpec {
     /// The ground shadow it draws with: the workspace's colour and strength under this view's
     /// switch. A change is read when the uniform is written, so it never costs an upload.
     pub shadows: ContactShadows,
+    /// The tiling grid it draws over a decorated board, or `None` while its switch is off (Y16).
+    pub decor_grid: Option<DecorGrid>,
+}
+
+/// The tiling grid a view draws over a decorated board: one cell per picture, a line where the
+/// coordinate wraps (Y16).
+///
+/// The switch is the view's, like the ground shadow's, so one cell of a split can read the tiling
+/// while its neighbour looks at the picture. The **step is the decor's own**: the vertex carries
+/// [`scene::Decor::uv`], which already divides by the record's `covers` and adds the record's turn and
+/// the node's mapping, so one cell is one whole picture and the seam falls exactly where the sampler
+/// repeats the image. The grid therefore cannot disagree with the final render, which reads the same
+/// coordinate. Only the line is here — its weight in physical pixels and its ink — because a line is
+/// screen paint over the model and never a world size (ADR 0111).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DecorGrid {
+    /// Half the width of one line, in physical pixels.
+    half_width: f32,
+    /// The line's ink in gamma space, and in `a` how much of it one line lays over the board.
+    ink: [f32; 4],
+}
+
+impl DecorGrid {
+    /// A grid whose lines are `stroke` physical pixels wide, drawn in `ink`.
+    ///
+    /// A stroke that is not a finite positive number is one pixel, and a line is never thinner than
+    /// half a pixel per side: a narrower guide fades out of the picture at the first board seen at a
+    /// grazing angle, and a minimum nobody can see is a wrong minimum.
+    pub fn new(stroke: f32, ink: [f32; 4]) -> Self {
+        let stroke = if stroke.is_finite() && stroke > 0.0 { stroke } else { 1.0 };
+        Self { half_width: (stroke * 0.5).max(MIN_DECOR_GRID_HALF), ink: sanitize_ink(ink) }
+    }
+
+    /// Half the width of one line, in physical pixels.
+    pub fn half_width(self) -> f32 {
+        self.half_width
+    }
+
+    /// The line's ink in gamma space, and in `a` how much of it one line lays over the board.
+    pub fn ink(self) -> [f32; 4] {
+        self.ink
+    }
+}
+
+/// The thinnest a tiling line's half-width may be, in physical pixels.
+const MIN_DECOR_GRID_HALF: f32 = 0.5;
+
+/// A gamma-space ink and its opacity, repaired to the closed unit interval.
+///
+/// A shell builds this from the theme, but a frame may be built by hand: a colour past white or below
+/// black is a blend that never leaves the surface it is drawn over, so it is clamped where the ink
+/// arrives instead of trusted.
+fn sanitize_ink(ink: [f32; 4]) -> [f32; 4] {
+    let ink = sanitize_color(ink);
+    ink.map(|component| component.clamp(0.0, 1.0))
+}
+
+/// The two uniform slots a view's tiling grid needs: the switch with the line's weight, then the ink.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DecorGridSlot {
+    /// `x` = whether the view draws the grid, `y` = one line's half-width in physical pixels.
+    grid: [f32; 4],
+    /// The ink in gamma space and, in `a`, how much of it one line lays over the board.
+    ink: [f32; 4],
+}
+
+impl DecorGridSlot {
+    /// The slots of `grid`, or the off slots when this view draws none.
+    fn of(grid: Option<DecorGrid>) -> Self {
+        match grid {
+            Some(grid) => {
+                let ink = grid.ink();
+                Self { grid: [1.0, grid.half_width(), 0.0, 0.0], ink }
+            }
+            None => Self { grid: [0.0; 4], ink: [0.0; 4] },
+        }
+    }
 }
 
 impl ViewSpec {
@@ -817,7 +900,15 @@ impl ViewportRenderer {
         lighting: &Lighting,
     ) {
         let region = ViewRegion { x: 0, y: 0, width: self.size[0], height: self.size[1] };
-        let view = ViewSpec { camera: frame.camera, region, shading: frame.shading, shadows: frame.contact_shadows };
+        // A frame drawn whole carries no tiling grid: the guide needs the screen's own scale, which
+        // only the shell knows, so the per-view spec is where a view asks for one (Y16).
+        let view = ViewSpec {
+            camera: frame.camera,
+            region,
+            shading: frame.shading,
+            shadows: frame.contact_shadows,
+            decor_grid: None,
+        };
         self.render_views(device, queue, frame, lighting, &[view]);
     }
 
@@ -868,6 +959,7 @@ impl ViewportRenderer {
                 &view.shadows,
                 frame.grid.extent_mm,
                 frame.floor_opacity,
+                DecorGridSlot::of(view.decor_grid),
             ));
             offsets.push((index as u64 * self.camera_stride) as u32);
             let (x, y, width, height) = region.scissor(self.size[0], self.size[1]);
@@ -890,6 +982,7 @@ impl ViewportRenderer {
                     &frame.contact_shadows,
                     frame.grid.extent_mm,
                     frame.floor_opacity,
+                    DecorGridSlot::of(None),
                 )),
             );
             self.ground.update(
@@ -1126,7 +1219,7 @@ impl ViewportRenderer {
 ///
 /// The ground travels in it too, because the plate is not the model: its size, its opacity and the
 /// shadow it carries are all read when the fragment runs, so a slider of any of them costs one
-/// uniform write and no buffer (U109).
+/// uniform write and no buffer (U109). The tiling grid travels the same way (Y16).
 fn camera_uniform(
     camera: Camera,
     lighting: &Lighting,
@@ -1134,6 +1227,7 @@ fn camera_uniform(
     shadows: &ContactShadows,
     extent_mm: f64,
     floor_opacity: f32,
+    grid: DecorGridSlot,
 ) -> CameraUniform {
     let eye = camera.eye();
     let light = lighting.key_direction.try_normalize().unwrap_or(DVec3::Z);
@@ -1159,6 +1253,8 @@ fn camera_uniform(
             ground::penumbra_texels(extent_mm),
         ],
         floor_opacity: [sanitize_opacity(floor_opacity), 0.0, 0.0, 0.0],
+        decor_grid: grid.grid,
+        decor_grid_ink: grid.ink,
     }
 }
 
@@ -1685,8 +1781,16 @@ mod tests {
         // The plate reads one number from the camera slot, so a drag of the slider writes a uniform.
         // A hostile frame value is clamped where the slot is written, not trusted.
         let uniform = |opacity| {
-            camera_uniform(Camera::default(), &Lighting::default(), 1.0, &ContactShadows::default(), 5000.0, opacity)
-                .floor_opacity[0]
+            camera_uniform(
+                Camera::default(),
+                &Lighting::default(),
+                1.0,
+                &ContactShadows::default(),
+                5000.0,
+                opacity,
+                DecorGridSlot::of(None),
+            )
+            .floor_opacity[0]
         };
         assert_eq!(uniform(1.0), 1.0, "an opaque floor is the value a fresh workspace carries");
         assert_eq!(uniform(0.4), 0.4, "and forty percent is the plate a session asks for");
@@ -1696,11 +1800,44 @@ mod tests {
         assert_eq!(uniform(f32::NAN), 1.0, "a NaN falls back to the floor that hides nothing");
         let frame = SceneFrame { floor_opacity: 0.4, ..SceneFrame::default() };
         assert_eq!(
-            camera_uniform(frame.camera, &frame.lighting, 1.0, &frame.contact_shadows, 5000.0, frame.floor_opacity)
-                .floor_opacity[0],
+            camera_uniform(
+                frame.camera,
+                &frame.lighting,
+                1.0,
+                &frame.contact_shadows,
+                5000.0,
+                frame.floor_opacity,
+                DecorGridSlot::of(None),
+            )
+            .floor_opacity[0],
             0.4,
             "the frame's own value is what the plate draws with"
         );
+    }
+
+    #[test]
+    fn the_tiling_grid_is_the_view_s_switch_with_the_theme_s_line_and_ink() {
+        // The grid is view state read at draw time, like the shadow's switch: turning it on writes one
+        // uniform slot and no buffer, and the two boards of a split may disagree about it (Y16).
+        let off = DecorGridSlot::of(None);
+        assert_eq!(off.grid, [0.0; 4], "a view that asks for no grid draws none");
+        assert_eq!(off.ink, [0.0; 4], "and carries no ink at all");
+        // The ink is the theme's guide colour and the app's own alpha; the shader adds nothing.
+        let ink = [0.89, 0.73, 0.43, 0.65];
+        let on = DecorGridSlot::of(Some(DecorGrid::new(3.0, ink)));
+        assert_eq!(on.grid[0], 1.0, "the switch reaches the fragment as a switch");
+        assert_eq!(on.grid[1], 1.5, "and one line's half-width is half the stroke the theme names");
+        assert_eq!(on.ink, ink, "the ink is what the theme said, not a constant in the shader");
+        // A stroke the app could not convert, or a zero one, is a pixel: a line thinner than the
+        // screen's raster would fade out of the picture.
+        for stroke in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+            let slot = DecorGridSlot::of(Some(DecorGrid::new(stroke, ink)));
+            assert_eq!(slot.grid[1], 0.5, "{stroke} is not a line, so the half-width falls to the floor");
+        }
+        let hostile = DecorGridSlot::of(Some(DecorGrid::new(1.0, [f32::NAN, 1.0, -3.0, 2.0])));
+        assert!(hostile.ink.iter().all(|value| value.is_finite()), "a hostile ink is repaired: {:?}", hostile.ink);
+        assert!(hostile.ink[..3].iter().all(|value| (0.0..=1.0).contains(value)));
+        assert!(hostile.ink[3] <= 1.0);
     }
 
     #[test]
@@ -1799,12 +1936,14 @@ mod tests {
                 region,
                 shading: ShadingStyle::Wireframe,
                 shadows: ContactShadows::default(),
+                decor_grid: None,
             },
             ViewSpec {
                 camera: Camera::default(),
                 region,
                 shading: ShadingStyle::Shaded,
                 shadows: ContactShadows::default(),
+                decor_grid: None,
             },
         ];
         assert_eq!(views[0].passes(), StylePasses::new(ShadingStyle::Wireframe));
@@ -2179,6 +2318,63 @@ mod tests {
         Decor::new(id, image, covers, turns).expect("a decor")
     }
 
+    /// The columns a board's vertical lines fill, one centre per line: a line runs the board's whole
+    /// height, while a column of a cell carries only the crossings of the other axis.
+    fn line_columns(pixels: &[u8], width: u32, height: u32, threshold: usize) -> Vec<u32> {
+        let mut runs: Vec<(u32, u32)> = Vec::new();
+        for x in 0..width {
+            let inked = (0..height)
+                .filter(|y| {
+                    let index = (*y as usize * width as usize + x as usize) * 4;
+                    pixels
+                        .get(index..index + 4)
+                        .is_some_and(|pixel| i32::from(pixel[0]) - i32::from(pixel[2]) > 32 && pixel[0] > 64)
+                })
+                .count();
+            if inked > threshold {
+                match runs.last_mut() {
+                    Some((_, last)) if *last + 1 == x => *last = x,
+                    _ => runs.push((x, x)),
+                }
+            }
+        }
+        runs.into_iter().map(|(first, last)| (first + last) / 2).collect()
+    }
+
+    /// The columns a lit board occupies: the first and the last whose rows are brighter than the
+    /// viewport's background. The test reads the board's own place instead of assuming the camera's
+    /// field of view.
+    fn lit_columns(pixels: &[u8], width: u32, height: u32) -> (u32, u32) {
+        let lit = |x: u32| {
+            (0..height)
+                .filter(|y| {
+                    let index = (*y as usize * width as usize + x as usize) * 4;
+                    pixels.get(index..index + 4).is_some_and(|pixel| pixel[0] > 150 && pixel[1] > 150 && pixel[2] > 150)
+                })
+                .count()
+        };
+        let mut first = None;
+        let mut last = 0;
+        for x in 0..width {
+            if lit(x) > height as usize / 4 {
+                first.get_or_insert(x);
+                last = x;
+            }
+        }
+        (first.unwrap_or(0), last)
+    }
+
+    /// A one-tone decor: a white picture covering `covers` millimetres of board.
+    ///
+    /// Nothing in the picture competes with the guide drawn over it, so every coloured pixel of a
+    /// board faced with this is the overlay's own (Y16).
+    fn plain(covers: i64) -> Decor {
+        let image = Arc::new(scene::DecorImage::new(2, 2, vec![[255, 255, 255, 255]; 4]).expect("four texels"));
+        let id = DecorId::new(2).expect("two decor");
+        let covers = units::Length::from_millimetres(covers).expect("a length");
+        Decor::new(id, image, covers, scene::Turns::ALONG).expect("a decor")
+    }
+
     /// Counts the lit pixels of one rectangle whose red channel leads their blue one, and the other
     /// way round: `(red, blue)`.
     ///
@@ -2256,6 +2452,69 @@ mod tests {
         renderer.upload(&device, &queue, &frame).expect("the mapped board uploads");
         assert_eq!(renderer.decors.len(), 1, "a node's own scale changes the coordinate, not the picture");
         assert_eq!(renderer.faces.len(), 3, "the mapped board is built again, its quiet copies are not");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU adapter; draws the tiling grid over a board and reads the pixels back"]
+    fn the_tiling_grid_lays_one_line_on_every_seam_and_none_inside_a_cell() {
+        let Some((device, queue)) = gpu_device() else {
+            println!("this machine has no GPU adapter to draw a tiling grid with");
+            return;
+        };
+        // A board 600 mm across faced with a picture of 150 mm: four cells, and three seams inside the
+        // board at 150, 300 and 450 mm.
+        let side = 600.0;
+        let covers = 150;
+        let id = Id::new(1).expect("id");
+        let mesh = Arc::new(board(side));
+        // Looking straight down at the board from above, so screen x is the board's x.
+        let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+        let mut frame = SceneFrame {
+            camera,
+            shading: ShadingStyle::Shaded,
+            grid: Grid { visible: false, ..Grid::default() },
+            ..SceneFrame::default()
+        };
+        frame.lighting.key_direction = DVec3::new(0.0, 0.0, 1.0);
+        frame.lighting.key_color = [1.0, 1.0, 1.0];
+        frame.lighting.ambient = 0.0;
+        // A white board under a white picture: every coloured pixel of the picture is the guide's.
+        frame.push(Drawable::new(id, Arc::clone(&mesh), centred(side), [1.0, 1.0, 1.0, 1.0]).with_decor(plain(covers)));
+
+        let region = ViewRegion { x: 0, y: 0, width: 200, height: 200 };
+        let mut renderer = ViewportRenderer::new(&device, 200, 200);
+        renderer.upload(&device, &queue, &frame).expect("the frame uploads");
+        let mut shown = |grid: Option<DecorGrid>| {
+            let view = ViewSpec {
+                camera,
+                region,
+                shading: ShadingStyle::Shaded,
+                shadows: ContactShadows { visible: false, ..ContactShadows::default() },
+                decor_grid: grid,
+            };
+            renderer.render_views(&device, &queue, &frame, &frame.lighting, &[view]);
+            read_pixels(&renderer, &device, &queue)
+        };
+
+        // The switch is the view's: with it off the board is plain, with it on the seams are inked.
+        let plain = shown(None);
+        let (left, right) = lit_columns(&plain, 200, 200);
+        assert!(right > left + 20, "the board spans the picture: columns {left} to {right}");
+
+        let ink = [1.0, 0.0, 0.0, 1.0];
+        let inked = shown(Some(DecorGrid::new(3.0, ink)));
+        // The board *is* the picture's frame, so the seams are the whole coordinates of the decor's
+        // own uv: four pictures across the board are five lines, and the board's own edges are two
+        // of them.
+        let columns = line_columns(&inked, 200, 200, (right - left) as usize / 2);
+        assert_eq!(columns.len(), 5, "one line per whole coordinate of the picture: {columns:?}");
+        let cell = f64::from(right - left) / 4.0;
+        for pair in columns.windows(2) {
+            let gap = f64::from(pair[1] - pair[0]);
+            assert!((gap - cell).abs() <= 1.5, "the step is the picture's 150 mm, so {gap} px: {columns:?}");
+        }
+        let none = line_columns(&plain, 200, 200, (right - left) as usize / 2);
+        assert!(none.is_empty(), "a view that asked for no grid draws none: {none:?}");
     }
 
     #[test]

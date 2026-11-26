@@ -173,6 +173,23 @@ const BAND_FILL_ALPHA: u8 = 26;
 /// the container that owns the viewport says so at a glance instead of at a squint.
 pub const HELPER_OPEN_STROKE: f32 = 2.0;
 
+/// The weight of one line of the tiling grid a decorated board can show, in points.
+///
+/// The grid is a guide over the model, like a work plane, so its weight is the guide's and not a
+/// world size: the renderer turns these points into the viewport's own pixels, and a line that grew
+/// with the zoom would read as geometry on the board (ADR 0111, Y16).
+///
+/// A point and a half, the contour weight: the guide has to be read *through* the picture it is laid
+/// over, so it carries the line register the form edges use and not the annotation one.
+pub const DECOR_GRID_STROKE: f32 = 1.5;
+
+/// How much of the guide ink one line of the tiling grid lays over the board.
+///
+/// Below one, so the decor under it still reads: the grid says where the picture repeats and the
+/// picture stays the thing being judged. At the weight above this is the opaquest guide the model
+/// carries, and it still leaves two thirds of every board untouched (Y16).
+pub const DECOR_GRID_INK_ALPHA: f32 = 0.65;
+
 /// The dark half of the work cursor's double outline.
 ///
 /// The pointer is not a guide over the model: it must be found on a white board, a dark board and

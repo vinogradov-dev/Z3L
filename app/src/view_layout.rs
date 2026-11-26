@@ -273,8 +273,8 @@ impl Node {
     }
 }
 
-/// One view: its own camera, the preset it is in, the display style it draws with and whether it
-/// draws the ground shadow.
+/// One view: its own camera, the preset it is in, the display style it draws with, whether it draws
+/// the ground shadow and whether it draws a decorated board's tiling grid.
 #[derive(Clone, Debug)]
 pub(crate) struct Leaf {
     id: LeafId,
@@ -288,6 +288,12 @@ pub(crate) struct Leaf {
     /// The strength and the colour are the workspace's; only the switch is the view's, so one cell of
     /// a split draws the shadow while its neighbour does not.
     shadows: bool,
+    /// Whether this view draws the tiling grid of a decorated board (Y16).
+    ///
+    /// Off until a person asks for it, and the view keeps its answer while the tab lives: the grid
+    /// says where a picture repeats, which is a question about the material and not about the
+    /// document, so it is view state like the shadow's switch and the display style beside it.
+    decor_grid: bool,
     /// Whether a person has framed or navigated this view, which makes it theirs.
     ///
     /// A view nobody has touched follows the scene: a rebuild that leaves the model outside its
@@ -322,6 +328,16 @@ impl Leaf {
     /// Flips this view's ground-shadow switch.
     pub(crate) fn toggle_shadows(&mut self) {
         self.shadows = !self.shadows;
+    }
+
+    /// Whether this view draws a decorated board's tiling grid.
+    pub(crate) const fn decor_grid(&self) -> bool {
+        self.decor_grid
+    }
+
+    /// Flips this view's tiling-grid switch.
+    pub(crate) fn toggle_decor_grid(&mut self) {
+        self.decor_grid = !self.decor_grid;
     }
 
     /// Points the leaf along a preset direction, centring a standard view on the scene.
@@ -606,6 +622,7 @@ impl LayoutState {
                 preset: None,
                 style,
                 shadows: ContactShadows::default().visible,
+                decor_grid: false,
                 framed: false,
             };
             leaf.apply_preset(kind.standard_view(index, opening), fit);
@@ -766,6 +783,16 @@ impl Layout {
     /// Flips the ground-shadow switch of the active leaf alone (U107).
     pub(crate) fn toggle_active_shadows(&mut self) {
         self.active_leaf_mut().toggle_shadows();
+    }
+
+    /// Whether the active leaf draws a decorated board's tiling grid.
+    pub(crate) fn active_decor_grid(&self) -> bool {
+        self.active_leaf().decor_grid
+    }
+
+    /// Flips the tiling-grid switch of the active leaf alone (Y16).
+    pub(crate) fn toggle_active_decor_grid(&mut self) {
+        self.active_leaf_mut().toggle_decor_grid();
     }
 
     /// Writes the display state the active leaf owns into a frame's single-view fallback.

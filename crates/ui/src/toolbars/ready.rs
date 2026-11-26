@@ -45,6 +45,7 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
         owns_view,
         snaps,
         shadows,
+        decor_grid,
         draft,
         ..
     } = context;
@@ -308,6 +309,14 @@ pub(super) fn ready(kind: ToolKind, tool: &ToolSpec, state: &Toolbars, context: 
             armed: false,
             hint: tool_hint(Message::SnapModeHint.text(lang), tool.key()),
             action: owns_view.then_some(ToolAction::ToggleSnapMode),
+        },
+        // The tiling grid is a view mode like the shadow: no document, no selection and no material
+        // is involved, and the press draws pressed while the guide is on (Y16).
+        ToolKind::DecorGrid => Ready {
+            enabled: true,
+            armed: decor_grid,
+            hint: tool_hint(tool.label.text(lang), tool.key()),
+            action: Some(ToolAction::ToggleDecorGrid),
         },
         ToolKind::Shadows => Ready {
             // A view always has a shadow switch: no document, no selection and no material is
