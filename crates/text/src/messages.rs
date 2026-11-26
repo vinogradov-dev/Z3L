@@ -519,6 +519,7 @@ messages! {
     ThicknessRow = ["Thickness  {}", "Толщина: {}"],
     CoreRow = ["Core  {} × {}", "Сердцевина: {} × {}"],
     OverallRow = ["Overall  {} × {}", "Габарит: {} × {}"],
+    MadeRow = ["Made  {} × {}", "Изготовляемый: {} × {}"],
     GeometryError = ["Geometry: {}", "Геометрия: {}"],
     EdgeBottom = ["Bottom", "Нижняя"],
     EdgeRight = ["Right", "Правая"],

@@ -364,6 +364,17 @@ impl PanelCard {
                             }
                         });
                     }
+                    // What the four numbers make of the board, beside the fields that make it: a lap
+                    // lengthens it here and a cut shortens it, so the person reads the size the saw
+                    // takes before it is cut rather than two numbers that must be added up.
+                    match panel.manufactured_size() {
+                        Ok(made) => {
+                            ui.label(Message::MadeRow.with(lang, [made.length(), made.width()]));
+                        }
+                        Err(error) => {
+                            ui.colored_label(theme::danger(ui), Message::GeometryError.with(lang, [error]));
+                        }
+                    }
                     ui.label(Message::EndTrimHint.text(lang));
                 }
             });
@@ -1709,6 +1720,20 @@ mod tests {
         for label in [Message::EdgeBottom, Message::EdgeRight, Message::EdgeTop, Message::EdgeLeft] {
             assert!(texts.iter().any(|text| text == label.text(crate::Lang::En)), "`{label:?}` is on the card");
         }
+
+        // The card states what the numbers make of the board, beside the fields that make it (N31):
+        // a 2 mm cut at one end and a 14 mm lap at the other leave a row that names the board's own
+        // size, so the person reads one number instead of adding two up.
+        let mut session = Session::with_directory(testkit::sample_project(), testkit::sample_catalog());
+        let cut = Action::SetTrim { panel: panel_id, edge: RectEdge::Bottom.id(), trim: mm(2) };
+        run_action(&mut session, &cut).expect("a cut end");
+        let lap = Length::from_millimetres(-14).expect("a lap");
+        let lapped = Action::SetTrim { panel: panel_id, edge: RectEdge::Top.id(), trim: lap };
+        run_action(&mut session, &lapped).expect("a lap at the other end");
+        let made = session.project().panel(panel_id).expect("panel").manufactured_size().expect("the board");
+        let texts = drawn_texts(&context, &mut session, panel_id);
+        let expected = Message::MadeRow.with(crate::Lang::En, [made.length(), made.width()]);
+        assert!(texts.contains(&expected), "the made size is on the card: {texts:?}");
 
         // A ring stores a curve, not four nominal ends, and the card says so instead of drawing fields.
         let (mut session, ringed) = contour_session();
