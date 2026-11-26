@@ -1,31 +1,35 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=f17a049 updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=1251e81 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
-The render has a soft source. A light can be a **window**: `LightKind::Area` carries a `LightSize`
-face in the document's own units, emits from one side along its local `-Z`, and reads its intensity
-as watts over that face; `light.create` and `light.params.set` take the kind, the colour, the watts
-and the face together, the schema is 34 and the one golden file carries a window (L2, ADR 0247).
-`scene::Lighting.areas` carries up to four faces as geometry and watts, `AreaLight::radiance` is the
-one watts-to-radiance conversion, and the normal is derived from the half-edges so the side the
-shader samples cannot disagree with the side it emits from. The viewport draws the face as a source
-— `FaceShading::Source`, unlit and blended in a pass of its own, out of every shaded pass, the
-stencil, the shadow map and the contact-shadow mask — with an outline that picks the light, and it
-lights the room from the middle of the face at the same power. The tracer samples the rectangle by
-solid angle with next-event estimation and Veach's power heuristic, which finally has two strategies
-to combine: an alias table over the rectangles' power, a second sampler pair on the face, and a
-surface sample that meets a face weighted the other way. The sampler carries eight dimensions and
-`faces_of` skips a source, so a shadow ray passes through the pane that gives the light.
+The final render has a camera with a lens. `scene::Camera` carries an aperture radius and a focus
+distance (zero radius is the pinhole every render had), `render.final`'s `Settings::with_lens`
+writes
+them onto the copy of the camera the tracer reads, and the document, the schema and the viewport
+stay
+pinholes (Y5, ADR 0248). A sample spends the sampler's second pair on `concentric_disc` — a square
+to
+a disc, uniform by area — and `view::camera_ray_through` starts its ray there, aimed at the point of
+the focal plane the pinhole ray would have met: a point at `z` is spread over `2 a |z - F| / F`,
+which
+the unit tests and a rendered board's edge agree on within 2%. The Render place offers both numbers
+in
+millimetres and `z3l render` takes `--aperture`/`--focus`; the dimension budget did not grow, and a
+lensed picture needs 256 samples per pixel to sit inside the two percent the pinhole reaches at 200.
 
-Before that, the assistant reached a real model and the denoiser measured its own cost (J14, J11,
-Y4); the render's materials are one portable library and a node wears one record (Y8, Y7); and the
-plan's work order still opens with a catalogue record that refers to a library material instead of
-describing it (O16).
+Before that, a light can be a window: `LightKind::Area` carries a face, the frame samples it by
+solid
+angle with next-event estimation and multiple importance sampling, and the viewport draws it as a
+source (L2, ADR 0247). The denoiser measures the noise it spends and the render's materials are one
+portable library (Y4, Y8, Y7), while the assistant reaches a real model over its own wire (J14,
+J11).
+(The plan's work order opens with a catalogue record that refers to a library material instead of
+describing it (O16).)
 
 ## Next
 
