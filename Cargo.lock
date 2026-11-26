@@ -4905,6 +4905,7 @@ dependencies = [
  "egui_extras",
  "engine",
  "geom",
+ "materials",
  "model",
  "scene",
  "serde",
