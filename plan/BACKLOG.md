@@ -62,36 +62,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-- `[~]` **Y9** a varnished board shows a dielectric sheen over its decal instead of a flat matte
-  Why: `final::bsdf::probabilities` gives `diffuse = 1 - metallic` and `specular = metal * (1 -
-   multiple)`, so at `metallic = 0` an opaque surface has no specular lobe at all. The three
-   lobes of Y1 and Y2 cover a diffuse board, a metal handle and a pane; the fourth surface a
-   furniture catalogue sells — a lacquer, a melamine face, a gloss acrylic front, which is a
-   dielectric specular layer over a decal — reads as matte clay, and no denoiser (Y4) turns
-   that into the picture the owner points at. The number is already in the frame:
-   `Surface::ior` travels to the tracer and is read for an opaque surface nowhere.
-  Shape: A coat on `scene::Surface` and on the tracer's `Face.finish`, exactly as ADR 0243
-   decides: a weight in 0..=1, a gloss in percent and its own ior. The lobe is GGX with the
-   visible-normal sampling and the masking the conductor already uses, at the alpha the gloss
-   maps to — `alpha = (1 - gloss / 100)²`, computed once where the record becomes a frame, so a
-   gloss of 99 % does not turn into fireflies — drawn by the discrete pick the other lobes
-   share, weighted `weight · F_coat · f · cos / pdf`, while the base's radiance is multiplied
-   by the coat's transmittance `1 - weight · F_coat`. The four probabilities (diffuse,
-   conductor, coat, transmitted) sum to one; a weight of zero draws nothing and is exactly
-   today's picture; the three spare channels of `GpuFace` carry the coat, so a face keeps its
-   144 bytes (`docs/performance.md` §2). A pane keeps the `is_pane` path untouched, and the
-   viewport keeps its own shading: this entry changes the frame's value and the tracer, not
-   `render`.
-  Done: `final` tests: the coat's albedo by sampling equals the Fresnel-weighted specular
-   integral by quadrature within tolerance at cos 0.1/0.5/1.0 and gloss 99/70/20; the four
-   probabilities sum to one under every weight and every view angle; the summed opaque model
-   answers at most its albedo and at least 0.9 of it at a 50 % gloss; a weight of zero is
-   bit-identical to the picture without the entry; the conductor and `is_pane` tests are
-   unchanged; a device test renders a matte and a 90 % lacquered sphere side by side and
-   asserts the lacquered one is brighter in a grazing band while the two agree on axis; ADR
-   0243 is cited by the code; cargo xtask ci is green.
-  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/soup.rs,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
-
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -331,6 +301,36 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src,crates/engine/src,app/src`
 
 ## Done
+
+- `[x]` **Y9** a varnished board shows a dielectric sheen over its decal instead of a flat matte
+  Why: `final::bsdf::probabilities` gives `diffuse = 1 - metallic` and `specular = metal * (1 -
+   multiple)`, so at `metallic = 0` an opaque surface has no specular lobe at all. The three
+   lobes of Y1 and Y2 cover a diffuse board, a metal handle and a pane; the fourth surface a
+   furniture catalogue sells — a lacquer, a melamine face, a gloss acrylic front, which is a
+   dielectric specular layer over a decal — reads as matte clay, and no denoiser (Y4) turns
+   that into the picture the owner points at. The number is already in the frame:
+   `Surface::ior` travels to the tracer and is read for an opaque surface nowhere.
+  Shape: A coat on `scene::Surface` and on the tracer's `Face.finish`, exactly as ADR 0243
+   decides: a weight in 0..=1, a gloss in percent and its own ior. The lobe is GGX with the
+   visible-normal sampling and the masking the conductor already uses, at the alpha the gloss
+   maps to — `alpha = (1 - gloss / 100)²`, computed once where the record becomes a frame, so a
+   gloss of 99 % does not turn into fireflies — drawn by the discrete pick the other lobes
+   share, weighted `weight · F_coat · f · cos / pdf`, while the base's radiance is multiplied
+   by the coat's transmittance `1 - weight · F_coat`. The four probabilities (diffuse,
+   conductor, coat, transmitted) sum to one; a weight of zero draws nothing and is exactly
+   today's picture; the three spare channels of `GpuFace` carry the coat, so a face keeps its
+   144 bytes (`docs/performance.md` §2). A pane keeps the `is_pane` path untouched, and the
+   viewport keeps its own shading: this entry changes the frame's value and the tracer, not
+   `render`.
+  Done: `final` tests: the coat's albedo by sampling equals the Fresnel-weighted specular
+   integral by quadrature within tolerance at cos 0.1/0.5/1.0 and gloss 99/70/20; the four
+   probabilities sum to one under every weight and every view angle; the summed opaque model
+   answers at most its albedo and at least 0.9 of it at a 50 % gloss; a weight of zero is
+   bit-identical to the picture without the entry; the conductor and `is_pane` tests are
+   unchanged; a device test renders a matte and a 90 % lacquered sphere side by side and
+   asserts the lacquered one is brighter in a grazing band while the two agree on axis; ADR
+   0243 is cited by the code; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/soup.rs,crates/final/src/device_tests.rs,crates/scene/src/lib.rs` — `e51bb13`
 
 - `[x]` **Y6** the Render place shows the image as it is traced, and keeps the last one
   Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
