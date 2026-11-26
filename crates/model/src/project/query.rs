@@ -436,6 +436,43 @@ impl Project {
             .collect()
     }
 
+    /// Every node that names a render material, grouped by the reference it carries.
+    ///
+    /// A panel and an object take one record of the render's library each; a container, a camera and
+    /// a light name none. The answer is a derivation and never a stored index: a record's own list is
+    /// what a material's row counts, and what says a reference the library no longer holds is still
+    /// in the scene. The names come along because the reader is a person deciding whether a record
+    /// may go.
+    pub fn nodes_by_material(&self) -> std::collections::BTreeMap<MaterialRef, Vec<(Id, &str)>> {
+        fn collect<'a>(
+            children: &'a [Node],
+            found: &mut std::collections::BTreeMap<MaterialRef, Vec<(Id, &'a str)>>,
+            depth: u32,
+        ) {
+            if depth > Project::MAX_ASSEMBLY_DEPTH {
+                return;
+            }
+            for child in children {
+                let named = match child {
+                    Node::Panel(panel) => Some((panel.id(), panel.render_material(), panel.name())),
+                    Node::Object(object) => Some((object.id(), object.render_material(), object.name())),
+                    Node::Container(container) => {
+                        collect(container.children(), found, depth.saturating_add(1));
+                        None
+                    }
+                    Node::Camera(_) | Node::Light(_) => None,
+                };
+                if let Some((id, Some(material), name)) = named {
+                    found.entry(material).or_default().push((id, name));
+                }
+            }
+        }
+
+        let mut found = std::collections::BTreeMap::new();
+        collect(self.root.children(), &mut found, 0);
+        found
+    }
+
     /// Selects the nodes that match a query, in tree order.
     pub fn query(&self, query: &NodeQuery) -> Vec<Id> {
         fn matches(properties: &Properties, kind: StructuralKind, query: &NodeQuery) -> bool {
@@ -799,6 +836,26 @@ mod tests {
         product(&mut project, "Next", 600, 560, 720, 600);
         let placement = project.product_placement(box_(600, 560, 720));
         assert_eq!(placement.translation(), DVec3::new(1200.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn the_nodes_that_name_a_material_are_the_surfaces_that_wear_one() {
+        let mut project = sample_project();
+        let panel = Id::new(2).expect("panel id");
+        let root = project.root().id();
+        let oak = MaterialRef::new(1).expect("a non-zero material");
+        let ball = project
+            .add_object(root, "Ball", Placement::IDENTITY, crate::fixtures::sample_object(9).geometry().clone())
+            .expect("a body at the root");
+        project.set_node_material(panel, Some(oak)).expect("the panel wears oak");
+        project.set_node_material(ball, Some(oak)).expect("the ball wears oak too");
+
+        let found = project.nodes_by_material();
+        let named = found.get(&oak).expect("oak is named twice");
+        assert_eq!(named.len(), 2, "a panel and a body: {named:?}");
+        assert!(named.iter().any(|(id, name)| *id == panel && !name.is_empty()));
+        assert!(named.iter().any(|(id, _)| *id == ball));
+        assert!(found.keys().all(|material| *material == oak), "a container names no surface");
     }
 
     #[test]
