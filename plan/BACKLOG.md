@@ -62,6 +62,27 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
+- `[~]` **Y5** the final camera has a lens: an aperture, a focus distance and a sample on the disc
+  Why: The image the owner points at reads the way it does because of depth of field: a narrow
+   focus band across the miniature furniture and everything else melted. Behind that sit the
+   three things the plan already carries — bounce light, contact shadows and a denoised
+   estimate — so the one capability the picture has and Y1–Y4 do not is the lens. A pinhole
+   camera renders a product sharp, which is what a catalogue image usually wants; an aperture
+   is what turns the same scene into an atmosphere shot, and it costs one more sampler
+   dimension pair rather than a second renderer.
+  Shape: The camera gains an aperture radius and a focus distance, with a target point the
+   viewport can show, and the sampler spends one more dimension pair on a concentric disc
+   around the lens origin; a zero aperture is exactly today's pinhole and costs nothing. The
+   denoiser's guide already carries camera distance (Y4), which is what keeps the blur from
+   smearing across the focus band. The viewport does not change: a lens is a setting of the
+   render command, never view state.
+  Done: Tests: a zero aperture renders identically to the pinhole (a golden comparison); a wide
+   aperture at a 2 m focus blurs a point at 1 m by the thin-lens circle of confusion within 2%;
+   a shallow-focus render of the fixture reaches the reference noise level at a sample count
+   written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
+   green.
+  `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
+
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -200,26 +221,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    size; the overlay wall reads its lap through the same field; the schema version moved and no
    migration code exists; cargo xtask ci is green.
   `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
-- `[ ]` **Y5** the final camera has a lens: an aperture, a focus distance and a sample on the disc
-  Why: The image the owner points at reads the way it does because of depth of field: a narrow
-   focus band across the miniature furniture and everything else melted. Behind that sit the
-   three things the plan already carries — bounce light, contact shadows and a denoised
-   estimate — so the one capability the picture has and Y1–Y4 do not is the lens. A pinhole
-   camera renders a product sharp, which is what a catalogue image usually wants; an aperture
-   is what turns the same scene into an atmosphere shot, and it costs one more sampler
-   dimension pair rather than a second renderer.
-  Shape: The camera gains an aperture radius and a focus distance, with a target point the
-   viewport can show, and the sampler spends one more dimension pair on a concentric disc
-   around the lens origin; a zero aperture is exactly today's pinhole and costs nothing. The
-   denoiser's guide already carries camera distance (Y4), which is what keeps the blur from
-   smearing across the focus band. The viewport does not change: a lens is a setting of the
-   render command, never view state.
-  Done: Tests: a zero aperture renders identically to the pinhole (a golden comparison); a wide
-   aperture at a 2 m focus blurs a point at 1 m by the thin-lens circle of confusion within 2%;
-   a shallow-focus render of the fixture reaches the reference noise level at a sample count
-   written into the note; the sampler's dimension-budget test still passes; `cargo xtask ci` is
-   green.
-  `files: crates/scene/src/camera.rs,crates/render/src/scene.wgsl`
 - `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
   Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
    features }` cannot store a profile with holes, although the kernel Profile and a panel core
