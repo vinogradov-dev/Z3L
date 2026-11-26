@@ -96,6 +96,25 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    after it (and a second one) returns the keyboard to a plate and a typed number lands; the
    whole sequence runs without the pointer leaving the work area; cargo xtask ci is green.
   `files: crates/ui/src/distance.rs,app/src/document.rs,app/src/frame_tests.rs`
+- `[ ]` **X138** the render place shows the work area's drawing pointer over its own margins
+  Why: Observation (the owner): with the Render place open, the pointer over the place's
+   margins — the rail of numbers, the status row, the air beside the picture — is the work
+   area's square and crosshair, not the system arrow. Nothing in the place is drawn, dragged or
+   picked: it is a view of an image. Suspected cause, from the code and not yet reproduced in a
+   frame test: `App::draw_work_cursor` (`app/src/main.rs`) asks the active tab for its
+   `scene_rect()` and hands it to `work_cursor::show`, which hides the system cursor and paints
+   the square inside that rectangle (`app/src/work_cursor.rs`); with the place open the
+   document's scene rectangle still names the workspace's area, so the work cursor keeps the
+   place it no longer has.
+  Shape: The place is not a work surface, so the work cursor has no scene while it is open: the
+   shell hands `work_cursor::show` no rectangle (the same answer the shell already gives where
+   the work area is absent) and the system arrow stays everywhere in the place, the picture
+   included. The viewport keeps its own cursor untouched: this is one condition at the call
+   site, not a second pointer rule.
+  Done: A headless frame test: with the place open, the pointer over the rail and over the air
+   beside the picture reads `CursorIcon::Default`; the same pointer back in the viewport reads
+   the shell's square again; cargo xtask ci is green.
+  `files: app/src/main.rs,app/src/work_cursor.rs,app/src/frame_tests.rs`
 
 ## Next
 - `[ ]` **J12** the profile becomes skill cards, and a card becomes a recorded prototype
@@ -299,6 +318,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    library's names and refuses nothing when the library is empty; a node whose record is gone
    is a finding the inspector prints; cargo xtask ci is green.
   `files: crates/ui/src,crates/engine/src,app/src`
+- `[ ]` **Y12** a render needs no chosen file, and the plate is saved when the person says so
+  Why: The Render place refuses to start until a destination is chosen: `RenderPlace::start`
+   answers "choose a file to write the image to" while `settings.path` is `None`
+   (`app/src/render_place.rs`), and the page's only way to set it is the destination row beside
+   the button (`crates/ui/src/render_page.rs`, `destination`). A person who wants to see the
+   picture at print size must first decide where it goes, ends up with a file nobody asked for,
+   and cannot stop and start a plate without watching a path they will replace. The run is the
+   picture; the file is a separate act.
+  Shape: (1) The run takes no destination: `final::Settings` keeps the exposure and the studio,
+   and `final::run` hands the finished `Image` back instead of writing it — `encode_png` and
+   `write_atomic` stay in `final` and become the save's own path, so the crate still owns the
+   one file it writes and no second encoder appears. (2) The place keeps the full-resolution
+   image after the run (f32 RGB, 12 bytes a pixel; A4 at 300 dpi is about 100 MB and the cap is
+   `MAX_PIXELS`), so saving needs no second run, and the exposure re-tones that image and not
+   only the display-sized snapshot. (3) The page: the destination row becomes a Save row —
+   disabled until a run has an image, one button that asks the system file manager through the
+   existing `file_picker` order and writes the kept image at the exposure the page shows;
+   `Render` is enabled with no path at all. (4) A save that fails is a sentence on the place
+   and keeps the image; a second save writes another file. (5) A cancel writes nothing (already
+   true) and now leaves nothing to clean up. (6) ADR 0250 and ADR 0211 state the destination as
+   the render's setting; the record is amended: a run's output is a picture, and where it lands
+   belongs to the save. The command line keeps `--out`: a headless render has nobody to ask.
+  Done: Tests: a run with no destination writes no file and hands an image back; the place
+   starts with no path and holds the image after the run; a save writes the PNG the exposure
+   names, and a second save writes another; a failed save leaves the image and says why; the
+   page's Render button is enabled with no destination and its Save button is not, until an
+   image exists; cargo xtask ci is green.
+  `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs`
 
 ## Done
 
