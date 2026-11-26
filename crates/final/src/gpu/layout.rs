@@ -232,6 +232,9 @@ pub(crate) struct Uniform {
     pub(crate) area_alias: [[u32; 4]; AREA_ALIAS_WORDS],
     /// The share of the power each rectangle carries, which is the density of a draw.
     pub(crate) area_share: [[f32; 4]; AREA_ALIAS_WORDS],
+    /// `x` the lens radius in millimetres, `y` the distance the lens focuses at, `z` one when the view
+    /// is a perspective one that can have a lens, `w` unused (Y5).
+    pub(crate) lens: [f32; 4],
 }
 
 /// The frame's faces as the shader reads them, in the tree's order.
@@ -409,6 +412,18 @@ pub(crate) fn uniform(
         area_probability: area_table.probability,
         area_alias: area_table.alias,
         area_share: area_table.share,
+        // A lens is a perspective camera's: an orthographic view has no eye to put a disc at, and the
+        // shader reads the flag rather than asking twice (`crate::view::camera_ray_through`).
+        lens: [
+            camera.aperture() as f32,
+            camera.focus() as f32,
+            if camera.is_pinhole() || matches!(camera.projection(), Projection::Orthographic { .. }) {
+                0.0
+            } else {
+                1.0
+            },
+            0.0,
+        ],
     })
 }
 
@@ -624,6 +639,23 @@ mod tests {
         assert_eq!(uniform.point_position[0], [500.0, 0.0, 300.0, 0.0]);
         assert_eq!(uniform.point_colour[0], [1.0, 0.9, 0.8, 1000.0]);
         assert_eq!(uniform.point_colour[1], [0.0; 4], "a dead light is not uploaded as a lamp");
+    }
+
+    #[test]
+    fn a_lens_reaches_the_uniform_with_its_radius_and_its_focus() {
+        let camera = Camera::new(DVec3::ZERO, 3_000.0).expect("a camera");
+        let pinhole =
+            uniform(camera, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(pinhole.lens, [0.0, 1200.0, 0.0, 0.0], "a pinhole says so, and the shader costs one test");
+
+        let lens = camera.with_lens(45.0, 1_800.0).expect("a lens");
+        let packed = uniform(lens, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(packed.lens, [45.0, 1_800.0, 1.0, 0.0]);
+
+        // An orthographic view carries the numbers but not the switch: it has no lens to draw from.
+        let flat = lens.with_projection(Projection::Orthographic { height: 1_000.0 });
+        let packed = uniform(flat, &SceneFrame::default().lighting, request(), (0, 0), (0, 0), 0).expect("a uniform");
+        assert_eq!(packed.lens[2], 0.0);
     }
 
     #[test]

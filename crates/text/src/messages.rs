@@ -895,6 +895,8 @@ messages! {
     RenderStart = ["Render", "Рендерить"],
     RenderCancel = ["Cancel", "Отменить"],
     RenderNeedsPath = ["Choose a file to write the image to.", "Выберите файл, куда записать изображение."],
+    RenderAperture = ["Aperture radius", "Радиус диафрагмы"],
+    RenderFocus = ["Focus distance", "Дистанция фокуса"],
     RenderNeedsSize = ["Name a size for the image.", "Укажите размер изображения."],
     RenderSamplesDone = ["{} of {} samples", "{} из {} сэмплов"],
     RenderDone = ["Written to {} — {}, {} samples", "Записано в {} — {}, {} сэмплов"],

@@ -88,6 +88,12 @@ pub const MIN_SAMPLES: u32 = 1;
 /// enough for a print and short enough that its progress and its cancel still mean something.
 pub const MAX_SAMPLES: u32 = 4096;
 
+/// The widest lens a render accepts, in millimetres of radius.
+///
+/// It is the camera's own cap, re-exported so a surface that offers the field reads the number the
+/// tracer will refuse past instead of keeping a second copy of it (Y5).
+pub const MAX_APERTURE_MM: f64 = scene::camera::MAX_APERTURE_MM;
+
 /// What a final render was asked for: an image size and a sample count.
 ///
 /// Every field is inside the range the crate can allocate, because the only constructor checks them;
@@ -244,6 +250,16 @@ pub enum FinalError {
     Environment {
         /// The value the request carried.
         value: f32,
+    },
+    /// A lens radius or a focus distance outside the range a camera accepts.
+    #[error(
+        "a lens takes a radius of 0 to 500 mm and a focus of at least 1 mm, and {aperture} at {focus} micrometres was asked for"
+    )]
+    Lens {
+        /// The radius the request carried, in micrometres.
+        aperture: i64,
+        /// The focus distance the request carried, in micrometres.
+        focus: i64,
     },
     /// An exposure that is not a positive number of stops.
     #[error("an exposure is a positive number of stops, and {exposure} was asked for")]

@@ -2774,6 +2774,36 @@ mod tests {
     }
 
     #[test]
+    fn a_camera_is_a_pinhole_until_a_render_gives_it_a_lens() {
+        let camera = Camera::default();
+        assert!(camera.is_pinhole(), "the default camera is a pinhole");
+        assert_eq!(camera.aperture(), 0.0);
+        assert_eq!(camera.focus(), camera::DEFAULT_FOCUS_MM, "a lens that is switched on focuses where the view is");
+
+        // A lens changes neither the eye nor the basis: only the ray of one sample does.
+        let lens = camera.with_lens(50.0, 2_000.0).expect("a lens");
+        assert!(!lens.is_pinhole());
+        assert_eq!((lens.aperture(), lens.focus()), (50.0, 2_000.0));
+        assert_eq!(lens.eye(), camera.eye());
+        assert_eq!(lens.forward(), camera.forward());
+        assert_eq!(lens.projection(), camera.projection());
+        // A zero radius keeps the pinhole and is a lens that costs nothing.
+        assert!(lens.with_lens(0.0, 2_000.0).expect("a pinhole").is_pinhole());
+
+        // Both ends of the range are accepted and just outside them is a sentence.
+        assert!(camera.with_lens(camera::MAX_APERTURE_MM, 1.0).is_ok());
+        for (aperture, focus) in [
+            (-1.0, 1_000.0),
+            (camera::MAX_APERTURE_MM + 1.0, 1_000.0),
+            (f64::NAN, 1_000.0),
+            (10.0, 0.0),
+            (10.0, f64::INFINITY),
+        ] {
+            assert!(camera.with_lens(aperture, focus).is_err(), "{aperture} mm at {focus} mm");
+        }
+    }
+
+    #[test]
     fn a_window_of_a_known_area_carries_the_radiance_its_watts_are() {
         // A one-metre square radiating 100 W: the radiance is `P / (PI * A)` and the frame keeps the
         // watts, so the conversion is one function with one test (ADR 0247).

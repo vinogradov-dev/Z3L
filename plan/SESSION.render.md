@@ -6,9 +6,10 @@ goal: the final camera has a lens: an aperture, a focus distance and a sample on
 
 steps:
   [ ] starting the task
+  [ ] the camera's lens, the concentric disc, the thin-lens ray, the tracer and its surfaces; the gates are next
 
-now: starting the task
+now: reviewing the diff and running the gate
 blocked: nothing
-run: cargo xtask task Y5
-resume: read the first `files:` path and its callers
+run: cargo test -p final --lib
+resume: run cargo xtask ci
 ```

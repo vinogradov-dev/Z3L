@@ -149,6 +149,9 @@ struct Uniform {
     area_probability: vec4<f32>,
     area_alias: vec4<u32>,
     area_share: vec4<f32>,
+    // x: the lens radius in millimetres; y: the distance it focuses at; z: one when this view has a
+    // lens at all, which an orthographic view never does (Y5).
+    lens: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Uniform;
@@ -1174,7 +1177,11 @@ fn area_light(
 // The camera ray of one sample, built the way `view::camera_ray` builds it: the sample is the pixel's
 // centre plus a jitter inside the pixel, the normalised coordinate grows upwards while the row index
 // grows downwards, and the projection is the viewport's own.
-fn camera_ray(sample_position: vec2<f32>) -> Ray {
+//
+// A lens bends the same ray: `lens_sample` is a point of the unit square, which becomes a point of the
+// lens disc, and the ray runs from there to the point of the focal plane the pinhole ray would have
+// met (`view::camera_ray_through`, Y5). A pinhole takes the pinhole branch and costs one comparison.
+fn camera_ray(sample_position: vec2<f32>, lens_sample: vec2<f32>) -> Ray {
     let width = camera.view.z;
     let height = camera.view.w;
     let x = clamp(sample_position.x / width * 2.0 - 1.0, -16.0, 16.0);
@@ -1188,7 +1195,33 @@ fn camera_ray(sample_position: vec2<f32>) -> Ray {
     }
     let direction =
         camera.forward.xyz + camera.right.xyz * (x * half_height * aspect) + camera.up.xyz * (y * half_height);
+    if (camera.lens.z > 0.5 && camera.lens.x > 0.0) {
+        let cosine = dot(safe_normalize(direction), camera.forward.xyz);
+        if (cosine > 1.0e-9) {
+            let focal = camera.eye.xyz + direction * (camera.lens.y / cosine);
+            let disc = concentric_disc(lens_sample) * camera.lens.x;
+            let lens_point = camera.eye.xyz + camera.right.xyz * disc.x + camera.up.xyz * disc.y;
+            return make_ray(lens_point, focal - lens_point);
+        }
+    }
     return make_ray(camera.eye.xyz, direction);
+}
+
+// The concentric map of Shirley and Chiu, which is `sampler::concentric_disc`: a point of the unit
+// square becomes a point of the unit disc, uniform by area, with no seam running out of its middle.
+fn concentric_disc(u: vec2<f32>) -> vec2<f32> {
+    let x = 2.0 * u.x - 1.0;
+    let y = 2.0 * u.y - 1.0;
+    if (x == 0.0 && y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    var radius = x;
+    var angle = 0.7853981633974483 * (y / x);
+    if (abs(x) <= abs(y)) {
+        radius = y;
+        angle = 1.5707963267948966 - 0.7853981633974483 * (x / y);
+    }
+    return vec2<f32>(radius * cos(angle), radius * sin(angle));
 }
 
 // The variance of the mean of `count` samples, from their sum and their sum of squares, exactly as
@@ -1240,9 +1273,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let sample = camera.counts.z;
     let pixel_seed = hash(pixel * 0x9e3779b9u ^ (sample + 1u) * 0x85ebca6bu);
     let jitter = sample_pair(0u, sample, pixel_seed) - vec2<f32>(0.5);
+    // The lens of one sample is the sampler's second pair, which is the eye's own: the pixel's jitter
+    // and the point on the lens are the two draws a person notices first, so they keep the
+    // sequence's stratification (Y5).
+    let lens_sample = sample_pair(1u, sample, pixel_seed);
     // The row is the image's own row, not the strip's: the camera ray must not know about strips.
     let row = f32(camera.strip.x + id.y);
-    var ray = camera_ray(vec2<f32>(f32(id.x), row) + vec2<f32>(0.5) + jitter);
+    var ray = camera_ray(vec2<f32>(f32(id.x), row) + vec2<f32>(0.5) + jitter, lens_sample);
 
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
