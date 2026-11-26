@@ -49,6 +49,7 @@ Related decisions: [0005](../decisions/0005-material-catalogue.md),
   - id;
   - name;
   - nominal length and width;
+  - four end trims, one signed length per nominal end;
   - `material_id`;
   - `last_known_thickness`;
   - placement;
