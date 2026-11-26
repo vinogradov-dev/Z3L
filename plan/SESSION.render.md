@@ -7,8 +7,8 @@ goal: each object carries its own decor mapping — a scale, an offset and a tur
 steps:
   [ ] starting the task
 
-now: starting the task
+now: the note is written; the projection axis is the owner's answer
 blocked: nothing
 run: cargo xtask task Y15
-resume: read the first `files:` path and its callers
+resume: write the document field, the command and the one uv function
 ```
