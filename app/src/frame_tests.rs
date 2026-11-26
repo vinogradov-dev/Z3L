@@ -767,7 +767,7 @@ fn the_render_tab_turns_the_workspace_into_the_render_place_and_back() {
     let words = harness.drawn.clone();
     let title = Message::RenderTitle.text(text::Lang::En);
     assert!(words.iter().any(|word| word == title), "the page names itself: {words:?}");
-    assert!(words.iter().any(|word| word == Message::RenderDestination.text(text::Lang::En)), "{words:?}");
+    assert!(words.iter().any(|word| word == Message::RenderSave.text(text::Lang::En)), "{words:?}");
     assert_eq!(chrome.ribbon, egui::Rect::NOTHING, "no ribbon band is drawn behind the place");
     assert!(chrome.panels.left.is_none() && chrome.panels.right.is_none(), "and no panel floats over it");
     assert_eq!(harness.revision(), revision, "opening the place writes no document");

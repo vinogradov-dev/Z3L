@@ -1,6 +1,7 @@
 # 0250. The render place is a picture with a rail, and the picture stays
 
-- Status: Accepted; supersedes the deferred preview of 0211
+- Status: Accepted; supersedes the deferred preview of 0211; its destination row is superseded by
+  Y12 — a run draws a picture, and where it lands belongs to the save
 - Date: 2026-11-26
 
 ## Context
@@ -26,14 +27,13 @@ possible, and grow toward a plate a workshop can use.
   two preset buttons and a size field with its unit — so the picture takes everything else. A narrow
   window keeps the rail at 45 % of the place and shrinks the picture; the picture is still the larger
   half at the smallest window the shell allows. The rail is where every control lives: the presets,
-  the four numbers, the destination, and the one primary button (Render, or Cancel while a run is in
+  the four numbers, the save, and the one primary button (Render, or Cancel while a run is in
   flight). Nothing floats over the picture.
 - **The status row under the picture is the run's own line**: the resolution, the samples taken and
-  owed, the elapsed time, the estimate from those samples, and the file. Running it sits under a thin
-  progress bar; done it says the file was written; cancelled it says nothing was written and keeps
-  the last picture; a refusal prints its sentence in the danger ink. A picture whose size or sample
-  count no longer matches the rail says so in its own line, because the exposure is the only setting
-  that acts on a finished picture.
+  owed, the elapsed time and the estimate from those samples. Running it sits under a thin progress
+  bar; done it says the picture is drawn; cancelled it says the last picture stays; a refusal prints
+  its sentence in the danger ink. A picture whose size or sample count no longer matches the rail
+  says so in its own line, because the exposure is the only setting that acts on a finished picture.
 - **The tracer traces sample-major and publishes checkpoints.** One sample over every band of the
   image, then the next, with the accumulators held on the device for the whole run: the first
   checkpoint is the whole frame at a low sample count and every later one refines it. A checkpoint
@@ -52,8 +52,17 @@ possible, and grow toward a plate a workshop can use.
   target is), because `ui` never sees `wgpu`.
 - **The last picture outlives the run.** It stays on the page when the run ends, when a person
   cancels, and when they go back to the document and return — the place is a place in the work, not
-  a question about the document. The finished image is published after the file is written, so the
-  picture the page keeps is the picture the person can open.
+  a question about the document. The finished image is published as the run's last checkpoint, so the
+  picture the page keeps is the picture the run handed back.
+- **The run draws, and the save writes** (Y12). A run takes no destination: `final::Settings` keeps the
+  exposure, the studio and the sample count, and `final::run` hands the finished `Image` back instead
+  of writing it (`encode_png` and `write_atomic` stay in the crate, behind one `image::save`). The
+  place keeps that image at full resolution — `f32` RGB, 12 bytes a pixel, about 100 MB for an A4
+  plate and 192 MB at `MAX_PIXELS`, which is why it is kept rather than re-traced — so the Save row
+  writes the picture that was drawn, at the exposure the page shows now, and a second save is another
+  press producing another file. Save is disabled until a run has an image; a write that refuses is a
+  sentence on the place and leaves the image held. The command line keeps `--out`: a headless render
+  has nobody to ask.
 
 ## Consequences
 
@@ -70,3 +79,6 @@ possible, and grow toward a plate a workshop can use.
   meaningless: no sample yet, or more than a day. It is a reading, not a promise.
 - `plan/debt.md`'s `[ui]` entry for a missing preview and status line is paid off by this record, and
   ADR 0211's deferred paragraph is answered rather than rewritten.
+- A plate is looked at before a name is chosen, and a picture can be written twice — at two exposures,
+  or to two folders — without tracing it again. The cost is the kept image in host memory, which is
+  the trade Y12 chose against a second run.

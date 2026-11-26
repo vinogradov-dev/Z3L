@@ -423,7 +423,7 @@ fn the_interface_renders_offscreen_to_one_png_per_cell() {
     );
 }
 
-/// Draws the render place into one picture: the numbers, the destination and a run's progress.
+/// Draws the render place into one picture: the numbers, the save row and a run's progress.
 ///
 /// The place replaces the workspace, so the picture shows what a person sees after pressing the
 /// `Render` tab — and it is the only way to judge the page's density and its progress row, which a
@@ -446,19 +446,23 @@ fn the_render_place_is_painted_offscreen() {
         .expect("the shell builds");
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
     let _ = settle(&mut app, &ctx, &render_state, screen);
-    // The place, with a destination and a run that reports progress: the shot is taken between two
-    // frames of a real render, so the bar and the counter are what the page actually draws.
+    // The place, with a run that reports progress: the shot is taken between two frames of a real
+    // render, so the bar and the counter are what the page actually draws.
     app.render_open = true;
     // A real run at a size that finishes in a second, so the picture shows the page's own report
     // line rather than a stage no person has reached yet.
     let image = directory.join("render-place-example.png");
     let _ = std::fs::remove_file(&image);
-    app.render_place.set_path(image.clone());
-    app.render_place.settings().width = 480;
-    app.render_place.settings().height = 360;
-    app.render_place.settings().samples = 4;
+    {
+        let (settings, _, _) = app.render_place.page_parts();
+        settings.width = 480;
+        settings.height = 360;
+        settings.samples = 4;
+    }
     app.start_render(&ctx);
     app.render_place.wait(&ctx, Some(&render_state));
+    // The file is the save's act, and the shot shows the row that names it (Y12).
+    assert!(app.render_place.save(image.clone()), "the place saves the image it drew");
     assert!(image.is_file(), "the place wrote its image");
     let mut jobs = Vec::new();
     for _ in 0..SETTLE_FRAMES {

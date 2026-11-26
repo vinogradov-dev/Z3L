@@ -1,12 +1,13 @@
 //! The render place's shell half: the worker that traces the image, the pictures it publishes, and
 //! what the page shows meanwhile.
 //!
-//! The page (`ui::render_page`) owns the numbers and the drawing; this module owns the run and the
-//! picture. A final render takes minutes, so it runs on its own thread and never on the frame path:
-//! the page polls the run's own counter between frames, the Cancel button sets the run's own flag,
-//! and the finished value is taken at the frame boundary exactly like a directory or a file-manager
-//! answer (`docs/domain/nomenclature.md` §13, ADR 0182). Nothing here touches a document: the frame
-//! is a clone of the one the viewport draws, and the only thing a run writes is one PNG (ADR 0210).
+//! The page (`ui::render_page`) owns the numbers and the drawing; this module owns the run, the
+//! picture and the save. A final render takes minutes, so it runs on its own thread and never on the
+//! frame path: the page polls the run's own counter between frames, the Cancel button sets the run's
+//! own flag, and the finished value is taken at the frame boundary exactly like a directory or a
+//! file-manager answer (`docs/domain/nomenclature.md` §13, ADR 0182). Nothing here touches a
+//! document: the frame is a clone of the one the viewport draws, and the file the place writes is one
+//! PNG, written when the person asks for it and not when the run ends (Y12, ADR 0210).
 //!
 //! The picture is the place's surface (Y6, ADR 0250): the tracer publishes snapshots into a mailbox
 //! of one, this module tones the newest into a texture egui draws and hands the page its
@@ -14,15 +15,21 @@
 //! snapshot is linear radiance, so the exposure the page edits re-tones the picture it already has
 //! instead of asking for another run — the curve is the one the file is written with.
 //!
-//! The place is not a modal: it keeps its numbers and its last picture while the person goes back to
-//! the tree and opens it again, because a render is a place in the work, not a question about the
-//! document in front.
+//! A run hands the full-resolution image back and the place keeps it, beside the display-sized
+//! snapshot: saving therefore writes the picture that was drawn, at the exposure showing now, and
+//! never traces a second time (Y12).
+//!
+//! The place is not a modal: it keeps its numbers, its picture and its image while the person goes
+//! back to the tree and opens it again, because a render is a place in the work, not a question about
+//! the document in front.
 //!
 //! Refuses: a run started while another is in flight (the page disables the button, and a second
-//! start is ignored here as well), and a machine with no adapter — that sentence lands in the page's
-//! own status row instead of a process that dies.
+//! start is ignored here as well), a machine with no adapter — that sentence lands in the page's own
+//! status row instead of a process that dies — and a save with no finished picture or a file that
+//! cannot be written, which is a sentence on the page and leaves the image held.
 //!
-//! Changes when: what a run needs from the shell, or what the page shows while it runs, changes.
+//! Changes when: what a run needs from the shell, what the page shows while it runs, or where a save
+//! lands, changes.
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -31,23 +38,21 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use eframe::egui_wgpu;
 use eframe::wgpu;
-use r#final::{Image, Input, Progress, Report, Settings as RenderSettings, Snapshot, Snapshots, Tracer};
+use r#final::{Image, Input, Progress, Settings as RenderSettings, Snapshot, Snapshots, Tracer};
 
-use ui::render_page::{Bounds, Picture, Run, Settings, Stage};
+use ui::render_page::{Bounds, Picture, Run, Saved, Settings, Stage};
 
 /// One run: the counter the page reads, the pictures it publishes and the thread that fills them.
 #[derive(Debug)]
 struct Job {
     progress: Arc<Progress>,
-    thread: JoinHandle<Result<Report, String>>,
+    thread: JoinHandle<Result<Image, String>>,
     /// The size the run was asked for, which the page keeps editing while it runs.
     width: u32,
     /// The height the run was asked for.
     height: u32,
     /// The samples it owes.
     total: u32,
-    /// The file it writes.
-    path: std::path::PathBuf,
     /// When it started, which is what the status row's clock counts from.
     started: Instant,
 }
@@ -66,9 +71,9 @@ struct Shown {
     exposure: f32,
 }
 
-/// The render place: its numbers, its run, its picture and where the last one got to.
+/// The render place: its numbers, its run, its picture and the image it keeps for a save.
 pub(crate) struct RenderPlace {
-    /// The size, the samples, the exposure and the file, as the person left them.
+    /// The size, the samples, the exposure and the studio, as the person left them.
     settings: Settings,
     /// Where the last finished run got to.
     finished: Stage,
@@ -78,12 +83,24 @@ pub(crate) struct RenderPlace {
     snapshots: Option<Arc<Snapshots>>,
     /// The last picture, which outlives the run that made it.
     shown: Option<Shown>,
+    /// The finished image at full resolution, which a save writes (Y12).
+    image: Option<Image>,
+    /// Where the last save of that image landed, or why it could not (Y12).
+    saved: Option<Saved>,
 }
 
 impl RenderPlace {
-    /// A place that has never rendered, with the draft preset and no destination.
+    /// A place that has never rendered, with the draft preset and no image.
     pub(crate) fn new() -> Self {
-        Self { settings: Settings::draft(), finished: Stage::Idle, job: None, snapshots: None, shown: None }
+        Self {
+            settings: Settings::draft(),
+            finished: Stage::Idle,
+            job: None,
+            snapshots: None,
+            shown: None,
+            image: None,
+            saved: None,
+        }
     }
 
     /// The limits the page keeps its numbers inside, read from the tracer's own constants.
@@ -97,9 +114,13 @@ impl RenderPlace {
         }
     }
 
-    /// The numbers and the destination, for the page to edit.
-    pub(crate) fn settings(&mut self) -> &mut Settings {
-        &mut self.settings
+    /// The page's borrowed parts in one split borrow: the numbers it edits, whether the place holds an
+    /// image to save, and what the last save did.
+    ///
+    /// One method rather than three, because a page draws all of them in one expression and a shell
+    /// cannot borrow the same place twice (Y12).
+    pub(crate) fn page_parts(&mut self) -> (&mut Settings, bool, Option<&Saved>) {
+        (&mut self.settings, self.image.is_some(), self.saved.as_ref())
     }
 
     /// The picture the page draws, if a run has published one.
@@ -122,8 +143,22 @@ impl RenderPlace {
     }
 
     /// Where the image goes, for the file manager's answer to land in.
-    pub(crate) fn set_path(&mut self, path: std::path::PathBuf) {
-        self.settings.path = Some(path);
+    ///
+    /// The save is the second act of a render (Y12): the run drew a picture and this writes it, so a
+    /// plate can be looked at before a name is chosen and one image can be written twice. A write that
+    /// fails keeps the image and says why, which is what makes a second press possible. Returns
+    /// whether the place changed, which is what asks for a repaint.
+    pub(crate) fn save(&mut self, path: std::path::PathBuf) -> bool {
+        let exposure = self.settings.exposure;
+        let Some(image) = self.image.as_ref() else {
+            self.saved = Some(Saved::Refused("there is no finished picture to save yet".to_owned()));
+            return true;
+        };
+        self.saved = Some(match r#final::save(image, exposure, &path) {
+            Ok(()) => Saved::Written(path),
+            Err(reason) => Saved::Refused(reason.to_string()),
+        });
+        true
     }
 
     /// Reports a refusal the place made before a thread was started, so the page prints it.
@@ -162,15 +197,21 @@ impl RenderPlace {
         let Some(job) = self.job.take() else { return false };
         let cancelled = Self::run_of(&job);
         self.finished = match job.thread.join() {
-            Ok(Ok(report)) => Stage::Done(Run {
-                width: report.width,
-                height: report.height,
-                done: report.samples,
-                total: report.samples,
-                elapsed: job.started.elapsed(),
-                estimate: None,
-                path: Some(report.path),
-            }),
+            Ok(Ok(image)) => {
+                let run = Run {
+                    width: image.width(),
+                    height: image.height(),
+                    done: job.total,
+                    total: job.total,
+                    elapsed: job.started.elapsed(),
+                    estimate: None,
+                };
+                // The image the run drew is kept, so a save writes it without tracing again, and a
+                // path from an earlier save describes an earlier picture (Y12).
+                self.image = Some(image);
+                self.saved = None;
+                Stage::Done(run)
+            }
             Ok(Err(reason)) => {
                 if job.progress.cancelled() {
                     Stage::Cancelled(cancelled)
@@ -194,7 +235,6 @@ impl RenderPlace {
             total: job.total,
             elapsed,
             estimate: remaining(elapsed, done, job.total),
-            path: Some(job.path.clone()),
         }
     }
 
@@ -251,7 +291,8 @@ impl RenderPlace {
     ///
     /// The frame is cloned into the thread: the person may keep editing while the image is drawn, and
     /// a render of a document that changed under it would be an image nobody asked for. The device is
-    /// the window's own, borrowed for the run (ADR 0210).
+    /// the window's own, borrowed for the run (ADR 0210). No file is named here: a run draws a picture
+    /// and where it lands is the save's own act (Y12).
     pub(crate) fn start(
         &mut self,
         ctx: &eframe::egui::Context,
@@ -266,14 +307,11 @@ impl RenderPlace {
         let Some(render_state) = render_state else {
             return Err("this machine has no device to render with".to_owned());
         };
-        let Some(path) = self.settings.path.clone() else {
-            return Err("choose a file to write the image to".to_owned());
-        };
         let request = r#final::Request::new(self.settings.width, self.settings.height, self.settings.samples)
             .map_err(|error| error.to_string())?;
         // The page speaks percent of a white room and the render speaks linear radiance: the one
         // place the two vocabularies meet is here.
-        let settings = RenderSettings::new(request, self.settings.exposure, path.clone())
+        let settings = RenderSettings::new(request, self.settings.exposure)
             .and_then(|settings| settings.with_environment(self.settings.studio / 100.0))
             .map_err(|error| error.to_string())?;
         let progress = Arc::new(Progress::new(request.samples()));
@@ -305,13 +343,13 @@ impl RenderPlace {
         match spawned {
             Ok(thread) => {
                 self.finished = Stage::Idle;
+                self.saved = None;
                 self.job = Some(Job {
                     progress,
                     thread,
                     width: request.width(),
                     height: request.height(),
                     total: request.samples(),
-                    path,
                     started: Instant::now(),
                 });
                 Ok(())
@@ -398,18 +436,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_place_starts_with_the_draft_and_no_destination() {
+    fn a_place_starts_with_the_draft_and_nothing_to_save() {
         let mut place = RenderPlace::new();
         assert!(!place.is_running());
         assert_eq!(place.stage(), Stage::Idle);
-        assert_eq!(place.settings().path, None);
         let bounds = RenderPlace::bounds();
         assert_eq!(bounds.min_side, r#final::MIN_SIDE);
         assert_eq!(bounds.max_pixels, r#final::MAX_PIXELS);
         assert!(bounds.max_side >= 2480, "A4 at 300 dpi fits the cap");
-        place.set_path("plate.png".into());
-        assert_eq!(place.settings().path, Some("plate.png".into()));
         assert!(place.picture().is_none(), "a place that has not drawn anything shows no picture");
+        assert!(!place.image.is_some(), "and holds no image to save");
+        assert!(place.saved.as_ref().is_none(), "nothing was saved yet");
+        // A save before a run is not a run: it is a sentence and the place stays as it was.
+        let path = testkit::scratch_dir("render-place-nothing").join("plate.png");
+        assert!(place.save(path.clone()), "a refused save asks for a repaint");
+        match place.saved.as_ref() {
+            Some(Saved::Refused(reason)) => assert!(reason.contains("picture"), "{reason}"),
+            other => panic!("a save with no image answered {other:?}"),
+        }
+        assert!(!path.exists(), "nothing was written");
+        assert!(!place.is_running(), "and the refusal is not a thread");
     }
 
     /// A floor and a standing panel, both pale, lit by the frame's key light: a picture with light
@@ -457,11 +503,11 @@ mod tests {
     }
 
     #[test]
-    fn a_render_from_the_place_writes_its_image_and_keeps_the_picture_of_it() {
+    fn a_render_draws_its_image_and_the_place_saves_it_when_asked() {
         // The whole path through the shell's half: a run on its own thread over the frame the
-        // viewport draws, a file on disk, the place's own report and the picture the page draws. A
-        // machine with no adapter says so instead of failing, like every device test in this tree
-        // (`AGENTS.md` §4.7).
+        // viewport draws, no file at all, the picture the page draws, and then a save that writes the
+        // image the run kept. A machine with no adapter says so instead of failing, like every device
+        // test in this tree (`AGENTS.md` §4.7).
         let Ok(state) = crate::ui_shots::render_state() else {
             println!("this machine has no GPU adapter to render a place's image with");
             return;
@@ -469,32 +515,60 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let (frame, camera) = fixture();
         let mut place = RenderPlace::new();
-        let path = testkit::scratch_dir("render-place").join("plate.png");
-        place.set_path(path.clone());
-        place.settings().width = 48;
-        place.settings().height = 32;
-        place.settings().samples = 2;
+        let directory = testkit::scratch_dir("render-place");
+        let path = directory.join("plate.png");
+        place.settings.width = 48;
+        place.settings.height = 32;
+        place.settings.samples = 2;
         place.start(&ctx, Some(&state), frame, camera, 1).expect("the run starts");
         assert!(place.is_running(), "the run is in flight");
         place.wait(&ctx, Some(&state));
         assert!(!place.is_running());
         match place.stage() {
-            Stage::Done(run) => {
-                assert_eq!(run.path, Some(path.clone()));
-                assert_eq!((run.width, run.height, run.done), (48, 32, 2));
-                assert!(run.elapsed > Duration::ZERO, "the row has a clock");
-            }
+            Stage::Done(run) => assert_eq!((run.width, run.height, run.done), (48, 32, 2)),
             other => panic!("the run reported {other:?}"),
         }
-        let bytes = std::fs::read(&path).expect("the image is on disk");
-        assert!(bytes.len() > 100, "a PNG is not empty: {}", bytes.len());
-        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the file is a PNG");
-        // The picture the page draws is the one the file holds, at the picture's own size.
+        assert!(!path.exists(), "a run with no destination named writes no file");
+        let (_, has_image, saved) = place.page_parts();
+        assert!(has_image, "the run's image is kept for a save");
+        assert!(saved.is_none(), "a run is not a save");
+        // The picture the page draws is the run's, at the picture's own size, and it is the kept image.
         let picture = place.picture().expect("the finished picture is on the page");
         assert_eq!((picture.width, picture.height), (48, 32));
 
+        // The save writes that image, at the exposure the page shows, and a second save another file.
+        place.settings.exposure = 2.0;
+        assert!(place.save(path.clone()), "the save asks for a repaint");
+        assert_eq!(place.saved.as_ref(), Some(&Saved::Written(path.clone())), "the row names the file");
+        let bytes = std::fs::read(&path).expect("the image is on disk");
+        assert!(bytes.len() > 100, "a PNG is not empty: {}", bytes.len());
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "the file is a PNG");
+        let kept = place.image.as_ref().expect("the place keeps the finished image");
+        assert_eq!(
+            bytes,
+            r#final::image::encode_png(kept, place.settings.exposure).expect("the kept image encodes"),
+            "the file is the kept image, toned with the exposure the page shows"
+        );
+        let second = directory.join("second.png");
+        place.settings.exposure = 4.0;
+        assert!(place.save(second.clone()));
+        assert_eq!(place.saved.as_ref(), Some(&Saved::Written(second.clone())), "the row moved to the new file");
+        assert_ne!(
+            std::fs::read(&path).expect("the first file"),
+            std::fs::read(&second).expect("the second file"),
+            "the same image at another exposure is another picture"
+        );
+        // A file that cannot be written is a sentence and the image is still there to save.
+        let broken = directory.join("no-such-folder").join("plate.png");
+        assert!(place.save(broken));
+        match place.saved.as_ref() {
+            Some(Saved::Refused(reason)) => assert!(reason.contains("plate.png"), "{reason}"),
+            other => panic!("a failed save answered {other:?}"),
+        }
+        assert!(place.image.is_some(), "a failed save keeps the image");
+
         // The exposure is a live control of the last picture: the same radiance, toned again with
-        // the curve the file was written with, and no second run behind it (Y6).
+        // the curve the file is written with, and no second run behind it (Y6).
         let shown = place.shown.as_ref().expect("the place keeps the picture's radiance");
         // The picture has light in it, which is what an exposure is a control of.
         let brightest = (0..32)
@@ -504,18 +578,21 @@ mod tests {
             .fold(0.0f32, f32::max);
         assert!(brightest > 0.05, "the fixture renders a lit picture: {brightest}");
         assert_ne!(shown.image.to_rgba8(1.0), shown.image.to_rgba8(4.0), "an exposure changes the pixels");
-        place.settings().exposure = 4.0;
+        place.settings.exposure = 4.0;
+        let before = place.saved.clone();
         assert!(place.poll(&ctx, Some(&state)), "the exposure re-toned the picture");
         assert_eq!(place.picture(), Some(picture), "the same texture, toned again");
+        assert_eq!(place.saved.as_ref(), before.as_ref(), "a re-tone is not a save and does not move its row");
         assert!(!place.is_running(), "a re-tone is not a run");
         assert!(!place.poll(&ctx, Some(&state)), "and the same exposure is not a second tone");
         place.release(&state);
     }
 
     #[test]
-    fn a_cancelled_run_keeps_the_picture_it_had_and_writes_no_file() {
+    fn a_cancelled_run_keeps_the_picture_it_had_and_leaves_nothing_to_save() {
         // Cancelling is a thing a person does after looking at the picture: the place keeps the last
-        // one it published, and the destination stays as it was because nothing was written (Y6).
+        // one it published, and a cancelled run keeps no image, so a save after it is the sentence
+        // that there is nothing to write and not a file nobody asked for (Y6, Y12).
         let Ok(state) = crate::ui_shots::render_state() else {
             println!("this machine has no GPU adapter to cancel a render on");
             return;
@@ -524,10 +601,9 @@ mod tests {
         let (frame, camera) = fixture();
         let mut place = RenderPlace::new();
         let path = testkit::scratch_dir("render-place-cancel").join("plate.png");
-        place.set_path(path.clone());
-        place.settings().width = 48;
-        place.settings().height = 32;
-        place.settings().samples = 512;
+        place.settings.width = 48;
+        place.settings.height = 32;
+        place.settings.samples = 512;
         place.start(&ctx, Some(&state), frame, camera, 1).expect("the run starts");
         // The first checkpoint arrives within a sample or two of a small image; the loop is bounded so
         // a machine that cannot publish at all fails on the assertion rather than hanging.
@@ -542,12 +618,15 @@ mod tests {
         place.wait(&ctx, Some(&state));
         assert!(matches!(place.stage(), Stage::Cancelled(_)), "the run reports a cancel: {:?}", place.stage());
         assert_eq!(place.picture(), Some(shown), "the picture the cancel interrupted stays on the page");
+        assert!(!place.image.is_some(), "a cancelled run keeps no image to save");
+        assert!(place.save(path.clone()), "the save says there is nothing to write");
+        assert!(matches!(place.saved.as_ref(), Some(Saved::Refused(_))));
         assert!(!path.exists(), "a cancelled run writes no file");
         place.release(&state);
     }
 
     #[test]
-    fn a_run_without_a_device_or_a_destination_is_a_sentence_not_a_thread() {
+    fn a_run_without_a_device_is_a_sentence_not_a_thread() {
         let ctx = eframe::egui::Context::default();
         let mut place = RenderPlace::new();
         let frame = scene::SceneFrame::default();
@@ -555,8 +634,7 @@ mod tests {
         let refused = place.start(&ctx, None, frame.clone(), camera, 1).expect_err("no device");
         assert!(refused.contains("device"), "{refused}");
         assert!(!place.is_running());
-        // A destination and no device still refuses, and the run is not left half started.
-        place.set_path("plate.png".into());
+        // The refusal leaves no numbering behind: the next start is not half of this one.
         let refused = place.start(&ctx, None, frame, camera, 1).expect_err("no device");
         assert!(refused.contains("device"), "{refused}");
         assert!(!place.take_finished(), "nothing finished, nothing to take");

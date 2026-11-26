@@ -596,11 +596,11 @@ impl App {
         let Some((order, answer)) = self.picker.take() else {
             return;
         };
-        // A render's destination belongs to the place, not to a tab: the answer lands wherever the
-        // run will read it, and the page keeps drawing while the file manager is up (ADR 0182).
+        // A render's save belongs to the place, not to a tab: the answer is where the kept image is
+        // written, and the page keeps drawing while the file manager is up (ADR 0182, Y12).
         if order.mode == PickMode::Image {
             if let Some(path) = answer {
-                self.render_place.set_path(path);
+                self.render_place.save(path);
             }
             return;
         }
@@ -1524,29 +1524,34 @@ impl App {
     /// Draws the render place in the workspace and performs the one action it asked for.
     ///
     /// The page edits the place's own numbers and draws its own report; the shell starts the run,
-    /// stops it and asks the file manager where the image goes. The scene it renders is the one in
-    /// front of the person — the same frame and the same camera the viewport draws — taken at the
-    /// moment the button is pressed and cloned into the worker, so an edit made while it runs does
-    /// not change the image under it (ADR 0210, ADR 0211).
+    /// stops it and saves the picture where the person says. The scene it renders is the one in front
+    /// of the person — the same frame and the same camera the viewport draws — taken at the moment the
+    /// button is pressed and cloned into the worker, so an edit made while it runs does not change the
+    /// image under it (ADR 0210, ADR 0211).
     fn render_page(&mut self, ui: &mut egui::Ui) {
         let lang = ui::language(ui.ctx());
         let scene = self.tabs.active().file_name(lang);
         let stage = self.render_place.stage();
         let picture = self.render_place.picture();
+        // The numbers, the kept image and the last save are borrowed from one place at once, so the
+        // page draws them without the shell cloning a path every frame (Y12).
+        let (settings, has_image, saved) = self.render_place.page_parts();
         let action = ui::render_page::show(
             ui,
             ui::render_page::Page {
                 scene: &scene,
-                settings: self.render_place.settings(),
+                settings,
                 bounds: render_place::RenderPlace::bounds(),
                 stage: &stage,
                 picture,
+                has_image,
+                saved,
             },
         );
         match action {
             Some(ui::render_page::Action::Render) => self.start_render(ui.ctx()),
             Some(ui::render_page::Action::Cancel) => self.render_place.cancel(),
-            Some(ui::render_page::Action::Choose) => self.ask_for_image(ui.ctx()),
+            Some(ui::render_page::Action::Save) => self.ask_for_image(ui.ctx()),
             Some(ui::render_page::Action::Close) => self.render_open = false,
             None => {}
         }
@@ -1566,7 +1571,7 @@ impl App {
         }
     }
 
-    /// Asks the system file manager where the image goes, in the folder the scene lives in.
+    /// Saves the render place's picture where the person says, in the folder the scene lives in.
     fn ask_for_image(&mut self, ctx: &egui::Context) {
         let lang = ui::language(ctx);
         let document = self.tabs.active();

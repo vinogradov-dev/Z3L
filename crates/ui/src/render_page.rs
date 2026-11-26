@@ -2,27 +2,29 @@
 //!
 //! This is a place, not a question: a render runs for minutes and the person may go back to the tree
 //! while it does, so it gets a surface of its own — the `Render` tab beside the File menu — instead
-//! of a modal that holds the window. The page owns the numbers (size, samples, exposure and the file
-//! to write) and nothing else: the frame, the device, the worker thread, the picture it publishes and
-//! the file manager belong to the shell, which hands this module a [`Page`] and performs the one
-//! [`Action`] it returns (Y6, ADR 0250).
+//! of a modal that holds the window. The page owns the numbers (size, samples, studio and exposure)
+//! and nothing else: the frame, the device, the worker thread, the picture it publishes, the file
+//! manager and the kept image belong to the shell, which hands this module a [`Page`] and performs
+//! the one [`Action`] it returns (Y6, Y12, ADR 0250).
 //!
 //! The brief: **the image is the surface, the numbers are a rail, the row under the picture says how
-//! far the render is.** A furniture maker opens this place to look at the plate of the cabinet in
-//! front, at a size a workshop prints, without leaving the editor — so the picture takes the room,
-//! letterboxed against the panel ink rather than stretched or cropped, and the numbers stand in one
-//! measured rail beside it. Under the picture sits the only line that is about the run: the
-//! resolution, the samples it took and owes, the time it took and the time it needs, and the file it
-//! is written to. **Render** is the one primary action; Cancel replaces it while a run is in flight
-//! and nothing else on the page can be pressed into a second run.
+//! far the render is, and the file is written when the person asks for it.** A furniture maker opens
+//! this place to look at the plate of the cabinet in front, at a size a workshop prints, without
+//! leaving the editor — so the picture takes the room, letterboxed against the panel ink rather than
+//! stretched or cropped, and the numbers stand in one measured rail beside it. Under the picture sits
+//! the only line that is about the run: the resolution, the samples it took and owes, and the time it
+//! took and the time it needs. **Render** is the one primary action; Cancel replaces it while a run is
+//! in flight and nothing else on the page can be pressed into a second run. A run needs no
+//! destination: the place keeps the picture it drew, and **Save** writes that picture where the person
+//! says (Y12).
 //!
 //! Refuses: a size, a sample count or a pixel count outside the bounds the shell hands in (they are
-//! the final render's own caps, so the field cannot offer what the tracer would refuse), and a render
-//! with no destination. A refused number is clamped by the field itself and the button says why it
-//! cannot run, rather than a run that fails after a minute.
+//! the final render's own caps, so the field cannot offer what the tracer would refuse). A refused
+//! number is clamped by the field itself, and Save is disabled until there is a picture, rather than
+//! a run that fails after a minute.
 //!
-//! Changes when: what a render needs to be asked, what it reports while it runs, or how the picture
-//! takes the room, changes.
+//! Changes when: what a render needs to be asked, what it reports while it runs, how the picture takes
+//! the room, or how it is saved, changes.
 
 use core::time::Duration;
 use std::path::PathBuf;
@@ -132,18 +134,16 @@ pub struct Settings {
     /// The studio behind the scene, in percent of a white room: what a ray sees where the frame has
     /// no geometry. Zero is no studio and the black background a render had before it could have one.
     pub studio: f32,
-    /// Where the PNG goes; `None` until the person has chosen one.
-    pub path: Option<PathBuf>,
 }
 
 impl Settings {
-    /// The settings a page opens with: a draft, one stop, and no destination yet.
+    /// The settings a page opens with: a draft and one stop.
     pub fn draft() -> Self {
         let (width, height, samples) = Preset::Draft.values();
-        Self { width, height, samples, exposure: 1.0, studio: 0.0, path: None }
+        Self { width, height, samples, exposure: 1.0, studio: 0.0 }
     }
 
-    /// Sets the numbers of `preset`, keeping the destination and the exposure.
+    /// Sets the numbers of `preset`, keeping the exposure and the studio.
     pub fn apply(&mut self, preset: Preset) {
         let (width, height, samples) = preset.values();
         self.width = width;
@@ -175,11 +175,9 @@ impl Settings {
 
     /// Why this render cannot start, if it cannot.
     pub fn refusal(&self) -> Option<Message> {
-        match &self.path {
-            None => Some(Message::RenderNeedsPath),
-            Some(_) if u64::from(self.width) * u64::from(self.height) == 0 => Some(Message::RenderNeedsSize),
-            Some(_) => None,
-        }
+        // A destination is not one of the reasons any more: the run draws a picture and the save
+        // writes it (Y12).
+        if u64::from(self.width) * u64::from(self.height) == 0 { Some(Message::RenderNeedsSize) } else { None }
     }
 }
 
@@ -212,8 +210,6 @@ pub struct Run {
     pub elapsed: Duration,
     /// How much longer it needs, from the samples it has taken; `None` before the first one.
     pub estimate: Option<Duration>,
-    /// The file it writes, as it was chosen at the press.
-    pub path: Option<PathBuf>,
 }
 
 impl Run {
@@ -240,9 +236,9 @@ pub enum Stage {
     Idle,
     /// A run is in flight; the picture it has already published is on the screen beside these numbers.
     Running(Run),
-    /// The image was written, and the picture of it is the file.
+    /// The run finished: the place holds its image, and the picture of it is on the page.
     Done(Run),
-    /// The person stopped the run: nothing was written and the last picture stays.
+    /// The person stopped the run: the last picture stays and no new image is kept.
     Cancelled(Run),
     /// The run refused, with the sentence that says why.
     Failed(String),
@@ -267,7 +263,7 @@ impl Stage {
 pub struct Page<'a> {
     /// The scene the image will be of, by the name the tab shows.
     pub scene: &'a str,
-    /// The numbers and the destination, edited in place.
+    /// The numbers, edited in place.
     pub settings: &'a mut Settings,
     /// The limits the numbers are kept inside.
     pub bounds: Bounds,
@@ -275,6 +271,19 @@ pub struct Page<'a> {
     pub stage: &'a Stage,
     /// The last picture the shell published, if a run has drawn one.
     pub picture: Option<Picture>,
+    /// Whether the place holds a finished image the Save button can write.
+    pub has_image: bool,
+    /// What the last save of that image did, if one was asked for.
+    pub saved: Option<&'a Saved>,
+}
+
+/// What the last save of the kept image did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Saved {
+    /// The image was written to this file.
+    Written(PathBuf),
+    /// The write refused, with the sentence that says why; the image is still held.
+    Refused(String),
 }
 
 /// What the page asked the shell to do.
@@ -284,8 +293,8 @@ pub enum Action {
     Render,
     /// Stop the run in flight at its next sample.
     Cancel,
-    /// Ask the system file manager where the PNG goes.
-    Choose,
+    /// Ask the system file manager where the kept image goes, and write it there.
+    Save,
     /// Leave the place and go back to the document.
     Close,
 }
@@ -299,7 +308,7 @@ pub enum Action {
 pub fn show(ui: &mut Ui, page: Page<'_>) -> Option<Action> {
     let lang = crate::language(ui.ctx());
     let mut action = None;
-    let Page { scene, settings, bounds, stage, picture } = page;
+    let Page { scene, settings, bounds, stage, picture, has_image, saved } = page;
     settings.clamp(bounds);
     let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
     egui::Frame::new().fill(theme::panel(ui)).show(ui, |ui| {
@@ -309,7 +318,8 @@ pub fn show(ui: &mut Ui, page: Page<'_>) -> Option<Action> {
         paint_picture(ui, room, picture, lang);
         status_row(ui, status_rect(area), stage, settings, lang);
         ui.scope_builder(egui::UiBuilder::new().max_rect(rail.shrink2(egui::vec2(GAP, GAP))), |ui| {
-            rail_content(ui, scene, settings, bounds, stage, &mut action, lang);
+            let mut rail = Rail { scene, settings, bounds, stage, has_image, saved, action: &mut action, lang };
+            rail_content(ui, &mut rail);
         });
     });
     if ui.ctx().input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -382,8 +392,8 @@ fn paint_picture(ui: &Ui, room: egui::Rect, picture: Option<Picture>, lang: text
 /// The row under the picture: the bar while a run is in flight, and the numbers the run is.
 ///
 /// One line, dim, in the place's own reading order: the resolution, the samples it took and owes, the
-/// time it took, the time it needs and the file it is written to. A stage that has no file says so in
-/// its own sentence instead of leaving the field out.
+/// time it took and the time it needs. Where the picture goes is not part of it any more: the file is
+/// the save's own row in the rail (Y12).
 fn status_row(ui: &mut Ui, rect: egui::Rect, stage: &Stage, settings: &Settings, lang: text::Lang) {
     if matches!(stage, Stage::Idle) {
         return;
@@ -421,17 +431,13 @@ fn status_row(ui: &mut Ui, rect: egui::Rect, stage: &Stage, settings: &Settings,
     });
 }
 
-/// One run's readings, joined in a sentence a person reads once: size, samples, time, file.
+/// One run's readings, joined in a sentence a person reads once: size, samples, time.
 fn readings(run: &Run, lang: text::Lang) -> String {
     let mut parts = vec![format!("{} × {}", run.width, run.height)];
     parts.push(Message::RenderSamplesDone.with(lang, [run.done.to_string(), run.total.to_string()]));
     parts.push(Message::RenderElapsed.with(lang, [clock(run.elapsed)]));
     if let Some(left) = run.estimate {
         parts.push(Message::RenderEstimate.with(lang, [clock(left)]));
-    }
-    match &run.path {
-        Some(path) => parts.push(Message::RenderWrittenTo.with(lang, [path.display().to_string()])),
-        None => parts.push(Message::RenderNeedsPath.text(lang).to_owned()),
     }
     parts.join(SEPARATOR)
 }
@@ -443,29 +449,37 @@ fn clock(elapsed: Duration) -> String {
     if hours > 0 { format!("{hours}:{minutes:02}:{seconds:02}") } else { format!("{minutes}:{seconds:02}") }
 }
 
-/// The rail beside the picture: what the render is of, the numbers it takes and the one button.
-fn rail_content(
-    ui: &mut Ui,
-    scene: &str,
-    settings: &mut Settings,
+/// The rail's own page: what it draws and what it asks the shell to do.
+///
+/// One value rather than eight parameters: the rail reads the page and writes the one action it
+/// returns, which is the page's whole contract with the shell (ADR 0080).
+struct Rail<'a> {
+    scene: &'a str,
+    settings: &'a mut Settings,
     bounds: Bounds,
-    stage: &Stage,
-    action: &mut Option<Action>,
+    stage: &'a Stage,
+    has_image: bool,
+    saved: Option<&'a Saved>,
+    action: &'a mut Option<Action>,
     lang: text::Lang,
-) {
+}
+
+/// The rail beside the picture: what the render is of, the numbers it takes, the save and the button.
+fn rail_content(ui: &mut Ui, rail: &mut Rail<'_>) {
+    let lang = rail.lang;
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = theme::STEP * 2.0;
         ui.set_max_width(RAIL_WIDTH);
         ui.heading(Message::RenderTitle.text(lang));
-        ui.label(RichText::new(Message::RenderOf.with(lang, [scene])).color(theme::text_dim(ui)));
+        ui.label(RichText::new(Message::RenderOf.with(lang, [rail.scene])).color(theme::text_dim(ui)));
         ui.add_space(theme::STEP * 2.0);
-        if let Some(chosen) = numbers_column(ui, settings, bounds, stage, lang) {
-            *action = Some(chosen);
+        if let Some(chosen) = numbers_column(ui, rail.settings, rail.bounds, rail.stage, lang) {
+            *rail.action = Some(chosen);
         }
         ui.add_space(theme::STEP * 3.0);
-        destination(ui, settings, action, lang);
+        save_row(ui, rail.has_image, rail.saved, rail.action, lang);
         ui.add_space(theme::STEP * 3.0);
-        run_row(ui, settings, stage, action, lang);
+        run_row(ui, rail.settings, rail.stage, rail.action, lang);
     });
 }
 
@@ -539,24 +553,35 @@ fn numbers_column(
     chosen
 }
 
-/// The destination row: the path, and the one button that asks for another.
-fn destination(ui: &mut Ui, settings: &Settings, action: &mut Option<Action>, lang: text::Lang) {
-    ui.label(RichText::new(Message::RenderDestination.text(lang)).strong());
+/// The save row: the button that writes the kept picture, and where the last save landed.
+///
+/// A run needs no destination (Y12): the place holds the image it drew, Save is disabled until there
+/// is one, and pressing it asks the system file manager through the same order the scene's own save
+/// uses (ADR 0182). A write that refused keeps the image and prints its sentence here, and a second
+/// save is another press — no dialog of our own, and nothing to clean up.
+fn save_row(ui: &mut Ui, has_image: bool, saved: Option<&Saved>, action: &mut Option<Action>, lang: text::Lang) {
+    ui.label(RichText::new(Message::RenderSave.text(lang)).strong());
     ui.horizontal(|ui| {
-        let shown = match &settings.path {
-            Some(path) => path.display().to_string(),
-            None => Message::RenderNoPath.text(lang).to_owned(),
-        };
-        // A path is long and the rail is one column wide: it elides, and the full path stays in the
-        // hint a person reads before pressing Render.
-        ui.scope(|ui| {
-            ui.set_max_width((RAIL_WIDTH - 96.0).max(48.0));
-            ui.add(egui::Label::new(RichText::new(shown.clone()).color(theme::text_dim(ui))).truncate())
-                .on_hover_text(shown);
-        });
-        if ui.button(Message::RenderChoose.text(lang)).clicked() {
-            *action = Some(Action::Choose);
+        let button = egui::Button::new(Message::RenderSaveAs.text(lang));
+        if ui.add_enabled(has_image, button).clicked() {
+            *action = Some(Action::Save);
         }
+        if !has_image {
+            ui.label(RichText::new(Message::RenderSaveNothing.text(lang)).color(theme::text_dim(ui)));
+        }
+    });
+    let (text, colour) = match saved {
+        Some(Saved::Written(path)) => {
+            (Message::RenderSavedTo.with(lang, [path.display().to_string()]), theme::text_dim(ui))
+        }
+        Some(Saved::Refused(reason)) => (Message::RenderSaveFailed.with(lang, [reason.clone()]), theme::danger(ui)),
+        None => return,
+    };
+    // A path is long and the rail is one column wide: it elides, and the whole sentence stays in the
+    // hint a person reads before pressing Save again.
+    ui.scope(|ui| {
+        ui.set_max_width(RAIL_WIDTH);
+        ui.add(egui::Label::new(RichText::new(text.clone()).color(colour)).truncate()).on_hover_text(text);
     });
 }
 
@@ -604,7 +629,84 @@ mod tests {
             total,
             elapsed: Duration::from_secs(8),
             estimate: Some(Duration::from_secs(16)),
-            path: Some("plate.png".into()),
+        }
+    }
+
+    /// The display centre of the first text drawn that contains `needle`.
+    fn text_center(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        fn walk(shape: &egui::Shape, needle: &str, found: &mut Option<egui::Pos2>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                    *found = Some(text.pos + text.galley.size() / 2.0);
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, needle, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = None;
+        for clipped in &output.shapes {
+            walk(&clipped.shape, needle, &mut found);
+        }
+        found
+    }
+
+    /// One page driven frame by frame, so a test can press the buttons a person presses.
+    struct PageRun {
+        ctx: egui::Context,
+        settings: Settings,
+        stage: Stage,
+        picture: Option<Picture>,
+        has_image: bool,
+        saved: Option<Saved>,
+    }
+
+    impl PageRun {
+        fn new(stage: Stage, has_image: bool) -> Self {
+            let picture = has_image.then(|| picture(64, 48));
+            Self { ctx: egui::Context::default(), settings: Settings::draft(), stage, picture, has_image, saved: None }
+        }
+
+        /// Draws one frame with `events` and returns the action the page asked for and what it painted.
+        fn frame(&mut self, events: Vec<egui::Event>) -> (Option<Action>, egui::FullOutput) {
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+            let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+            let mut action = None;
+            let mut output = self.ctx.run_ui(input, |ui| {
+                action = show(
+                    ui,
+                    Page {
+                        scene: "Cabinet",
+                        settings: &mut self.settings,
+                        bounds: bounds(),
+                        stage: &self.stage,
+                        picture: self.picture,
+                        has_image: self.has_image,
+                        saved: self.saved.as_ref(),
+                    },
+                );
+            });
+            // A test owns the frame's textures: the delta is taken and dropped here, not by a renderer.
+            std::mem::take(&mut output.textures_delta).clear();
+            (action, output)
+        }
+
+        /// Clicks the widget whose text contains `needle`, the way a pointer does: move, press, release.
+        fn click(&mut self, needle: &str) -> Option<Action> {
+            let (_, output) = self.frame(Vec::new());
+            let at = text_center(&output, needle).unwrap_or_else(|| panic!("`{needle}` is not drawn"));
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(vec![egui::Event::PointerMoved(at)]);
+            self.frame(vec![press(true)]);
+            self.frame(vec![press(false)]).0
         }
     }
 
@@ -629,20 +731,20 @@ mod tests {
     }
 
     #[test]
-    fn a_preset_sets_the_numbers_and_keeps_the_destination() {
+    fn a_preset_sets_the_numbers_and_keeps_the_exposure() {
         let mut settings = Settings::draft();
-        settings.path = Some("plate.png".into());
         settings.exposure = 2.0;
+        settings.studio = 40.0;
         settings.apply(Preset::Print);
         assert_eq!((settings.width, settings.height, settings.samples), (2480, 3508, 256));
-        assert_eq!(settings.path, Some("plate.png".into()), "a preset is not a destination");
-        assert_eq!(settings.exposure, 2.0, "and it is not an exposure");
+        assert_eq!(settings.exposure, 2.0, "a preset is not an exposure");
+        assert_eq!(settings.studio, 40.0, "and it is not a studio");
     }
 
     #[test]
     fn a_clamped_request_is_one_the_tracer_accepts() {
         let mut settings =
-            Settings { width: 40_000, height: 40_000, samples: 100_000, exposure: 0.0, studio: f32::NAN, path: None };
+            Settings { width: 40_000, height: 40_000, samples: 100_000, exposure: 0.0, studio: f32::NAN };
         settings.clamp(bounds());
         assert_eq!(settings.width, 8192);
         assert!(settings.height <= settings.width);
@@ -674,11 +776,10 @@ mod tests {
     }
 
     #[test]
-    fn a_render_without_a_destination_is_refused_before_it_starts() {
+    fn a_render_with_a_zero_size_is_refused_and_a_destination_is_not_needed() {
+        // A run draws a picture and the save writes it, so no destination can refuse a render (Y12).
         let mut settings = Settings::draft();
-        assert_eq!(settings.refusal(), Some(Message::RenderNeedsPath));
-        settings.path = Some("plate.png".into());
-        assert_eq!(settings.refusal(), None);
+        assert_eq!(settings.refusal(), None, "a draft with no file chosen can still render");
         settings.width = 0;
         assert_eq!(settings.refusal(), Some(Message::RenderNeedsSize));
     }
@@ -701,24 +802,52 @@ mod tests {
 
     #[test]
     fn the_status_row_reads_the_run_out_of_the_stage() {
-        // The row is the page's own: it prints the size, the samples, the time and the file, and it
-        // says when the picture no longer matches the numbers in the rail.
+        // The row is the page's own: it prints the size, the samples and the time, and it says when
+        // the picture no longer matches the numbers in the rail. The file is the save's row (Y12).
         let running = readings(&run(12, 64), text::Lang::En);
-        for wanted in ["1920 × 1080", "12 of 64 samples", "0:08 elapsed", "about 0:16 left", "plate.png"] {
+        for wanted in ["1920 × 1080", "12 of 64 samples", "0:08 elapsed", "about 0:16 left"] {
             assert!(running.contains(wanted), "the row does not say {wanted}: {running}");
         }
         let done = readings(&run(64, 64), text::Lang::En);
         assert!(done.contains("64 of 64 samples"), "{done}");
-        assert!(done.contains("written to plate.png"), "{done}");
+        assert!(!done.contains("plate"), "a run that drew a picture wrote no file: {done}");
         // A picture of another size is not the numbers above it.
         let mut matching = Settings::draft();
-        matching.path = Some("plate.png".into());
         let mut same = run(4, 4);
         same.width = matching.width;
         same.height = matching.height;
         assert!(same.is_current(&matching));
         same.total = 256;
         assert!(!same.is_current(&matching), "a plate's samples are not a draft's");
+        matching.samples = 256;
+        assert!(same.is_current(&matching));
+    }
+
+    #[test]
+    fn the_render_button_needs_no_destination_and_save_waits_for_a_picture() {
+        // The whole clause a person feels (Y12): Render starts with nothing chosen, Save is disabled
+        // until a run has an image, and once it has one the same press asks where the file goes.
+        let render = Message::RenderStart.text(text::Lang::En);
+        let save = Message::RenderSaveAs.text(text::Lang::En);
+
+        let mut idle = PageRun::new(Stage::Idle, false);
+        assert_eq!(idle.click(render), Some(Action::Render), "Render runs with no destination");
+        assert_eq!(idle.click(save), None, "Save has no picture to write yet");
+
+        let mut done = PageRun::new(Stage::Done(run(4, 4)), true);
+        assert_eq!(done.click(save), Some(Action::Save), "a finished picture is saved where the person says");
+
+        // A save that refused keeps the image and says why; the button is pressed again.
+        done.saved = Some(Saved::Refused("the folder is gone".to_owned()));
+        let (_, output) = done.frame(Vec::new());
+        assert!(text_center(&output, "the folder is gone").is_some(), "the refusal is on the place");
+        assert_eq!(done.click(save), Some(Action::Save), "and the image is still there to save");
+
+        // A run in flight keeps the earlier picture savable and takes Cancel in Render's place.
+        let mut running = PageRun::new(Stage::Running(run(2, 8)), true);
+        let cancel = Message::RenderCancel.text(text::Lang::En);
+        assert_eq!(running.click(save), Some(Action::Save), "the picture the run replaced is still held");
+        assert_eq!(running.click(cancel), Some(Action::Cancel));
     }
 
     #[test]
@@ -730,7 +859,6 @@ mod tests {
         for screen in [egui::vec2(1400.0, 900.0), egui::vec2(900.0, 640.0)] {
             let ctx = egui::Context::default();
             let mut settings = Settings::draft();
-            settings.path = Some("plate.png".into());
             let stage = Stage::Done(run(4, 4));
             let area = egui::Rect::from_min_size(egui::Pos2::ZERO, screen);
             let input = egui::RawInput { screen_rect: Some(area), ..Default::default() };
@@ -743,6 +871,8 @@ mod tests {
                         bounds: bounds(),
                         stage: &stage,
                         picture: Some(Picture { texture, width: 1600, height: 800 }),
+                        has_image: true,
+                        saved: None,
                     },
                 );
             });
@@ -775,11 +905,18 @@ mod tests {
         for stage in stages {
             for picture in [None, Some(picture(1920, 1080))] {
                 let mut settings = Settings::draft();
-                settings.path = Some("plate.png".into());
                 egui::__run_test_ui(|ui| {
                     let action = show(
                         ui,
-                        Page { scene: "Cabinet", settings: &mut settings, bounds: bounds(), stage: &stage, picture },
+                        Page {
+                            scene: "Cabinet",
+                            settings: &mut settings,
+                            bounds: bounds(),
+                            stage: &stage,
+                            picture,
+                            has_image: picture.is_some(),
+                            saved: Some(&Saved::Written("plate.png".into())),
+                        },
                     );
                     assert!(action.is_none(), "nothing was pressed in {stage:?}");
                 });
