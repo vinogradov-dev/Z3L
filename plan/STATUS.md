@@ -30,9 +30,9 @@ library material instead of describing it (O16).
 
 ## Next
 
-Nothing is scheduled: 13 open tasks wait in `## Next`, the order opens with a catalogue record that
-refers to a library material (O16), and the render stream's work order is empty — its road ends at
-Y12.
+Nothing is scheduled: 16 open tasks wait in `## Next`, the order opens with a catalogue record that
+refers to a library material (O16), and the render stream's next entries are Y14–Y16 — the material
+window, the object's own decor mapping and the tiling grid.
 
 ## Index
 

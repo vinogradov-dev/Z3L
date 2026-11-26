@@ -291,6 +291,72 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    library's names and refuses nothing when the library is empty; a node whose record is gone
    is a finding the inspector prints; cargo xtask ci is green.
   `files: crates/ui/src,crates/engine/src,app/src`
+- `[ ]` **Y14** a material is created and edited in the window, and the file it writes is the one the render reads
+  Why: Every board in a cabinet is drawn from a record of the render's library, and today that
+   record exists only in `library.json`: ADR 0244 states that nothing edits a material yet — a
+   shop writes the file by hand and drops its scans into `textures/` — and it filed the card
+   that authors a record as its own task. The record is the whole vocabulary the tracer has:
+   base colour, decor picture with its size and turn, roughness, metallic, ior, transmission,
+   absorption, and one coat of weight, gloss and ior. A shop that cannot author it cannot buy a
+   decor it does not already have, and a wrong number is found only by rendering a plate.
+  Shape: A Materials page in Settings, where the workshop's own file already lives, drawn from
+   the session's `Library`: the records listed by name and id with their picture, a record
+   editor for the base's fields and one coat, and a preview swatch so a decor's scale and turn
+   are seen before a scene opens. A picture is chosen through the existing `file_picker` order
+   and named by a path relative to the store's folder, as `materials::Decor` already demands. A
+   new record takes a fresh `MaterialId`; saving writes `library.json` through
+   `materials::Store` atomically — the same file the watcher reads — so the page swaps the
+   library into every open tab the way Y8 already does and no revision moves. Deleting a record
+   a node names is refused with the nodes named, or allowed with the diagnostic the frame
+   already prints; that choice is the owner's. `ui` never sees `wgpu`, so the preview is a flat
+   swatch of the colour and the picture, not a traced board.
+  Done: Tests: a record created in the page is in `library.json` and in the next frame; a
+   hostile record (negative roughness, an ior below one, a `covers` of zero) is refused with
+   the field named and the file untouched; an edited record changes the frame and not the
+   document's revision; a chosen picture lands under `textures/` and the record names it
+   relatively; a record a node names is not deleted silently; cargo xtask ci is green.
+  `files: crates/ui/src/settings.rs,crates/materials/src/store.rs,app/src/materials_watch.rs,app/src/file_picker.rs`
+- `[ ]` **Y15** each object carries its own decor mapping — a scale, an offset and a turn — instead of inheriting the record's
+  Why: `scene::Decor::uv` projects a drawable's local XY by the record's `covers` and `turns`,
+   so every board of a cabinet wears a veneer at one scale and one turn: the grain of a door
+   cannot be run along its height while the shelf beside it runs along its width, and a small
+   part cannot be shown at a finer scale than a large one. The mapping is one plain planar
+   projection from the local frame; there is no per-node scale, offset or quarter turn and no
+   choice of the axis it projects along. `AGENTS.md` §4.9: the document field is designed with
+   the owner before it is written.
+  Shape: A per-node mapping stored beside the node's render material — a scale (a length per
+   picture width), an offset in two axes and a quarter turn — with the record's own numbers as
+   the quiet answer, so a node that says nothing draws exactly as it does today; one command
+   (`node.decor.set`) and one undo entry; the frame composes the mapping with the record's
+   decor, so one picture still textures the whole cabinet and the viewport and the tracer keep
+   reading one `scene::Decor`. The card that draws it sits beside the render material slot U129
+   adds. **Open for the owner before the field is written**: does a person choose the
+   projection axis per face (top, front, side), or does a panel keep its local plane with only
+   scale, offset and turn? A real unwrap is not this task: a contour part is a prism, and a
+   shop aligns a grain rather than unwrapping a body.
+  Done: Tests: a node's mapping is document data — serialized, one undo entry per command, and
+   a node without one draws the record's own numbers; a scale, an offset and a quarter turn
+   each move the coordinate the viewport and the tracer compute, through the one shared
+   function; a hostile mapping (a zero scale) is refused; cargo xtask ci is green.
+  `files: crates/model/src/project/node_cmds.rs,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/ui/src/panel_card.rs`
+- `[ ]` **Y16** the viewport shows the decor's tiling as a grid, so the scale and the seam are seen before a render
+  Why: The mapping is invisible until a final render is drawn: a person cannot tell whether a
+   veneer's picture covers 600 mm or 1200 mm, where the seam falls on a door, or whether the
+   grain runs along the board. A 3D editor the person knows shows a UV or checker grid for
+   exactly this, and the viewport already samples the same `scene::Decor` the tracer does, so
+   the grid is a view mode and not a document change.
+  Shape: A view toggle beside the existing display switches (`view.decor_grid`), off by default
+   and remembered per tab like the other view flags: while it is on, every decorated drawable
+   draws the decor's tiling as a checker — or the decor with a grid over it — so the scale, the
+   turn and the seam are read at a glance, and a surface with no decor keeps its plain tone.
+   The line weight and the step come from the theme and from the decor's own `covers`, never
+   from a literal in a shader. The one `scene::Decor::uv` runs for the overlay, the viewport's
+   shading and the tracer, so the grid cannot disagree with the print.
+  Done: Tests: the toggle is view state and moves no revision; a fixture drawable shows one
+   tiling per `covers` millimetres with the seam where the coordinate wraps; the overlay is off
+   by default and survives a document switch; cargo xtask ci is green.
+  `files: crates/ui/src,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/render/src`
+
 ## Done
 
 - `[x]` **Y12** a render needs no chosen file, and the plate is saved when the person says so
