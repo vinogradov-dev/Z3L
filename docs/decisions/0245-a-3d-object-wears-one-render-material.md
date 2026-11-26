@@ -37,7 +37,8 @@ render's library, and the frame resolves that reference and nothing else.**
   record is O16's bridge in `panel.material.set`, one line where the two exist, and never a read of
   the catalogue from the frame.
 - **A quiet answer keeps the placeholder, and a refusal is a sentence.** No slot, a reference the
-  library does not hold, a record with no base (a finish alone, until Y9 gives the coat a surface)
+  library does not hold, a record with no base (a finish alone: a layer has nothing to be seen
+  through, so a record that names only a coat still paints the placeholder)
   and a frame built with no workshop folder all paint the placeholder tone; a picture that is named
   and cannot be read is its record's flat colour and a log line naming the record and the file, never
   a black rectangle.

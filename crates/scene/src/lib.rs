@@ -448,7 +448,7 @@ impl Default for Lighting {
 /// shades as a repaired surface rather than poisoning an image (`crates/final/src/bsdf.rs`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
-    /// Microfacet roughness of the coat or the metal, `0..=1`.
+    /// Microfacet roughness of the metal or the pane, `0..=1`.
     pub roughness: f32,
     /// `0` for a dielectric, `1` for a metal.
     pub metallic: f32,
@@ -458,11 +458,55 @@ pub struct Surface {
     pub transmission: f32,
     /// Beer-Lambert extinction inside the material, per millimetre, linear RGB.
     pub absorption: [f32; 3],
+    /// The clear layer over the base, or [`Coat::NONE`] for a surface that is its base alone.
+    pub coat: Coat,
 }
 
 impl Surface {
-    /// Painted or veneered board: diffuse, opaque, dielectric.
-    pub const MATTE: Self = Self { roughness: 1.0, metallic: 0.0, ior: 1.5, transmission: 0.0, absorption: [0.0; 3] };
+    /// Painted or veneered board: diffuse, opaque, dielectric, no finish over it.
+    pub const MATTE: Self =
+        Self { roughness: 1.0, metallic: 0.0, ior: 1.5, transmission: 0.0, absorption: [0.0; 3], coat: Coat::NONE };
+}
+
+/// The clear dielectric layer over a base: a lacquer, a melamine face, a gloss acrylic front.
+///
+/// A furniture catalogue sells a surface, not a base: a veneer under a 90 % lacquer is a picture of
+/// its own, and ADR 0243 decides the shape — one base, at most one coat, never a stack. The frame
+/// carries the layer the way the tracer reads it: a coverage, a GGX width and an index of refraction.
+///
+/// The gloss in percent is the number a workshop says and a catalogue stores; it becomes the width
+/// here, once, where a record turns into a frame ([`Coat::glossed`]), so no shader sees a percent
+/// and no record carries an alpha.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Coat {
+    /// How much of the surface the layer covers, `0..=1`; zero is no coat at all.
+    pub weight: f32,
+    /// GGX alpha of the layer, `0..=1`: `(1 - gloss / 100)²`, so 90 % gloss is `0.01`.
+    pub alpha: f32,
+    /// The layer's own index of refraction.
+    pub ior: f32,
+}
+
+impl Coat {
+    /// The index of refraction of a clear lacquer: the glass index a finish reads as.
+    pub const IOR: f32 = 1.5;
+
+    /// No layer: the surface is its base alone, which is exactly a picture without a coat.
+    pub const NONE: Self = Self { weight: 0.0, alpha: 1.0, ior: Self::IOR };
+
+    /// A layer covering `weight` of the surface, glossed `gloss` percent, with its own `ior`.
+    ///
+    /// The gloss is the number a workshop says — 90 % is a lacquer, 50 % is a satin — and the width
+    /// the tracer reads is V-Ray's and Cycles' `alpha = (1 - gloss / 100)²` (ADR 0243). The mapping
+    /// lives here because this is the one place a record becomes a frame; a value outside its range
+    /// is repaired rather than carried, the way every other value of a surface is.
+    pub fn glossed(weight: f32, gloss: f32, ior: f32) -> Self {
+        let weight = if weight.is_finite() { weight.clamp(0.0, 1.0) } else { 0.0 };
+        let gloss = if gloss.is_finite() { gloss.clamp(0.0, 100.0) } else { 0.0 };
+        let ior = if ior.is_finite() { ior.max(1.0) } else { Self::IOR };
+        let roughness = 1.0 - gloss / 100.0;
+        Self { weight, alpha: roughness * roughness, ior }
+    }
 }
 
 impl Default for Surface {

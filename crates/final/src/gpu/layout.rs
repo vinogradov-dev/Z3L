@@ -46,15 +46,15 @@ pub(crate) struct GpuFace {
     pub(crate) b: [f32; 4],
     /// The third vertex and the padding.
     pub(crate) c: [f32; 4],
-    /// Linear RGB albedo and the padding.
+    /// Linear RGB albedo, and the coat's weight in `w`.
     pub(crate) colour: [f32; 4],
     /// The finish: `x` roughness, `y` metallic, `z` the index of refraction, `w` transmission.
     pub(crate) finish: [f32; 4],
-    /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the padding.
+    /// The tint: Beer-Lambert extinction per millimetre, linear RGB, and the coat's alpha in `w`.
     pub(crate) tint: [f32; 4],
     /// The decor's coordinate at the first two corners: `xy` the first, `zw` the second.
     pub(crate) uv_a: [f32; 4],
-    /// The third corner's coordinate in `xy`; `z` and `w` are unused.
+    /// The third corner's coordinate in `xy`, the coat's index of refraction in `z`, and `w` unused.
     pub(crate) uv_b: [f32; 4],
     /// `x` is the picture's index plus one, or zero for a surface with no decor.
     pub(crate) decor: [u32; 4],
@@ -270,11 +270,14 @@ pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
             a,
             b,
             c,
-            colour: [face.colour[0], face.colour[1], face.colour[2], 0.0],
+            // The coat rides in the three channels a face had spare — `colour.w`, `tint.w` and
+            // `uv_b.z` — so a face keeps its 144 bytes and its place in one memory sector
+            // (`docs/performance.md` §2, ADR 0243).
+            colour: [face.colour[0], face.colour[1], face.colour[2], surface.coat.weight],
             finish: [surface.roughness, surface.metallic, surface.ior, surface.transmission],
-            tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], 0.0],
+            tint: [surface.absorption[0], surface.absorption[1], surface.absorption[2], surface.coat.alpha],
             uv_a: [uv[0][0], uv[0][1], uv[1][0], uv[1][1]],
-            uv_b: [uv[2][0], uv[2][1], 0.0, 0.0],
+            uv_b: [uv[2][0], uv[2][1], surface.coat.ior, 0.0],
             // One-based, so zero — the value a cleared slot holds — is "no picture".
             decor: [face.decor.map_or(0, |index| index.saturating_add(1)), 0, 0, 0],
         });
@@ -590,9 +593,33 @@ mod tests {
         assert_eq!(faces[0].a, [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(faces[0].b, [10.0, 0.0, 0.0, 0.0]);
         assert_eq!(faces[0].c, [0.0, 10.0, 0.0, 0.0]);
-        assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0]);
+        assert_eq!(faces[0].colour, [0.25, 0.5, 0.75, 0.0], "no coat, so the spare channel is zero");
         assert_eq!(faces[0].finish, [1.0, 0.0, 1.5, 0.0], "a face that names no finish is matte paint");
-        assert_eq!(faces[0].tint, [0.0; 4]);
+        assert_eq!(
+            faces[0].tint,
+            [0.0, 0.0, 0.0, scene::Coat::NONE.alpha],
+            "a coat that is not there still says its default width"
+        );
+        assert_eq!(faces[0].uv_b, [0.0, 0.0, scene::Coat::NONE.ior, 0.0], "and its default index");
+    }
+
+    #[test]
+    fn a_coated_face_carries_the_layer_in_the_channels_it_had_spare() {
+        // ADR 0243 spends no byte and no extra sector on the coat: the three numbers a layer is made
+        // of ride where the face had nothing to say, and the struct is the size it always was.
+        let coat = scene::Coat::glossed(1.0, 90.0, 1.5);
+        let surface = scene::Surface { coat, ..scene::Surface::MATTE };
+        let mut coated = face(DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0), [0.25, 0.5, 0.75]);
+        coated.surface = surface;
+        let faces = faces(&bvh(vec![coated])).expect("a flat face list");
+        assert_eq!(faces[0].colour[3], 1.0, "the coat's weight in the colour's spare channel");
+        assert_eq!(faces[0].tint[3], coat.alpha, "its GGX width in the tint's");
+        assert_eq!(faces[0].uv_b[2], coat.ior, "and its index in the third corner's");
+        assert!((coat.alpha - 0.01).abs() < 1.0e-6, "90 % gloss is a hundredth of a width: {}", coat.alpha);
+        assert_eq!(std::mem::size_of::<GpuFace>(), 144, "the coat costs the face no bytes");
+        // No coat at all is a zero in the two weights, so the shader reads a surface it always had.
+        assert_eq!(surface.coat.weight, 1.0);
+        assert_eq!(scene::Coat::NONE.alpha, 1.0);
     }
 
     #[test]

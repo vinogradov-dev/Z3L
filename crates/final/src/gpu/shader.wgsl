@@ -1,4 +1,4 @@
-// The final render's integrator: a path tracer with three lobes, next-event estimation and a
+// The final render's integrator: a path tracer with four lobes, next-event estimation and a
 // stratified sampler.
 //
 // This file is the transcription of the Rust beside it and nothing more: `sampler.rs` owns the
@@ -63,14 +63,15 @@ struct Face {
     a: vec4<f32>,
     b: vec4<f32>,
     c: vec4<f32>,
+    // rgb: linear albedo; w: the coat's weight, the share of the surface its layer covers.
     colour: vec4<f32>,
     // x: roughness, y: metallic, z: the index of refraction, w: transmission.
     finish: vec4<f32>,
-    // rgb: Beer-Lambert extinction per millimetre.
+    // rgb: Beer-Lambert extinction per millimetre; w: the coat's GGX alpha.
     tint: vec4<f32>,
     // The decor's coordinate at the first two corners: xy the first, zw the second.
     uv_a: vec4<f32>,
-    // The third corner's coordinate in xy.
+    // The third corner's coordinate in xy; z: the coat's index of refraction.
     uv_b: vec4<f32>,
     // x: the picture's index plus one, or zero for a surface with no decor.
     decor: vec4<u32>,
@@ -192,6 +193,10 @@ struct Material {
     ior: f32,
     transmission: f32,
     absorption: vec3<f32>,
+    // The clear layer over the base (ADR 0243): its coverage, its GGX alpha and its own index.
+    coat_weight: f32,
+    coat_alpha: f32,
+    coat_ior: f32,
 };
 
 // The probability each lobe of one scattering event is drawn with, which adds up to one.
@@ -199,6 +204,7 @@ struct Probabilities {
     diffuse: f32,
     specular: f32,
     completion: f32,
+    coat: f32,
     transmitted: f32,
 };
 
@@ -552,7 +558,28 @@ fn material_of(face: Face, point: vec3<f32>) -> Material {
     material.ior = max(face.finish.z, 1.0);
     material.transmission = clamp(face.finish.w, 0.0, 1.0);
     material.absorption = max(face.tint.rgb, vec3<f32>(0.0));
+    // The layer rides in the channels the face had spare, so a face keeps its 144 bytes.
+    material.coat_weight = clamp(face.colour.w, 0.0, 1.0);
+    material.coat_alpha = clamp(face.tint.w, 0.0, 1.0);
+    material.coat_ior = max(face.uv_b.z, 1.0);
     return material;
+}
+
+// The coat's GGX width, which is never a Dirac delta. `Coat::alpha` in `bsdf.rs`.
+fn coat_alpha_of(material: Material) -> f32 {
+    return max(material.coat_alpha, MIN_ROUGHNESS);
+}
+
+// The Fresnel reflectance of the layer at `cos`, times the share of the surface it covers, which is
+// `bsdf::Coat::reflectance`. One number serves the layer's lobe and the base's transmittance (ADR
+// 0243): what the coat reflects is what the base does not see.
+fn coat_reflectance(material: Material, cos: f32) -> f32 {
+    return material.coat_weight * fresnel_dielectric(cos, material.coat_ior);
+}
+
+// The share of the base's light the coat passes at `cos`, `1 - weight * F`, as `Material::transmittance`.
+fn coat_transmittance(material: Material, cos: f32) -> f32 {
+    return clamp(1.0 - coat_reflectance(material, cos), 0.0, 1.0);
 }
 
 fn alpha_of(material: Material) -> f32 {
@@ -670,6 +697,25 @@ fn ggx_eval(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, f0: vec3<f32>) -> vec3<f32
     return f * (d * g / (4.0 * wo.z * wi.z));
 }
 
+// The GGX lobe's value with one reflectance for the whole event, which is the coat's lobe: the layer's
+// Fresnel is the split of the beam and not a function of the half angle (ADR 0243), so the weight a
+// coat draw is taken with is the microfacet's own `G2 / G1` and a lacquer draws no fireflies.
+fn ggx_eval_constant(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, reflectance: vec3<f32>) -> vec3<f32> {
+    if (wo.z <= 0.0 || wi.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = safe_normalize(wo + wi);
+    if (h.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let d = distribution(h.z, alpha);
+    if (d <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let g = masking(wo.z, wi.z, alpha);
+    return reflectance * (d * g / (4.0 * wo.z * wi.z));
+}
+
 fn ggx_eval_dielectric(wo: vec3<f32>, wi: vec3<f32>, alpha: f32, eta: f32) -> vec3<f32> {
     if (wo.z <= 0.0 || wi.z <= 0.0) {
         return vec3<f32>(0.0);
@@ -778,6 +824,7 @@ fn probabilities_of(material: Material, wo: vec3<f32>, inside: bool) -> Probabil
     probabilities.completion = 0.0;
     probabilities.transmitted = 0.0;
     if (is_pane(material)) {
+        // A pane is its own interface and is never a coat (ADR 0243): what is not reflected is crossed.
         let reflectance = fresnel_dielectric(wo.z, interface_ratio(material, inside));
         probabilities.specular = reflectance;
         probabilities.transmitted = 1.0 - reflectance;
@@ -788,9 +835,13 @@ fn probabilities_of(material: Material, wo: vec3<f32>, inside: bool) -> Probabil
     if (metal > 0.0) {
         multiple = multiple_scatter_probability(material.albedo, material.roughness);
     }
-    probabilities.diffuse = 1.0 - metal;
-    probabilities.specular = metal * (1.0 - multiple);
-    probabilities.completion = metal * multiple;
+    // The coat takes the share of the draws its own reflectance names and leaves the base the rest.
+    let coat = coat_reflectance(material, wo.z);
+    let base = 1.0 - coat;
+    probabilities.diffuse = (1.0 - metal) * base;
+    probabilities.specular = metal * (1.0 - multiple) * base;
+    probabilities.completion = metal * multiple * base;
+    probabilities.coat = coat;
     return probabilities;
 }
 
@@ -803,13 +854,20 @@ fn bsdf_eval(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> 
         return ggx_eval_dielectric(wo, wi, alpha, interface_ratio(material, inside));
     }
     let metal = material.metallic;
+    // The base is seen through the coat, so every base term carries the layer's transmittance.
+    let transmittance = coat_transmittance(material, wo.z);
     var total = vec3<f32>(0.0);
     if (metal > 0.0) {
-        total = total + ggx_eval(wo, wi, alpha, material.albedo) * metal;
-        total = total + multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness) * metal;
+        total = total + ggx_eval(wo, wi, alpha, material.albedo) * (metal * transmittance);
+        total = total + multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness) * (metal * transmittance);
     }
     if (metal < 1.0) {
-        total = total + material.albedo * ((1.0 - metal) / PI);
+        total = total + material.albedo * ((1.0 - metal) * transmittance / PI);
+    }
+    // The coat's own reflection, at its own width and with one Fresnel for the whole event.
+    if (material.coat_weight > 0.0) {
+        let reflectance = vec3<f32>(coat_reflectance(material, wo.z));
+        total = total + ggx_eval_constant(wo, wi, coat_alpha_of(material), reflectance);
     }
     return total;
 }
@@ -827,7 +885,10 @@ fn bsdf_pdf(material: Material, wo: vec3<f32>, wi: vec3<f32>, inside: bool) -> f
     let alpha = alpha_of(material);
     let probabilities = probabilities_of(material, wo, inside);
     let cosine = (probabilities.diffuse + probabilities.completion) * wi.z / PI;
-    let density = probabilities.specular * ggx_pdf(wo, wi, alpha) + cosine;
+    // The coat's lobe has its own width, so its density is not the conductor's.
+    let density = probabilities.specular * ggx_pdf(wo, wi, alpha)
+        + probabilities.coat * ggx_pdf(wo, wi, coat_alpha_of(material))
+        + cosine;
     if (!(density > 0.0)) {
         return 0.0;
     }
@@ -884,6 +945,13 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
         return scatter;
     }
     let metal = material.metallic;
+    // The shares the base lobes are drawn from before the coat takes its own: the transmittance
+    // scales a lobe's value and its draw probability alike, so it cancels out of `f |cos| / pdf`
+    // and only decides how often the lobe is drawn.
+    var multiple = 0.0;
+    if (metal > 0.0) {
+        multiple = multiple_scatter_probability(material.albedo, material.roughness);
+    }
     if (pick < probabilities.diffuse) {
         let wi = sample_cosine(u);
         scatter.valid = true;
@@ -895,10 +963,33 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
     if (pick < probabilities.diffuse + probabilities.completion) {
         let wi = sample_cosine(u);
         let value = multiple_scatter_eval(material.albedo, wo.z, wi.z, material.roughness);
+        let share = metal * multiple;
         scatter.valid = true;
         scatter.direction = wi;
-        scatter.weight = value * (PI / max(probabilities.completion, 1.0e-9));
+        scatter.weight = value * (PI / max(share, 1.0e-9));
         scatter.pdf = probabilities.completion * wi.z / PI;
+        return scatter;
+    }
+    let coat_turn = probabilities.diffuse + probabilities.completion + probabilities.specular;
+    if (probabilities.coat > 0.0 && pick >= coat_turn) {
+        // The layer's own reflection, at its own width: the same visible-normal draw and the same
+        // masking the conductor uses, weighted by the layer's Fresnel and the share it covers.
+        let coat_alpha = coat_alpha_of(material);
+        let h = sample_visible_normal(wo, coat_alpha, u);
+        let dot_oh = dot(wo, h);
+        if (dot_oh <= 0.0) {
+            return scatter;
+        }
+        let wi = h * (2.0 * dot_oh) - wo;
+        if (wi.z <= 0.0) {
+            return scatter;
+        }
+        let keep = masking(wo.z, wi.z, coat_alpha) * (1.0 + lambda_(wo.z, coat_alpha));
+        let reflectance = coat_reflectance(material, wo.z);
+        scatter.valid = true;
+        scatter.direction = wi;
+        scatter.weight = vec3<f32>(reflectance * keep / max(probabilities.coat, 1.0e-9));
+        scatter.pdf = probabilities.coat * ggx_pdf(wo, wi, coat_alpha);
         return scatter;
     }
     let h = sample_visible_normal(wo, alpha, u);
@@ -912,9 +1003,10 @@ fn sample_bsdf(material: Material, wo: vec3<f32>, u: vec2<f32>, pick: f32, insid
     }
     let fresnel = fresnel_schlick(clamp(dot_oh, 0.0, 1.0), material.albedo);
     let keep = masking(wo.z, wi.z, alpha) * (1.0 + lambda_(wo.z, alpha));
+    let base = metal * (1.0 - multiple);
     scatter.valid = true;
     scatter.direction = wi;
-    scatter.weight = fresnel * (keep * metal / max(probabilities.specular, 1.0e-9));
+    scatter.weight = fresnel * (keep * metal / max(base, 1.0e-9));
     scatter.pdf = probabilities.specular * ggx_pdf(wo, wi, alpha);
     return scatter;
 }
