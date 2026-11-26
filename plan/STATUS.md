@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=6e0110e updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=aa41181 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -39,14 +39,18 @@ manager says, and its Materials row opens the records the picture is drawn from 
 0250, ADR 0251). The final render has a camera with a lens that is the document's
 `model::CameraLens` (Y11, ADR 0249), a light can be a window (L2, ADR 0247), the denoiser
 measures the noise it spends and the render's materials are one portable library (Y4, Y8, Y7),
-and the assistant reaches a real model over its own wire (J14, J11). The plan's work order still
-opens with a catalogue record that refers to a library material instead of describing it (O16).
+and the assistant reaches a real model over its own wire (J14, J11). A board's ends are cut in or
+let out by four signed trims the outline generator reads, so the size a saw takes, the ring a cutter
+follows, the mesh, the bounds, the card's own row and the order package are one derivation, a resize
+keeps the numbers, and a ring refuses the ones it cannot have (N31, ADR 0240). The plan's work order
+still opens with a catalogue record that refers to a library material instead of describing it
+(O16).
 
 ## Next
 
-Nothing is scheduled: eighteen open tasks wait in `## Next`, the order opens with a catalogue record
-that refers to a library material (O16), and the render stream's next entry is Y17 — the card that
-edits a node's own picture placement, which waits on the render material slot U129 adds.
+Nothing is scheduled: seventeen open tasks wait in `## Next`, the order opens with a catalogue
+record that refers to a library material (O16), and the application stream's next entry is a body
+whose profile carries holes (G5)
 
 ## Index
 

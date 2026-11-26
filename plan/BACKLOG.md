@@ -191,34 +191,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   Done: An item inserts from a query with a preview, and a fastener line is drawn, cancelled
    and committed as one entry each.
   `files: crates/ui/src/inventory.rs,crates/ui/src/panel_card.rs,app/src/draw_gizmo.rs`
-- `[ ]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
-  Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
-   that end, a negative grows it. The overlay wall is the same mechanism read the other way:
-   its lap is a negative trim, so without one field the board would grow a second way of being
-   bigger than its nominal size, and the cutting list would print two stories of the same
-   number. Nothing today can make a board 2 mm shorter at one end than its nominal size: the
-   rectangle panel has a size, a bow and four corner radii, and every edge is exactly where the
-   size says.
-  Shape: Four trims on a standard panel, one per end in the panel's own frame, a Length each,
-   zero by default and stored on the part. The rectangle outline generator applies them —
-   positive inset the end, negative push it out — so the outline, the derived mesh, the bounds
-   and the order package all read one number, and two equal trims on opposite ends leave a
-   rectangle while unequal ones leave a trapezoid the shape classifier already knows.
-   panel.trim.set writes one or more ends in one undo entry and refuses a trim that would leave
-   the board empty; panel.resize keeps the trims as they are, because a resize writes the
-   nominal size and the trim is what the shop does to it. The card gains four scrubbing fields
-   with the unit outside the box and a line that says the manufactured size beside the nominal
-   one. The overlay wall of its own task stores its lap as a trim of the opposite sign instead
-   of a fifth field, and docs/domain/classes.md and the ADR say the trim is document data with
-   a sign convention. The schema bumps and the old loader is deleted in the same change (AGENTS
-   4.5).
-  Done: A board with one 2 mm trim and one -14 mm trim answers the manufactured outline the two
-   numbers name, and the mesh, the bounds and the exported sizes agree; panel.trim.set is one
-   undo entry and refuses a trim that empties the part; a resize keeps the trims; two equal
-   opposite trims classify as a rectangle; the card edits all four and shows the manufactured
-   size; the overlay wall reads its lap through the same field; the schema version moved and no
-   migration code exists; cargo xtask ci is green.
-  `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/`
 - `[ ]` **G5** a body's profile carries holes, so the frame between two rings is a part
   Why: G4 refuses a face with a hole because a body carries one ring: `Constructive { path,
    features }` cannot store a profile with holes, although the kernel Profile and a panel core
@@ -311,6 +283,35 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
+  Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
+   that end, a negative grows it. The overlay wall is the same mechanism read the other way:
+   its lap is a negative trim, so without one field the board would grow a second way of being
+   bigger than its nominal size, and the cutting list would print two stories of the same
+   number. Nothing today can make a board 2 mm shorter at one end than its nominal size: the
+   rectangle panel has a size, a bow and four corner radii, and every edge is exactly where the
+   size says.
+  Shape: Four trims on a standard panel, one per end in the panel's own frame, a Length each,
+   zero by default and stored on the part. The rectangle outline generator applies them —
+   positive inset the end, negative push it out — so the outline, the derived mesh, the bounds
+   and the order package all read one number, and two equal trims on opposite ends leave a
+   rectangle while unequal ones leave a trapezoid the shape classifier already knows.
+   panel.trim.set writes one or more ends in one undo entry and refuses a trim that would leave
+   the board empty; panel.resize keeps the trims as they are, because a resize writes the
+   nominal size and the trim is what the shop does to it. The card gains four scrubbing fields
+   with the unit outside the box and a line that says the manufactured size beside the nominal
+   one. The overlay wall of its own task stores its lap as a trim of the opposite sign instead
+   of a fifth field, and docs/domain/classes.md and the ADR say the trim is document data with
+   a sign convention. The schema bumps and the old loader is deleted in the same change (AGENTS
+   4.5).
+  Done: A board with one 2 mm trim and one -14 mm trim answers the manufactured outline the two
+   numbers name, and the mesh, the bounds and the exported sizes agree; panel.trim.set is one
+   undo entry and refuses a trim that empties the part; a resize keeps the trims; two equal
+   opposite trims classify as a rectangle; the card edits all four and shows the manufactured
+   size; the overlay wall reads its lap through the same field; the schema version moved and no
+   migration code exists; cargo xtask ci is green.
+  `files: crates/model/src/panel/geometry.rs,crates/model/src/panel/mod.rs,crates/engine/src/panel_cmds/panel.rs,crates/ui/src/panel_card.rs,crates/export/` — `aa41181`
 
 - `[x]` **Y16** the viewport shows the decor's tiling as a grid, so the scale and the seam are seen before a render
   Why: The mapping is invisible until a final render is drawn: a person cannot tell whether a
