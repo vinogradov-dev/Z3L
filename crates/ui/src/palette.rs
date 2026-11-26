@@ -9,7 +9,7 @@
 use egui::{Align, Context, Id, Key, Layout, Modifiers, RichText, Sense, TextEdit, Ui, Vec2};
 use engine::node_cmds::{
     NODE_COMPONENT_CONVERT_TO_GROUP_ID, NODE_DELETE_ID, NODE_DELETE_MANY_ID, NODE_DUPLICATE_ID, NODE_GROUP_ID,
-    NODE_PIVOT_CENTER_ID, NODE_RENAME_ID, NODE_UNGROUP_ID,
+    NODE_MATERIAL_SET_ID, NODE_PIVOT_CENTER_ID, NODE_RENAME_ID, NODE_UNGROUP_ID,
 };
 use engine::panel_cmds::CREATE_ID as PANEL_CREATE_ID;
 use engine::scene_cmds::{CAMERA_CREATE_ID, LIGHT_CREATE_ID, SCENE_ACTIVE_CAMERA_SET_ID};
@@ -441,6 +441,12 @@ fn params_for(id: &str, session: &Session, context: &PaletteContext, lang: Lang)
         NODE_RENAME_ID => {
             context.primary(lang)?;
             Err(Message::PaletteNeedsNewName.text(lang).to_owned())
+        }
+        NODE_MATERIAL_SET_ID => {
+            // The record is not a number a person types: the picker on the node's card lists the
+            // workshop's library by name, so this entry names that door rather than guessing one.
+            context.primary(lang)?;
+            Err(Message::PaletteNeedsMaterial.text(lang).to_owned())
         }
         NODE_GROUP_ID => {
             if context.selection.len() < 2 {

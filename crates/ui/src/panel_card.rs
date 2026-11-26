@@ -4,21 +4,22 @@
 //! on losing focus or through an explicit button; combo boxes and checkboxes dispatch immediately.
 
 use egui::{ComboBox, TextEdit, Ui};
+use engine::node_cmds::NODE_MATERIAL_SET_ID;
 use engine::panel_cmds::{
     BEVEL_CLEAR_ID, BEVEL_SET_ID, BOW_CLEAR_ID, BOW_SET_ID, CORNER_BANDING_CLEAR_ID, CORNER_BANDING_SET_ID,
     CORNER_CLEAR_ID, CORNER_SET_ID, EDGE_BANDING_CLEAR_ID, EDGE_BANDING_SET_ID, MATERIAL_SET_ID, OUTLINE_CONTOUR_ID,
     RENAME_ID, RESIZE_ID, RING_BANDING_CLEAR_ID, RING_BANDING_SET_ID, TRIM_SET_ID,
 };
 use engine::{
-    Dimension, EditScope, NodeRules, PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet,
+    Dimension, EditScope, NodeMaterialSet, NodeRules, PanelBevelClear, PanelBevelSet, PanelBowClear, PanelBowSet,
     PanelCornerBandingClear, PanelCornerBandingSet, PanelCornerClear, PanelCornerSet, PanelDiagnostic,
     PanelEdgeBandingClear, PanelEdgeBandingSet, PanelMaterialSet, PanelOutlineToContour, PanelRename, PanelResize,
     PanelRingBandingClear, PanelRingBandingSet, PanelTrimSet, Session,
 };
 use model::{
     ContourSegmentId, CornerBanding, CornerFeature, CornerFeatureKind, EdgeBanding, EdgeId, EdgeRef, Extent, Id,
-    ItemId, MAX_BEVEL_ANGLE, MachiningId, Operation, Panel, PanelNominalSize, RectCorner, RectEdge, RingBanding,
-    SegmentSource, VertexId,
+    ItemId, MAX_BEVEL_ANGLE, MachiningId, MaterialRef, Operation, Panel, PanelNominalSize, RectCorner, RectEdge,
+    RingBanding, SegmentSource, VertexId,
 };
 use serde_json::Value;
 use text::Message;
@@ -84,6 +85,10 @@ enum Action {
     SetMaterial {
         panel: Id,
         material: ItemId,
+    },
+    SetSurface {
+        panel: Id,
+        material: Option<MaterialRef>,
     },
     SetBand {
         panel: Id,
@@ -387,6 +392,15 @@ impl PanelCard {
         ui.separator();
         section(ui, "panel.material", Message::SectionMaterial.text(lang), true, |ui| {
             self.show_material(ui, session, panel_id, panel.material(), &mut actions);
+        });
+        // The record every surface of the board wears sits beside the catalogue material it is cut
+        // from: the first decides the size and the cut list, the second decides what the frame and
+        // the tracer draw (ADR 0245, U129).
+        ui.separator();
+        section(ui, "panel.surface", Message::SectionSurface.text(lang), true, |ui| {
+            if let Some(material) = crate::material_slot::field(ui, session, panel_id, panel.render_material()) {
+                actions.push(Action::SetSurface { panel: panel_id, material });
+            }
         });
         ui.separator();
         section(ui, "panel.shape", Message::SectionShape.text(lang), true, |ui| {
@@ -819,6 +833,10 @@ fn run_action(session: &mut Session, action: &Action) -> Result<(), String> {
         Action::SetMaterial { panel, material } => {
             let params = json(&PanelMaterialSet { panel: *panel, material: *material })?;
             dispatch(session, MATERIAL_SET_ID, &params)
+        }
+        Action::SetSurface { panel, material } => {
+            let params = json(&NodeMaterialSet { node: *panel, material: *material })?;
+            dispatch(session, NODE_MATERIAL_SET_ID, &params)
         }
         Action::SetBand { panel, edge, material, included_in_size } => {
             let params = json(&PanelEdgeBandingSet {

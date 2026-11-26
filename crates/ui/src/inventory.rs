@@ -685,6 +685,13 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "node.material.set",
+        label: Message::CmdSetMaterial,
+        places: &[Place::Card, Place::Palette],
+        applies: Applies::Context(ActsOn::Node),
+        icon: Some(crate::icons::actions::MATERIAL),
+    },
+    Row {
         id: "node.pivot.set",
         label: Message::CmdSetPivot,
         places: &[Place::Card],
@@ -1102,11 +1109,12 @@ mod tests {
 
     #[test]
     fn the_palette_runs_exactly_the_commands_it_builds_parameters_for() {
-        // The thirteen ids `Palette::params_for` answers for — twelve with parameters and rename
-        // with its refusal. The table is the record of that set, so a builder that grows or shrinks
-        // has to change the column with it (U94).
+        // The fourteen ids `Palette::params_for` answers for — thirteen with parameters and the two
+        // that refuse by naming the surface that owns the value (rename and the material slot). The
+        // table is the record of that set, so a builder that grows or shrinks has to change the
+        // column with it (U94).
         let answered = in_place(Place::Palette).count();
-        assert_eq!(answered, 13, "the palette row count moved");
+        assert_eq!(answered, 14, "the palette row count moved");
         for row in in_place(Place::Palette) {
             assert!(!row.has(Place::Api), "`{}` is not reachable from the palette", row.id);
         }

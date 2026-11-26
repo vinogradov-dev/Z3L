@@ -484,6 +484,7 @@ icons!(Actions, "actions", View, actions {
     INFO => "info",
     HELP => "help",
     PIN => "pin",
+    MATERIAL => "material": Scene,
     PANEL_LEFT => "panel-left",
     PANEL_RIGHT => "panel-right",
 });
@@ -1274,7 +1275,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 142);
+        assert_eq!(seen.len(), 143);
     }
 
     #[test]

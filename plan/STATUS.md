@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=aa41181 updated=2026-11-26
+STATE: milestone=M7 phase=T task=U129 state=doing base=aa41181 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -48,9 +48,8 @@ still opens with a catalogue record that refers to a library material instead of
 
 ## Next
 
-Nothing is scheduled: seventeen open tasks wait in `## Next`, the order opens with a catalogue
-record that refers to a library material (O16), and the application stream's next entry is a body
-whose profile carries holes (G5)
+U129 is next: U129 a person gives a node one of the workshop's materials, and the card lists the
+library
 
 ## Index
 

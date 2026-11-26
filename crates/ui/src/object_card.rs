@@ -28,14 +28,14 @@
 use core::ops::RangeInclusive;
 
 use egui::{RichText, TextEdit, Ui};
-use engine::node_cmds::NODE_RENAME_ID;
+use engine::node_cmds::{NODE_MATERIAL_SET_ID, NODE_RENAME_ID};
 use engine::object_cmds::{
     OBJECT_BOOLEAN_REMOVE_ID, OBJECT_COLLAPSE_ID, OBJECT_CONTOUR_REPLACE_ID, OBJECT_EXTRUDE_HEIGHT_SET_ID,
     OBJECT_PATH_REPLACE_ID, OBJECT_PRIMITIVE_REPLACE_ID, OBJECT_TOOL_SET_ID,
 };
 use engine::{
-    EditScope, NodeRename, ObjectBooleanRemove, ObjectCollapse, ObjectContourReplace, ObjectExtrudeHeightSet,
-    ObjectPathReplace, ObjectPrimitiveReplace, ObjectToolSet, Session,
+    EditScope, NodeMaterialSet, NodeRename, ObjectBooleanRemove, ObjectCollapse, ObjectContourReplace,
+    ObjectExtrudeHeightSet, ObjectPathReplace, ObjectPrimitiveReplace, ObjectToolSet, Session,
 };
 use model::{
     Contour, ContourEditError, ContourSegment, ContourSegmentId, Geometry, Id, MAX_BANDS, MAX_POLYGON_SIDES,
@@ -559,6 +559,15 @@ impl ObjectCard {
         // runs (ADR 0116). No block carries a header: the card is short enough that a fold only
         // hides the fields a person came for.
         let (rename, name_error) = self.head(ui, &summary, single_selection);
+        // The record every surface of the body wears stands between the head and the numbers: the
+        // catalogue material is the panel card's row, this one is the render's, and assigning it is
+        // one command and one undo entry (ADR 0245, U129).
+        let slot = session.project().object(object_id).and_then(|object| object.render_material());
+        if let Some(material) = crate::material_slot::row(ui, session, object_id, slot)
+            && let Ok(params) = json(&NodeMaterialSet { node: object_id, material })
+        {
+            self.error = dispatch(session, NODE_MATERIAL_SET_ID, &params).err();
+        }
         let (figure_result, figure_report) = self.figure_fields(ui, &summary, contour_editing, fresh);
         let (height_result, height_report) = self.height_field(ui, &summary, contour_editing, fresh);
         // The viewport owns the working copy while the mode is live; a number replacement or a
