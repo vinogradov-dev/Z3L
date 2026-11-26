@@ -13,8 +13,8 @@ use std::collections::HashSet;
 
 use catalog::Directory;
 use model::{
-    ClassCode, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange, PropertyValue,
-    SYSTEM_CLASS,
+    ClassCode, DecorMapping, FrameAnchor, Id, PivotLocal, Placement, Project, ProjectError, PropertyChange,
+    PropertyValue, SYSTEM_CLASS,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -566,6 +566,55 @@ fn node_pivot_set_run(
 ) -> Result<CommandOutcome, CommandError> {
     let params = parse::<NodePivotSet>(params, NODE_PIVOT_SET_ID)?;
     project.set_node_pivot(params.node, params.pivot)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the decor placement command.
+pub const NODE_DECOR_SET_ID: &str = "node.decor.set";
+
+/// User-facing label of the decor placement command.
+pub const NODE_DECOR_SET_LABEL: Message = Message::CmdSetDecor;
+
+/// Parameters for `node.decor.set`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NodeDecorSet {
+    /// Node whose picture placement changes; a panel and an object draw a surface, and a container,
+    /// a camera and a light are refused.
+    pub node: Id,
+    /// The placement to store, or `None` to fall back to the record's own coverage and turn.
+    ///
+    /// Every field is required when a mapping is given: a scale in micrometres of board per picture
+    /// width, an offset in two axes of the node's own frame, and a quarter-turn count.
+    #[serde(default)]
+    pub mapping: Option<DecorMapping>,
+}
+
+/// The `node.decor.set` command.
+pub(crate) const NODE_DECOR_SET: CommandSpec = CommandSpec::new::<NodeDecorSet>(
+    NODE_DECOR_SET_ID,
+    NODE_DECOR_SET_LABEL,
+    node_decor_set_enabled,
+    node_decor_set_run,
+);
+
+fn node_decor_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<NodeDecorSet>(params, NODE_DECOR_SET_ID) else {
+        return false;
+    };
+    let project = session.project();
+    let id = params.node;
+    id != project.root().id() && (project.panel(id).is_some() || project.object(id).is_some())
+}
+
+fn node_decor_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<NodeDecorSet>(params, NODE_DECOR_SET_ID)?;
+    project.set_node_decor(params.node, params.mapping)?;
     Ok(CommandOutcome::changed())
 }
 

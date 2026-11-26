@@ -132,6 +132,18 @@ fn scene() -> SceneFile {
     project
         .set_node_material(id(5), Some(MaterialRef::new(2).expect("a non-zero material")))
         .expect("the ball wears a material");
+    // Where a node places its material's picture is the node's own: the golden carries one board
+    // that says how much of it the grain covers and which way it runs, and every other node says
+    // nothing and keeps the record's numbers (Y15).
+    project
+        .set_node_decor(
+            id(2),
+            Some(
+                model::DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], model::Turns::ACROSS)
+                    .expect("a mapping"),
+            ),
+        )
+        .expect("the shelf places the picture");
     project
         .set_edge_banding(
             id(2),

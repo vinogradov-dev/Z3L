@@ -275,3 +275,4 @@ The code and `AGENTS.md` stay the authority for rules; a record keeps the reason
 | [0249](0249-a-cameras-lens-is-document-data.md) | A camera's lens is document data | Accepted; supersedes 0248's home, and builds on 0036's camera node |
 | [0250](0250-the-render-place-is-a-picture-with-a-rail.md) | The render place is a picture with a rail, and the picture stays | Accepted; answers 0211's deferred preview and pays off the `[ui]` debt entry |
 | [0251](0251-a-material-is-edited-in-a-window-of-its-own.md) | A material is edited in a window of its own, opened from the render place, and a deleted record leaves the reference behind | Accepted; moves the editor ADR 0244 filed out of the settings, and shapes Y14 |
+| [0252](0252-a-node-places-its-picture-on-its-own-plane.md) | A node places its material's picture on its own plane, and the record stays one texture | Accepted; answers the question Y15 held open for the owner |

@@ -2,8 +2,8 @@
   "format": "furniture.scene",
   "format_version": 1,
   "document": {
-    "schema_version": 35,
-    "revision": 12,
+    "schema_version": 36,
+    "revision": 13,
     "next_id": 16,
     "root": {
       "id": 1,
@@ -40,6 +40,14 @@
             },
             "material": null,
             "render_material": 1,
+            "decor": {
+              "scale": 300000,
+              "offset": [
+                -40000,
+                15000
+              ],
+              "turns": 1
+            },
             "last_known_thickness": 18000,
             "placement": {
               "translation": [

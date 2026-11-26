@@ -877,9 +877,9 @@ mod tests {
     use crate::batch::{BatchEffect, BatchOptions, BatchStep};
     use model::{
         ClassCode, Constructive, Contour, ContourSegmentId, CornerFeatureKind, Cutout, CutoutDepth, CutoutShape,
-        EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
+        DecorMapping, EdgeId, Envelope, FaceSide, FrameAnchor, Geometry, Id, Level, MachiningAnchor, MachiningParams,
         PanelContourError, PanelNominalSize, PanelOutline, PivotLocal, Placement, ProjectError, PropertyValue,
-        RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, VertexId,
+        RectCorner, RectEdge, Revision, SYSTEM_CLASS, SegmentSource, Turns, VertexId,
     };
     use testkit::{
         sample_band_thickness, sample_band_width, sample_blind_depth, sample_catalog, sample_cutout_rect,
@@ -892,10 +892,10 @@ mod tests {
 
     use crate::class_rules::{ClassRefusal, Dimension};
     use crate::node_cmds::{
-        AssemblyCreate, NodeComponentConvertToGroup, NodeDelete, NodeDeleteMany, NodeDuplicate, NodeGroup,
-        NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet, NodePlacementSetMany,
-        NodePlacementWorldZero, NodeProperty, NodePropertyClear, NodePropertySet, NodePropertySetMany, NodeRename,
-        NodeUngroup,
+        AssemblyCreate, NodeComponentConvertToGroup, NodeDecorSet, NodeDelete, NodeDeleteMany, NodeDuplicate,
+        NodeGroup, NodeOriginRebase, NodePivotCenter, NodePivotSet, NodePlacement, NodePlacementSet,
+        NodePlacementSetMany, NodePlacementWorldZero, NodeProperty, NodePropertyClear, NodePropertySet,
+        NodePropertySetMany, NodeRename, NodeUngroup,
     };
     use crate::panel_cmds::{
         PanelBowClear, PanelBowSet, PanelContourCreate, PanelCornerBandingClear, PanelCornerBandingSet,
@@ -3974,6 +3974,54 @@ mod tests {
         assert_eq!(session.project().pivot_local(drawer), Some(pivot));
         session.undo().expect("undo the authored pivot");
         assert!(!session.can_undo(), "each operation is one undo entry");
+    }
+
+    #[test]
+    fn a_nodes_own_picture_placement_is_one_command_and_one_undo_entry() {
+        let mut session = sample_session();
+        let panel = Id::new(2).expect("panel id");
+        let drawer = Id::new(3).expect("drawer id");
+        let root = session.project().root().id();
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("whole millimetres");
+        let mapping =
+            DecorMapping::new(millimetres(300), [millimetres(-40), millimetres(15)], Turns::ACROSS).expect("a mapping");
+
+        session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: panel, mapping: Some(mapping) }))
+            .expect("place the picture");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), Some(mapping));
+        assert!(session.can_undo());
+
+        session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: panel, mapping: None }))
+            .expect("clear the placement");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), None, "the record's numbers return");
+
+        session.undo().expect("undo the clearing");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), Some(mapping));
+        session.undo().expect("undo the placement");
+        assert_eq!(session.project().panel(panel).expect("the panel").decor(), None);
+        assert!(!session.can_undo(), "each placement is exactly one undo entry");
+
+        let registry = CommandRegistry::new();
+        let set = registry.get("node.decor.set").expect("registered");
+        assert!(set.enabled(&session, &json_params(&NodeDecorSet { node: panel, mapping: Some(mapping) })));
+        assert!(!set.enabled(&session, &json_params(&NodeDecorSet { node: drawer, mapping: Some(mapping) })));
+        assert!(!set.enabled(&session, &json_params(&NodeDecorSet { node: root, mapping: Some(mapping) })));
+        let error = session
+            .dispatch("node.decor.set", &json_params(&NodeDecorSet { node: drawer, mapping: Some(mapping) }))
+            .expect_err("a container draws no surface");
+        assert!(matches!(error, CommandError::Model(ProjectError::NodeHasNoDecor { id }) if id == drawer));
+
+        // A mapping the document refuses never becomes a coordinate: the parse names the command.
+        let revision = session.project().revision();
+        let hostile = serde_json::json!({"node": panel, "mapping": {"scale": 0, "offset": [0, 0], "turns": 0}});
+        let error = session.dispatch("node.decor.set", &hostile).expect_err("a scale that covers no board is refused");
+        assert!(
+            matches!(error, CommandError::InvalidParams { command, .. } if command == "node.decor.set"),
+            "the refusal names the command and the field"
+        );
+        assert_eq!(session.project().revision(), revision, "a refused placement writes nothing");
     }
 
     #[test]

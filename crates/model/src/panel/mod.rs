@@ -43,8 +43,8 @@ use crate::panel::banding::{normalize_band_order, validate_corner_banding};
 use crate::panel::geometry::validate_dimension;
 use crate::panel_features::{CornerFeature, EdgeBevel, EdgeBow, PanelTrims, validate_contour_features};
 use crate::{
-    Contour, ContourError, ContourSegmentError, ContourSegmentId, EdgeId, Id, ItemId, MachiningId, MaterialRef,
-    PivotLocal, Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
+    Contour, ContourError, ContourSegmentError, ContourSegmentId, DecorMapping, EdgeId, Id, ItemId, MachiningId,
+    MaterialRef, PivotLocal, Placement, ProjectError, Properties, PropertyError, PropertyValue, VertexId,
 };
 
 /// Where a panel's outline comes from: one source for the whole panel.
@@ -127,6 +127,12 @@ pub struct Panel {
     /// one. The frame paints the panel from it and never reads the catalogue (Y7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     render_material: Option<MaterialRef>,
+    /// Where this panel places that material's picture on itself (Y15).
+    ///
+    /// Absent means the record's own coverage and turn, which is what every board drew before the
+    /// field existed; present, it overrides them for this board alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decor: Option<DecorMapping>,
     last_known_thickness: Length,
     placement: Placement,
     pivot_local: PivotLocal,
@@ -185,6 +191,7 @@ impl Panel {
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
             render_material: None,
+            decor: None,
         })
     }
 
@@ -221,6 +228,7 @@ impl Panel {
             trims: PanelTrims::ZERO,
             properties: Properties::new(),
             render_material: None,
+            decor: None,
         })
     }
 
@@ -311,6 +319,12 @@ impl Panel {
         self.render_material
     }
 
+    /// Where this panel places its material's picture on itself, or `None` for the record's own
+    /// numbers (Y15).
+    pub const fn decor(&self) -> Option<DecorMapping> {
+        self.decor
+    }
+
     /// The fallback thickness used when the material is absent.
     pub const fn last_known_thickness(&self) -> Length {
         self.last_known_thickness
@@ -376,6 +390,11 @@ impl Panel {
     /// Assigns or clears the render material every surface of the panel wears.
     pub(crate) fn set_render_material(&mut self, material: Option<MaterialRef>) {
         self.render_material = material;
+    }
+
+    /// Assigns or clears this panel's own placement of its material's picture.
+    pub(crate) fn set_decor(&mut self, decor: Option<DecorMapping>) {
+        self.decor = decor;
     }
 
     /// Replaces the fallback thickness used when the catalogue has no entry.
@@ -962,6 +981,8 @@ pub(crate) struct PanelWire {
     material: Option<ItemId>,
     #[serde(default)]
     render_material: Option<MaterialRef>,
+    #[serde(default)]
+    decor: Option<DecorMapping>,
     last_known_thickness: Length,
     placement: Placement,
     #[serde(default)]
@@ -1024,6 +1045,7 @@ impl TryFrom<PanelWire> for Panel {
         panel.trims = wire.trims;
         panel.properties = wire.properties;
         panel.render_material = wire.render_material;
+        panel.decor = wire.decor;
         Ok(panel)
     }
 }

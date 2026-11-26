@@ -678,6 +678,13 @@ pub const ROWS: &[Row] = &[
         icon: None,
     },
     Row {
+        id: "node.decor.set",
+        label: Message::CmdSetDecor,
+        places: &[Place::Api],
+        applies: Applies::Context(ActsOn::Node),
+        icon: None,
+    },
+    Row {
         id: "node.pivot.set",
         label: Message::CmdSetPivot,
         places: &[Place::Card],
