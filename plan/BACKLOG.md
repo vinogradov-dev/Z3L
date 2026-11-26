@@ -62,30 +62,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-- `[~]` **Y15** each object carries its own decor mapping — a scale, an offset and a turn — instead of inheriting the record's
-  Why: `scene::Decor::uv` projects a drawable's local XY by the record's `covers` and `turns`,
-   so every board of a cabinet wears a veneer at one scale and one turn: the grain of a door
-   cannot be run along its height while the shelf beside it runs along its width, and a small
-   part cannot be shown at a finer scale than a large one. The mapping is one plain planar
-   projection from the local frame; there is no per-node scale, offset or quarter turn and no
-   choice of the axis it projects along. `AGENTS.md` §4.9: the document field is designed with
-   the owner before it is written.
-  Shape: A per-node mapping stored beside the node's render material — a scale (a length per
-   picture width), an offset in two axes and a quarter turn — with the record's own numbers as
-   the quiet answer, so a node that says nothing draws exactly as it does today; one command
-   (`node.decor.set`) and one undo entry; the frame composes the mapping with the record's
-   decor, so one picture still textures the whole cabinet and the viewport and the tracer keep
-   reading one `scene::Decor`. The card that draws it sits beside the render material slot U129
-   adds. **Open for the owner before the field is written**: does a person choose the
-   projection axis per face (top, front, side), or does a panel keep its local plane with only
-   scale, offset and turn? A real unwrap is not this task: a contour part is a prism, and a
-   shop aligns a grain rather than unwrapping a body.
-  Done: Tests: a node's mapping is document data — serialized, one undo entry per command, and
-   a node without one draws the record's own numbers; a scale, an offset and a quarter turn
-   each move the coordinate the viewport and the tracer compute, through the one shared
-   function; a hostile mapping (a zero scale) is refused; cargo xtask ci is green.
-  `files: crates/model/src/project/node_cmds.rs,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/ui/src/panel_card.rs`
-
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -332,8 +308,50 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    tiling per `covers` millimetres with the seam where the coordinate wraps; the overlay is off
    by default and survives a document switch; cargo xtask ci is green.
   `files: crates/ui/src,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/render/src`
+- `[ ]` **Y17** the card edits a node's decor mapping beside the slot its material sits in
+  Why: Y15 landed the field, the command and the frame's composition, and nothing draws a field
+  for them: the capability is an `Api` row and the `[ui]` debt entry says why. Its place is
+  beside the render material slot, and that slot is U129's, so this entry waits for it — a
+  mapping row above which no material row stands is a field a person can move with nothing
+  visible to move it against.
+  Shape: One section on the panel card and one on the object card, below the material row U129
+  adds: a scale (a length of board per picture width), the two offsets in the node's own
+  axes and a quarter-turn switch, all in one edit scope so a drag of any of them is one undo
+  entry; the record's numbers stand as the quiet value while no mapping is set, a clear row
+  returns to them, and the section draws nothing when the node's record names no picture.
+  The row moves from `Api` to `Card` in the inventory, and the debt entry leaves in the same
+  change.
+  Done: Tests: the card dispatches `node.decor.set` with the typed numbers and one undo entry per
+  settled edit; a node with no mapping shows the record's numbers and the clear row clears the
+  field; a node whose record names no picture draws no section; `cargo xtask ui-rules`,
+  `cargo xtask plan` and `cargo xtask ci` are green, and the `[ui]` debt entry is gone.
+  `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **Y15** each object carries its own decor mapping — a scale, an offset and a turn — instead of inheriting the record's
+  Why: `scene::Decor::uv` projects a drawable's local XY by the record's `covers` and `turns`,
+   so every board of a cabinet wears a veneer at one scale and one turn: the grain of a door
+   cannot be run along its height while the shelf beside it runs along its width, and a small
+   part cannot be shown at a finer scale than a large one. The mapping is one plain planar
+   projection from the local frame; there is no per-node scale, offset or quarter turn and no
+   choice of the axis it projects along. `AGENTS.md` §4.9: the document field is designed with
+   the owner before it is written.
+  Shape: A per-node mapping stored beside the node's render material — a scale (a length per
+   picture width), an offset in two axes and a quarter turn — with the record's own numbers as
+   the quiet answer, so a node that says nothing draws exactly as it does today; one command
+   (`node.decor.set`) and one undo entry; the frame composes the mapping with the record's
+   decor, so one picture still textures the whole cabinet and the viewport and the tracer keep
+   reading one `scene::Decor`. The card that draws it sits beside the render material slot U129
+   adds. **Open for the owner before the field is written**: does a person choose the
+   projection axis per face (top, front, side), or does a panel keep its local plane with only
+   scale, offset and turn? A real unwrap is not this task: a contour part is a prism, and a
+   shop aligns a grain rather than unwrapping a body.
+  Done: Tests: a node's mapping is document data — serialized, one undo entry per command, and
+   a node without one draws the record's own numbers; a scale, an offset and a quarter turn
+   each move the coordinate the viewport and the tracer compute, through the one shared
+   function; a hostile mapping (a zero scale) is refused; cargo xtask ci is green.
+  `files: crates/model/src/project/node_cmds.rs,crates/scene/src/decor.rs,app/src/scene_build.rs,crates/ui/src/panel_card.rs` — `1e67073`
 
 - `[x]` **Y14** a material is created and edited in the window, and the file it writes is the one the render reads
   Why: Every board in a cabinet is drawn from a record of the render's library, and today that

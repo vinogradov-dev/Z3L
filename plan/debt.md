@@ -564,3 +564,18 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
 · `[ui]` `Document::update_row` repeats the plate's tail of `Document::update_fill` — the choices, the
   pick, the re-plan — while the two share `gap_fields` and `apply_fill_pick`. A third fill gesture
   would make the tail an atom of its own; two is not yet a pattern (U125).
+
+- `[ui]` A node's own decor mapping is reachable by its command id alone: `node.decor.set` carries
+  the scale, the offset and the quarter turn, the frame draws them, and no card draws a field for
+  them yet. The card's place is beside the render material slot, and that slot is U129's, which has
+  not landed — a mapping row without a material row above it would be a field a person can move with
+  nothing visible to move it against. The entry is `Api` until the card lands, and Y17 is that card; Y15's note
+  (`plan/notes/Y15.md`) records the model, the command and the one shared coordinate function it
+  would draw, and the card arrives with U129 (Y15, Y17).
+
+- `[plan]` `cargo xtask file` takes a reference file's new body as one `--body` argument, so it cannot
+  rewrite a file larger than the kernel's single-argument limit (128 KiB on Linux): `plan/map.md` was
+  157 588 bytes when Y15 added its row and the command answered "argument list too long". The other
+  writers already read from a channel instead — `task note` and `state where` take `--stdin` — and
+  `file` needs the same switch, or a whole-file rewrite of a reference file past that size has no
+  path through the tool (Y15).
