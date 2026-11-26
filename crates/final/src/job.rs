@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use geom::DVec3;
 use scene::{Camera, SceneFrame};
 
-use crate::gpu::{Progress, Tracer};
+use crate::gpu::{Progress, Snapshot, Snapshots, Tracer, Watch};
 use crate::image::{encode_png, write_atomic};
 use crate::{FinalError, Request};
 
@@ -134,7 +134,10 @@ pub struct Input<'a> {
 ///
 /// The revision keys the tracer's BVH cache, so a second image of an unchanged document costs one
 /// traverse per sample and no build. `progress` must belong to this request's sample count, because
-/// it is the number the surface shows and the count the cancel is judged against.
+/// it is the number the surface shows and the count the cancel is judged against. `snapshots` is the
+/// mailbox the run publishes its checkpoints into — a place nobody listens to is a place that
+/// publishes and drops — and the finished image is published into it too, so the picture a surface
+/// keeps is the picture the file holds.
 pub fn run(
     tracer: &mut Tracer,
     device: &wgpu::Device,
@@ -142,6 +145,7 @@ pub fn run(
     input: Input<'_>,
     settings: &Settings,
     progress: &Progress,
+    snapshots: &Snapshots,
 ) -> Result<Report, FinalError> {
     let request = settings.request;
     if progress.total() != request.samples() {
@@ -153,13 +157,16 @@ pub fn run(
     // frame's own value on the copy the tracer reads and never into the frame a viewport shares.
     let mut lighting = frame.lighting.clone();
     lighting.environment = settings.environment();
-    let accumulation = tracer.render(device, queue, camera, &lighting, request, progress)?;
+    let accumulation = tracer.render(device, queue, camera, &lighting, request, Watch { progress, snapshots })?;
     if progress.cancelled() {
         return Err(FinalError::Cancelled { samples: progress.done(), total: progress.total() });
     }
     let image = accumulation.into_image()?;
     let bytes = encode_png(&image, settings.exposure)?;
     write_atomic(&settings.path, &bytes)?;
+    // Only now, when the file is on disk: the last picture a surface keeps is the one it can open,
+    // and a write that failed leaves the previous picture standing (Y6).
+    snapshots.publish(Snapshot::of(&image, request.samples())?);
     Ok(Report { path: settings.path.clone(), width: image.width(), height: image.height(), samples: request.samples() })
 }
 

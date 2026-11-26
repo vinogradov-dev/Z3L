@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use eframe::egui_wgpu;
-use r#final::{Input, Progress, Report, Settings as RenderSettings, Tracer};
+use r#final::{Input, Progress, Report, Settings as RenderSettings, Snapshots, Tracer};
 
 use ui::render_page::{Bounds, Settings, Stage};
 
@@ -150,6 +150,9 @@ impl RenderPlace {
             .and_then(|settings| settings.with_environment(self.settings.studio / 100.0))
             .map_err(|error| error.to_string())?;
         let progress = Arc::new(Progress::new(request.samples()));
+        // The mailbox the run publishes its checkpoints into. Nobody reads it yet: the place takes
+        // the pictures at the frame boundary, in the next step of this task (Y6).
+        let snapshots = Snapshots::new();
         let device = render_state.device.clone();
         let queue = render_state.queue.clone();
         let owned = Arc::clone(&progress);
@@ -157,8 +160,16 @@ impl RenderPlace {
         let spawned = std::thread::Builder::new().name("z3l-final-render".to_owned()).spawn(move || {
             let result = (|| {
                 let mut tracer = Tracer::new(&device).map_err(|error| error.to_string())?;
-                r#final::run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision }, &settings, &owned)
-                    .map_err(|error| error.to_string())
+                r#final::run(
+                    &mut tracer,
+                    &device,
+                    &queue,
+                    Input { frame: &frame, camera, revision },
+                    &settings,
+                    &owned,
+                    &snapshots,
+                )
+                .map_err(|error| error.to_string())
             })();
             // A dropped context means the window closed under the run; nobody is left to tell.
             ctx.request_repaint();

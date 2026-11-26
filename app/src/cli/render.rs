@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use eframe::wgpu;
 // The crate is named `final`, which Rust reserves, so every path into it is written raw. The package
 // keeps the bare name the layer map and the plan use (ADR 0135, ADR 0210).
-use r#final::{FinalError, Input, Progress, Request, Settings, Tracer, run};
+use r#final::{FinalError, Input, Progress, Request, Settings, Snapshots, Tracer, run};
 use kernel_truck::TruckKernel;
 use mesh::EvaluationCache;
 use project::SceneFile;
@@ -63,6 +63,9 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
     let (device, queue) = device()?;
     let mut tracer = Tracer::new(&device).map_err(describe)?;
     let progress = Progress::new(request.samples());
+    // The command line shows a percentage, not a picture: a run publishes into a mailbox nobody
+    // takes, which is exactly the case the replace rule is for (Y6).
+    let snapshots = Snapshots::new();
     let stop = AtomicBool::new(false);
     let progress_lines = std::thread::scope(|scope| {
         scope.spawn(|| watch(&progress, &stop));
@@ -73,6 +76,7 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
             Input { frame: &evaluated.frame, camera, revision },
             &settings,
             &progress,
+            &snapshots,
         );
         stop.store(true, Ordering::Relaxed);
         result
