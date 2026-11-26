@@ -4324,6 +4324,11 @@ impl Document {
         // reads one uniform, so a sun direction or a point-light position updates without a mesh
         // rebuild. With no moved light the base lighting is already correct.
         //
+        // One pass per view into the same target: the camera comes from the view, the region from its
+        // rectangle, and the aspect ratio from the region, so a narrow view is not stretched by the
+        // workspace's shape.
+        let views = self.view_specs(area, &regions, points_per_pixel, settings.viewport.shadow_strength);
+        //
         // The passes and the image are the only part of the frame that needs a GPU. A headless
         // application draws the window's own background in their place, so the scene rectangle, the
         // layers and the overlays are still exactly what the window would draw (U77).
@@ -4335,25 +4340,6 @@ impl Document {
                     crate::scene_build::authored_lighting_with(self.session.project(), &previewed, self.editor.flags())
                         .unwrap_or_else(|| self.scene.lighting.clone())
                 };
-                // One pass per view into the same target: the camera comes from the view, the region
-                // from its rectangle, and the aspect ratio from the region, so a narrow view is not
-                // stretched by the workspace's shape.
-                let views: Vec<ViewSpec> = regions
-                    .iter()
-                    .filter_map(|(leaf, view_rect)| {
-                        let leaf = self.layout.leaf(*leaf)?;
-                        let camera = crate::scene_build::scene_camera(self.session.project(), leaf.camera());
-                        Some(ViewSpec {
-                            camera,
-                            region: view_region(area, *view_rect, points_per_pixel),
-                            shading: leaf.style(),
-                            // The strength and the colour are the workspace's; the switch is this
-                            // view's, so one cell of a split draws the shadow and its neighbour does
-                            // not (U107).
-                            shadows: ui::display::contact_shadows(settings.viewport.shadow_strength, leaf.shadows()),
-                        })
-                    })
-                    .collect();
                 target.render(&self.scene, &lighting, &views);
                 ui.painter().with_clip_rect(area).image(
                     target.texture_id,
@@ -4915,8 +4901,10 @@ impl Document {
             snaps: self.snaps(),
             snap_mode: self.snap_mode(),
             // The shadow switch is the active view's; its intensity is the workspace's and has no
-            // control in the ribbon (U107, U110).
+            // control in the ribbon (U107, U110). The tiling grid is the second switch of the same
+            // kind, and both are read per view when the frame is drawn (Y16).
             shadows: self.layout.active_shadows(),
+            decor_grid: self.layout.active_decor_grid(),
         };
         let mut outcome = None;
         // Whether the ruler or the niche owned the pointer before this frame, so a cell that armed
@@ -5012,6 +5000,7 @@ impl Document {
                 Some(ui::RibbonViewAction::ToggleSnapAll) => self.set_all_snaps(!self.snaps.all_on()),
                 Some(ui::RibbonViewAction::ToggleSnapMode) => self.toggle_snap_mode(),
                 Some(ui::RibbonViewAction::ToggleShadows) => self.toggle_shadows(),
+                Some(ui::RibbonViewAction::ToggleDecorGrid) => self.toggle_decor_grid(),
                 None => {}
             }
         }
@@ -5026,6 +5015,50 @@ impl Document {
     pub(crate) fn toggle_shadows(&mut self) {
         self.layout.toggle_active_shadows();
         self.layout.apply_frame_display(&mut self.scene);
+    }
+
+    /// Turns the tiling grid of the active view on or off (Y16).
+    ///
+    /// The switch is the view's, like the shadow's beside it: the neighbour keeps drawing what it
+    /// drew, the per-view specs are built from each leaf at draw time, and the change costs no upload
+    /// and no revision — a grid says where a picture repeats, it never touches the document.
+    pub(crate) fn toggle_decor_grid(&mut self) {
+        self.layout.toggle_active_decor_grid();
+    }
+
+    /// The per-view specs one frame is drawn with, in the order the layout divides the area.
+    ///
+    /// One view's pass is its camera, its rectangle, its display style, its shadow switch and its
+    /// tiling grid, so a split workspace draws four different views into one target without a second
+    /// texture. The strength of the shadow is the workspace's and the switch is the view's (U107);
+    /// the grid is the same pair the other way round — the theme's weight and ink are the
+    /// workspace's, the switch is the leaf's, and the screen says how many pixels a point is (Y16).
+    fn view_specs(
+        &self,
+        area: egui::Rect,
+        regions: &[(crate::view_layout::LeafId, egui::Rect)],
+        points_per_pixel: f32,
+        shadow_strength: u32,
+    ) -> Vec<ViewSpec> {
+        regions
+            .iter()
+            .filter_map(|(leaf, view_rect)| {
+                let leaf = self.layout.leaf(*leaf)?;
+                let camera = crate::scene_build::scene_camera(self.session.project(), leaf.camera());
+                Some(ViewSpec {
+                    camera,
+                    region: view_region(area, *view_rect, points_per_pixel),
+                    shading: leaf.style(),
+                    shadows: ui::display::contact_shadows(shadow_strength, leaf.shadows()),
+                    decor_grid: leaf.decor_grid().then(|| {
+                        render::DecorGrid::new(
+                            ui::theme::DECOR_GRID_STROKE * points_per_pixel,
+                            ui::display::guide_ink(self.scene.helper),
+                        )
+                    }),
+                })
+            })
+            .collect()
     }
 
     /// Reads the keys a running tool owns and leaves the rest to the shell.
@@ -5965,6 +5998,47 @@ mod tests {
         document.toggle_shadows();
         assert!(!document.layout.leaf(second).expect("second").shadows());
         assert_eq!(document.session.project().revision(), revision, "a view switch is never an edit");
+    }
+
+    #[test]
+    fn the_tiling_grid_is_off_until_a_view_asks_for_it_and_the_tab_keeps_its_answer() {
+        // Y16: the grid says where a material's picture repeats, which is a question about the
+        // material, so it is view state like the shadow's switch beside it — off until asked for, one
+        // leaf's answer, no revision, and the tab carries it across a switch of documents.
+        let settings = Settings::default();
+        let shell = Shell::default();
+        let open = || {
+            let session = crate::scene_build::demo_session().expect("the sample scene");
+            Document::new(None, &settings, &shell, session, PreservedSections::new(), None)
+                .expect("a headless document")
+        };
+        let mut tabs = crate::tabs::Tabs::new(open());
+        let first_tab = tabs.active_id();
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        tabs.active_mut().layout.set_kind(crate::view_layout::LayoutKind::TwoColumns);
+        let regions = tabs.active().layout.regions(area);
+        let (left, right) = (regions[0].0, regions[1].0);
+        assert!(!tabs.active().layout.leaf(left).expect("left").decor_grid(), "a fresh view draws no grid");
+        let revision = tabs.active().session.project().revision();
+
+        tabs.active_mut().toggle_decor_grid();
+        assert!(tabs.active().layout.leaf(left).expect("left").decor_grid(), "the active view shows the tiling");
+        assert!(!tabs.active().layout.leaf(right).expect("right").decor_grid(), "its neighbour does not");
+        assert_eq!(tabs.active().session.project().revision(), revision, "a view switch is never an edit");
+        // The spec the renderer receives is per view: the one leaf that asked for the grid carries
+        // the theme's weight in the screen's own pixels, and the other carries nothing at all.
+        let specs = tabs.active().view_specs(area, &regions, 2.0, settings.viewport.shadow_strength);
+        assert_eq!(specs.len(), 2);
+        let grid = specs[0].decor_grid.expect("the active view hands the renderer a grid");
+        assert_eq!(grid.half_width(), ui::theme::DECOR_GRID_STROKE, "one and a half points at two pixels a point");
+        assert_eq!(specs[1].decor_grid, None, "the neighbour hands the renderer none");
+
+        // A second document opens with its own workspace, and switching back finds the grid on.
+        let second_tab = tabs.add(open());
+        tabs.activate(second_tab);
+        assert!(!tabs.active().layout.active_decor_grid(), "a new document starts with the guide off");
+        tabs.activate(first_tab);
+        assert!(tabs.active().layout.leaf(left).expect("left").decor_grid(), "the tab kept its answer");
     }
 
     #[test]

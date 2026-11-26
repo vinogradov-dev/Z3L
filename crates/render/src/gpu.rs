@@ -81,12 +81,13 @@ pub(crate) struct GpuTriangles {
 pub(crate) struct DecorGroup {
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
+    _layer: wgpu::Buffer,
     group: wgpu::BindGroup,
 }
 
 impl DecorGroup {
-    /// The layout both the pipeline and the group are built against: one sampled picture and one
-    /// sampling rule.
+    /// The layout both the pipeline and the group are built against: one sampled picture, one
+    /// sampling rule, and the one number that says whether the picture is a decor at all.
     pub(crate) fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Z3L decor layout"),
@@ -105,6 +106,16 @@ impl DecorGroup {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(DECOR_LAYER_BYTES),
+                    },
                     count: None,
                 },
             ],
@@ -130,13 +141,21 @@ impl DecorGroup {
     /// The fragment multiplies its colour by the sampled texel whatever the surface is, so a white
     /// texel is the value that changes nothing and a surface without a decor needs no branch in the
     /// shader — a branch that would have to be uniform to keep the sampler's derivatives defined.
+    /// The white stand-in is the one group whose layer says it is no picture, which is what keeps the
+    /// tiling guide off a surface nobody can tile (Y16).
     pub(crate) fn white(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
     ) -> Self {
-        Self::new(device, queue, layout, sampler, 1, 1, &[[255, 255, 255, 255]])
+        Self::new(
+            device,
+            queue,
+            layout,
+            sampler,
+            Texels { width: 1, height: 1, rows: &[[255, 255, 255, 255]], picture: false },
+        )
     }
 
     /// The decor's own picture on the device, at the size the record scanned it.
@@ -148,20 +167,25 @@ impl DecorGroup {
         decor: &Decor,
     ) -> Self {
         let image = decor.image();
-        Self::new(device, queue, layout, sampler, image.width(), image.height(), image.texels())
+        Self::new(
+            device,
+            queue,
+            layout,
+            sampler,
+            Texels { width: image.width(), height: image.height(), rows: image.texels(), picture: true },
+        )
     }
 
-    /// The decor's picture on the device, or the actor's refusal when it cannot be uploaded.
+    /// The picture `texels` on the device, or the actor's refusal when it cannot be uploaded.
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
-        width: u32,
-        height: u32,
-        texels: &[[u8; 4]],
+        texels: Texels<'_>,
     ) -> Self {
-        let bytes: Vec<u8> = texels.iter().flatten().copied().collect();
+        let Texels { width, height, rows, picture } = texels;
+        let bytes: Vec<u8> = rows.iter().flatten().copied().collect();
         let size = wgpu::Extent3d { width: width.max(1), height: height.max(1), depth_or_array_layers: 1 };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Z3L decor"),
@@ -189,21 +213,48 @@ impl DecorGroup {
             size,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // One number for the tiling guide: a real picture is a board a shop can tile, and the white
+        // stand-in is a surface with nothing to tile (Y16).
+        let layer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Z3L decor layer"),
+            contents: bytemuck::bytes_of(&[if picture { 1.0f32 } else { 0.0 }, 0.0, 0.0, 0.0]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Z3L decor bind group"),
             layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: layer.as_entire_binding() },
             ],
         });
-        Self { _texture: texture, _view: view, group }
+        Self { _texture: texture, _view: view, _layer: layer, group }
     }
 
     /// The group a face pass binds.
     pub(crate) fn group(&self) -> &wgpu::BindGroup {
         &self.group
     }
+}
+
+/// The size of the one uniform the decor group carries, in bytes: `x` is the whole number.
+pub(crate) const DECOR_LAYER_BYTES: u64 = 16;
+
+/// The texels one picture uploads: its size and its eight-bit RGBA rows, one texel per four bytes.
+///
+/// The four travel together because a texture without its size is not a picture: the upload writes
+/// the rows at the width the record scanned them, and says whether they are a board's picture or the
+/// stand-in a plain surface is bound to.
+pub(crate) struct Texels<'a> {
+    /// The picture's width in texels.
+    pub(crate) width: u32,
+    /// The picture's height in texels.
+    pub(crate) height: u32,
+    /// Every texel, row-major from the top.
+    pub(crate) rows: &'a [[u8; 4]],
+    /// Whether these rows are a decor, or the white stand-in for a surface that has none.
+    pub(crate) picture: bool,
 }
 
 /// Clamps a requested target size to at least one pixel and to the device's texture limit.

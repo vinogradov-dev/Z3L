@@ -441,6 +441,7 @@ icons!(View, "view", View, view {
     TRANSLUCENT => "translucent",
     SLIDERS => "sliders",
     SHADOWS => "shadows",
+    DECOR_GRID => "decor-grid": Reference,
     AXON => "axon",
     FRONT => "front",
     LEFT => "left",
@@ -1273,7 +1274,7 @@ mod tests {
                 assert!(seen.insert(icon.uri()), "duplicate icon uri {}", icon.uri());
             }
         }
-        assert_eq!(seen.len(), 141);
+        assert_eq!(seen.len(), 142);
     }
 
     #[test]

@@ -960,6 +960,15 @@ pub const ROWS: &[Row] = &[
         applies: Applies::Always,
         icon: Some(crate::icons::view::SHADOWS),
     },
+    // The tiling grid is the second such switch: view state beside the ground shadow's, read by the
+    // renderer per view, and the board's own picture says the step (Y16).
+    Row {
+        id: "view.display.decor_grid",
+        label: Message::ToolDecorGrid,
+        places: &[Place::Ribbon],
+        applies: Applies::Always,
+        icon: Some(crate::icons::view::DECOR_GRID),
+    },
 ];
 
 /// The row a command id names, if the inventory knows it.
@@ -972,7 +981,8 @@ pub fn row(id: &str) -> Option<&'static Row> {
 /// An atom is a mechanism two tools need — the snap resolver, the probe, the measure — and it gets
 /// its own row here when its first surface lands (U98, U99). The gate accepts an atom id as a key
 /// only because it is written down here, so a typo in a command id is still a failure.
-pub const ATOMS: &[&str] = &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows"];
+pub const ATOMS: &[&str] =
+    &["sketch.measure.length", "probe.void", "snap.scene", "view.display.shadows", "view.display.decor_grid"];
 
 /// Every row that appears in `place`.
 pub fn in_place(place: Place) -> impl Iterator<Item = &'static Row> {
