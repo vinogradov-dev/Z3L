@@ -291,7 +291,9 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    library's names and refuses nothing when the library is empty; a node whose record is gone
    is a finding the inspector prints; cargo xtask ci is green.
   `files: crates/ui/src,crates/engine/src,app/src`
-- `[ ]` **Y12** a render needs no chosen file, and the plate is saved when the person says so
+## Done
+
+- `[x]` **Y12** a render needs no chosen file, and the plate is saved when the person says so
   Why: The Render place refuses to start until a destination is chosen: `RenderPlace::start`
    answers "choose a file to write the image to" while `settings.path` is `None`
    (`app/src/render_place.rs`), and the page's only way to set it is the destination row beside
@@ -318,8 +320,7 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    names, and a second save writes another; a failed save leaves the image and says why; the
    page's Render button is enabled with no destination and its Save button is not, until an
    image exists; cargo xtask ci is green.
-  `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs`
-## Done
+  `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs` — `b1bab21`
 
 - `[x]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
   Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
