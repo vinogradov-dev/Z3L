@@ -1589,8 +1589,13 @@ impl App {
     /// Every panel, floating toolbar, text field, resizing border and menu keeps the system cursor;
     /// the corner orientation widget is handed in by name because it is drawn on the scene layer
     /// (X41). The square is painted last, so no surface can cover it inside the work area.
+    ///
+    /// The render place is the one workspace with no work area: it is a view of an image, nothing in
+    /// it is drawn, dragged or picked, so the scene rectangle the document still carries from the
+    /// viewport is not handed over and the system arrow stays over its rail, its status row and its
+    /// air (X138).
     fn draw_work_cursor(&mut self, ctx: &egui::Context) {
-        let scene = self.tabs.active().scene_rect();
+        let scene = if self.render_open { None } else { self.tabs.active().scene_rect() };
         let widget = self.shell.orientation_rect;
         // The carry puts the pointer away while a camera gesture moves the view under the piece it
         // holds, and asks the window to bring it back to the piece once the gesture ends (X69).

@@ -4230,6 +4230,53 @@ fn the_square_marks_the_work_area_only() {
 }
 
 #[test]
+fn the_render_place_keeps_the_system_arrow_over_its_own_surfaces() {
+    // X138: the render place draws no scene, but the document still carries the scene rectangle of
+    // the viewport the place replaced, so the shell painted its square and crosshair over the rail
+    // of numbers and the air beside the picture. A place that picks, drags and draws nothing is not
+    // a work surface: the system arrow stays everywhere in it, the picture included.
+    let mut harness = Harness::new("frame-render-place-cursor");
+    harness.settle();
+    let scene = harness.scene();
+    harness.hover(scene.center());
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the viewport draws the shell's square");
+
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    harness.frame();
+    let save = harness
+        .drawn_rects
+        .iter()
+        .find(|(_, word)| word.as_str() == Message::RenderSave.text(text::Lang::En))
+        .map(|(rect, _)| rect.center())
+        .expect("the rail draws its save row");
+    // The rail of numbers is a column on the right of the place, and its last rows leave the air a
+    // maker rests the pointer on; the air beside the picture is the place's own. Both lie inside
+    // the rectangle the viewport had before the place opened.
+    let lowest = harness
+        .drawn_rects
+        .iter()
+        .filter(|(rect, _)| rect.center().x > save.x - 60.0)
+        .map(|(rect, _)| rect.bottom())
+        .fold(f32::MIN, f32::max);
+    let rail = egui::pos2(save.x, lowest + 20.0);
+    let air = egui::pos2(scene.left() + 20.0, save.y);
+    for (at, surface) in [(rail, "the rail"), (air, "the air beside the picture")] {
+        assert!(scene.contains(at), "{surface} stands inside the old work area: {at:?} in {scene:?}");
+        assert!(screen().contains(at), "and on screen: {at:?}");
+        harness.hover(at);
+        assert_eq!(harness.cursor, egui::CursorIcon::Default, "{surface} keeps the system arrow");
+        assert!(harness.app.shell.work_cursor.is_none(), "and draws no square over {surface}");
+    }
+
+    // The document tab goes back to the viewport, and the square marks the work area again.
+    harness.app.handle_header_action(crate::header::HeaderAction::Render, &harness.ctx);
+    harness.settle();
+    harness.hover(harness.scene().center());
+    assert_eq!(harness.cursor, egui::CursorIcon::None, "the viewport gets the shell's square back");
+    assert!(harness.app.shell.work_cursor.is_some(), "and the square is painted again");
+}
+
+#[test]
 fn the_work_cursor_is_sized_by_the_settings_and_its_crosshair_spans_the_view() {
     // The size is a hand's preference with two ends that must both work (U88): the smallest square
     // a hand can still grab, and the largest that does not hide the part under the pointer.
