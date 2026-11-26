@@ -56,7 +56,7 @@ usage: z3l                 open the editor
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
        z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
-                    [--studio <percent>] [--camera scene|fit]
+                    [--studio <percent>] [--camera scene|fit] [--no-denoise]
        z3l guide           print the domain guide a caller reads before it builds
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
@@ -87,6 +87,8 @@ render draws the final image of a saved scene and writes it as a PNG, with no wi
                      `scene` (the default) is the active authored camera, which is the view the
                      viewport shows; `fit` is the framing the viewport opens a scene with, which
                      is what a scene without a camera, or one whose camera looks elsewhere, needs
+  --no-denoise       write the samples' own average and no filter over it: the picture is grainier
+                     and a board's own texture stays as sharp as the sample count allows
   The document is read and never written.
 
 guide prints the domain this build works in as one JSON value: the two worlds of the program,
@@ -274,6 +276,8 @@ pub struct RenderArgs {
     pub studio: f32,
     /// Which camera the image is drawn from.
     pub camera: CameraChoice,
+    /// Whether the finished image is left unfiltered, which keeps a board's own texture sharp.
+    pub no_denoise: bool,
 }
 
 /// The two cameras a headless render can draw from.
@@ -458,6 +462,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let mut exposure = 1.0f32;
     let mut studio = 0.0f32;
     let mut camera = CameraChoice::Scene;
+    let mut no_denoise = false;
     let mut words = args.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
@@ -468,6 +473,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
             "--exposure" => exposure = stops(value(&mut words, "--exposure")?)?,
             "--studio" => studio = percent(value(&mut words, "--studio")?)?,
             "--camera" => camera = CameraChoice::parse(value(&mut words, "--camera")?)?,
+            "--no-denoise" => no_denoise = true,
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not a render option; run `z3l render --help`")));
             }
@@ -480,7 +486,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let scene = scene
         .ok_or_else(|| CliError::Usage("render needs a scene: `z3l render <scene.z3l> --out <path>`".to_owned()))?;
     let out = out.ok_or_else(|| CliError::Usage("render needs `--out <path>` to know where to write".to_owned()))?;
-    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, camera }))
+    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, camera, no_denoise }))
 }
 
 /// A whole number a flag carries, refusing one that is not a number.
@@ -1119,6 +1125,7 @@ mod tests {
                 exposure: 1.0,
                 studio: 0.0,
                 camera: CameraChoice::Scene,
+                no_denoise: false,
             })
         );
         let named = parse(&words(&[
@@ -1136,6 +1143,7 @@ mod tests {
             "40",
             "--camera",
             "fit",
+            "--no-denoise",
         ]))
         .expect("every render flag at once");
         assert_eq!(
@@ -1149,6 +1157,7 @@ mod tests {
                 exposure: 1.5,
                 studio: 40.0,
                 camera: CameraChoice::Fit,
+                no_denoise: true,
             })
         );
     }

@@ -73,11 +73,13 @@ pub const LIGHT_FLOOR: f32 = 1.0e-3;
 /// How different two albedos must be for the filter to treat them as two surfaces.
 ///
 /// The stop falls as `1 / (1 + (Δ/σ)²)`, so an albedo step of this size halves the weight and one of
-/// five times this size keeps a hundredth of it: a decor's grain or a dark seam survives, while two
-/// boards of the same paint are one surface and are filtered together. The stop is tight because the
-/// guide is exact — it is one primary hit, not an estimate — so stopping on a real paint line costs
-/// nothing but the noise that line would have smoothed.
-pub const SIGMA_ALBEDO: f32 = 0.05;
+/// five times this size keeps a hundredth of it. The value is a *grain*: a woodgrain step between two
+/// neighbouring texels is a few percent of the board's albedo — a tenth of it was enough to smear the
+/// decor into a flat board (Y9, and `plan/notes/Y9.md` measures it) — while noise in the radiance
+/// carries no albedo at all. The stop can be this tight because the guide is exact: one primary ray
+/// from the pixel's centre, not an estimate and not a jittered sample, so an albedo step is the
+/// surface's own and never the sampler's.
+pub const SIGMA_ALBEDO: f32 = 0.012;
 
 /// How fast a turn of the surface stops the filter, as the power of the cosine the normals make.
 ///
@@ -604,6 +606,60 @@ mod tests {
         // A pixel with no error bar yet takes the filtered value whole, and a broken one does too.
         assert_eq!(blend_weight(1, mean, [0.0; 3]), 1.0);
         assert_eq!(blend_weight(64, mean, [f32::INFINITY; 3]), 1.0);
+    }
+
+    #[test]
+    fn a_boards_grain_survives_the_filter() {
+        // A decor is an albedo pattern of a few pixels' scale whose neighbouring steps are a few
+        // percent — under a paint line and over the noise — and the filter has to keep it while it
+        // takes the noise away. The fixture is one wave of eight columns peak to peak, `0.03` of
+        // albedo either way, under one lamp; the measurement is the wave's own amplitude in the
+        // picture, which a filter that averages across the grain would flatten.
+        let (width, height) = (64u32, 64u32);
+        let wave = |x: u32| 0.35 + 0.03 * ((x as f32 / 8.0) * std::f32::consts::TAU).cos();
+        let mut seed = 0x51ed_2701u64;
+        let mut pixels = Vec::new();
+        let mut guides = Vec::new();
+        for _y in 0..height {
+            for x in 0..width {
+                let albedo = wave(x);
+                guides.push(flat(albedo, 2000.0));
+                // A variance that makes the blend trust the filter, which is the state of a render at
+                // the sample counts that need one at all.
+                pixels.push(Sample {
+                    mean: [albedo * 0.8 + 0.01 * noise(&mut seed); 3],
+                    variance: [4.0e-4; 3],
+                    count: 128,
+                });
+            }
+        }
+        let frame = Frame::new(width, height, pixels, guides).expect("a bound frame");
+        let denoised = frame.denoise();
+        // The amplitude at the wave's own frequency: the mean of the crest against the mean of the
+        // trough, over every column that belongs to each.
+        let (mut crest, mut trough) = (0.0f64, 0.0f64);
+        let (mut crests, mut troughs) = (0.0f64, 0.0f64);
+        for y in 4..height - 4 {
+            for x in 4..width - 4 {
+                let Some(value) = denoised.get((y * width + x) as usize) else { continue };
+                let phase = (x as f32 / 8.0) * std::f32::consts::TAU;
+                if phase.cos() > 0.7 {
+                    crest += f64::from(value[0]);
+                    crests += 1.0;
+                } else if phase.cos() < -0.7 {
+                    trough += f64::from(value[0]);
+                    troughs += 1.0;
+                }
+            }
+        }
+        let amplitude = (crest / crests.max(1.0) - trough / troughs.max(1.0)) as f32;
+        // The wave's own amplitude between those two bands is `2 × 0.03 × 0.8 × cos(45°)`.
+        let expected = 2.0 * 0.03 * 0.8 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            amplitude > expected * 0.6,
+            "the grain keeps {amplitude} of its {expected} amplitude: the filter smeared the board"
+        );
+        assert!(amplitude < expected * 1.5, "and it is not amplified either: {amplitude}");
     }
 
     #[test]

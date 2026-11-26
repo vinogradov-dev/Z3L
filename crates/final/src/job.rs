@@ -47,6 +47,7 @@ pub struct Settings {
     request: Request,
     exposure: f32,
     environment: f32,
+    denoise: bool,
     path: PathBuf,
 }
 
@@ -61,7 +62,23 @@ impl Settings {
         if !exposure.is_finite() || exposure <= 0.0 {
             return Err(FinalError::Exposure { exposure });
         }
-        Ok(Self { request, exposure, environment: 0.0, path: path.into() })
+        Ok(Self { request, exposure, environment: 0.0, denoise: true, path: path.into() })
+    }
+
+    /// The same render with the noise left in: the samples' own average and no filter over it.
+    ///
+    /// The filter is what a picture at the sample counts a workshop waits for needs (`crate::denoise`),
+    /// and it is also what softens a surface's own texture: a board's grain is finer than the noise and
+    /// a filter that cannot tell them apart smooths both. A print that pays for the samples can ask for
+    /// the samples alone, and a caller measuring the filter needs the picture without it.
+    pub fn without_denoise(mut self) -> Self {
+        self.denoise = false;
+        self
+    }
+
+    /// Whether the finished image is filtered.
+    pub fn denoises(&self) -> bool {
+        self.denoise
     }
 
     /// A render at one stop and the given destination, which is what a surface starts with.
@@ -162,7 +179,7 @@ pub fn run(
     if progress.cancelled() {
         return Err(FinalError::Cancelled { samples: progress.done(), total: progress.total() });
     }
-    let image = accumulation.into_image()?;
+    let image = if settings.denoise { accumulation.into_image()? } else { accumulation.raw_image()? };
     let bytes = encode_png(&image, settings.exposure)?;
     write_atomic(&settings.path, &bytes)?;
     // Only now, when the file is on disk: the last picture a surface keeps is the one it can open,

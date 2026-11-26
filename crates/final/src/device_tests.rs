@@ -610,6 +610,73 @@ fn a_lacquered_sphere_sheens_where_the_matte_one_turns_away() {
     assert!(apart < 0.02, "on axis the two spheres agree within two percent: {matte_axis} against {lacquered_axis}");
 }
 
+/// The linear radiance an eight-bit sRGB texel carries, which is what the shader decodes a picture to.
+fn linear_of_texel(value: u8) -> f32 {
+    let channel = f32::from(value) / 255.0;
+    if channel <= 0.04045 { channel / 12.92 } else { ((channel + 0.055) / 1.055).powf(2.4) }
+}
+
+#[test]
+fn a_boards_grain_reaches_the_filtered_picture() {
+    // The clause Y9 owes the denoiser: a picture of a decor is a picture of the board, so the filter
+    // must take the noise and leave the grain. The board is one texel per pixel across 64 columns,
+    // waved at two values of albedo under a white room — the furnace, where a diffuse board returns
+    // exactly its own albedo — so what the image should be is known without a reference render.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to filter a board's grain on");
+        return;
+    };
+    const SIDE: f32 = 2000.0;
+    const COLUMNS: u32 = 64;
+    const CREST: u8 = 110;
+    const TROUGH: u8 = 88;
+    let texel = |x: u32| {
+        let phase = (x as f32 / 8.0) * std::f32::consts::TAU;
+        let value = if phase.cos() > 0.0 { CREST } else { TROUGH };
+        [value, value, value, 255]
+    };
+    let mut texels = Vec::new();
+    for _y in 0..COLUMNS {
+        for x in 0..COLUMNS {
+            texels.push(texel(x));
+        }
+    }
+    let image = Arc::new(DecorImage::new(COLUMNS, COLUMNS, texels).expect("the picture"));
+    let decor = Decor::new(
+        DecorId::new(1).expect("one picture"),
+        image,
+        Length::from_millimetres(2000).expect("a size"),
+        Turns::ALONG,
+    )
+    .expect("a decor");
+    let mut frame = SceneFrame::default();
+    frame.push(
+        Drawable::new(id(1), board(SIDE), DMat4::from_translation(DVec3::new(-1000.0, -1000.0, 0.0)), [1.0; 4])
+            .with_decor(decor),
+    );
+    frame.lighting.key_color = [0.0; 3];
+    frame.lighting.points.clear();
+    frame.lighting.environment = [1.0; 3];
+    let camera = Camera::default().looked_from(DVec3::new(0.0, 0.0, 2000.0), DVec3::X, DVec3::Y, -DVec3::Z);
+    let request = Request::new(COLUMNS, COLUMNS, 128).expect("a small render");
+    let accumulation = trace_linear(&device, &queue, &frame, camera, request);
+    let filtered = accumulation.denoised();
+    // The two values the picture is made of are the two texels the board wears, with nothing between
+    // them: a filter that averaged across the grain would leave the extremes short of them.
+    let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+    for y in 8..COLUMNS - 8 {
+        for x in 8..COLUMNS - 8 {
+            let Some(pixel) = filtered.get((y * COLUMNS + x) as usize) else { continue };
+            low = low.min(f64::from(pixel[0]));
+            high = high.max(f64::from(pixel[0]));
+        }
+    }
+    let expected = f64::from(linear_of_texel(TROUGH));
+    let crest = f64::from(linear_of_texel(CREST));
+    assert!(low <= expected + 0.01 && low >= expected - 0.01, "the trough is {low} and the texel is {expected}");
+    assert!(high >= crest - 0.01 && high <= crest + 0.01, "the crest is {high} and the texel is {crest}");
+}
+
 /// A decor whose picture is two blocks: its left half red and its right half blue.
 fn two_tone(covers: i64, turns: Turns) -> Decor {
     let texels = vec![[255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 255, 255]];

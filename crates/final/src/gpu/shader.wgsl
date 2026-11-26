@@ -1347,6 +1347,34 @@ fn retires(pixel: u32) -> bool {
     return width / light < camera.denoise.y;
 }
 
+// What the primary ray meets, as the filter reads it: the surface's albedo, the normal facing the ray
+// and the distance. One ray, from the pixel's centre, and the same three answers the path's first
+// bounce would give — a light's face, a body, or the studio (Y4, Y6).
+fn write_guide(pixel: u32, guide_ray: Ray) {
+    let hit = trace(guide_ray, FAR_AWAY);
+    let face_of_light = trace_area(guide_ray, select(FAR_AWAY, hit.t, hit.t > 0.0));
+    if (face_of_light >= 0) {
+        let index = u32(face_of_light);
+        let distance = intersect_area(guide_ray, index, FAR_AWAY);
+        let normal = area_normal(index);
+        let emitting = dot(normal, guide_ray.direction) < 0.0;
+        // The guide faces the ray, exactly as a body's hit normal does, so the filter compares two
+        // normals written the same way.
+        pixels[pixel].albedo = vec4<f32>(camera.area_radiance[index].rgb, distance);
+        pixels[pixel].normal = vec4<f32>(select(-normal, normal, emitting), 0.0);
+        return;
+    }
+    if (hit.t > 0.0) {
+        let point = guide_ray.origin + guide_ray.direction * hit.t;
+        let material = material_of(faces[hit.face], point);
+        pixels[pixel].albedo = vec4<f32>(material.albedo, hit.t);
+        pixels[pixel].normal = vec4<f32>(hit.normal, 0.0);
+        return;
+    }
+    pixels[pixel].albedo = vec4<f32>(camera.environment.xyz, FAR_AWAY);
+    pixels[pixel].normal = vec4<f32>(-guide_ray.direction, 0.0);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = u32(camera.view.z);
@@ -1371,7 +1399,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let lens_sample = sample_pair(1u, sample, pixel_seed);
     // The row is the image's own row, not the strip's: the camera ray must not know about strips.
     let row = f32(camera.strip.x + id.y);
-    var ray = camera_ray(vec2<f32>(f32(id.x), row) + vec2<f32>(0.5) + jitter, lens_sample);
+    let centre = vec2<f32>(f32(id.x), row) + vec2<f32>(0.5);
+    // The guide is what the filter knows about this pixel, so it is the pixel's own centre ray and
+    // not the jittered sample: a guide taken through a random sub-pixel offset is noise of its own,
+    // and a board's grain is exactly what it has to stop the filter at (Y4, Y9).
+    if (sample == 0u) {
+        write_guide(pixel, camera_ray(centre, vec2<f32>(0.5, 0.5)));
+    }
+    var ray = camera_ray(centre + jitter, lens_sample);
 
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
@@ -1394,12 +1429,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let point = ray.origin + ray.direction * distance;
             let normal = area_normal(index);
             let emitting = dot(normal, ray.direction) < 0.0;
-            if (sample == 0u && bounce == 0u) {
-                // The guide faces the ray, exactly as a body's hit normal does, so the filter compares
-                // two normals written the same way.
-                pixels[pixel].albedo = vec4<f32>(camera.area_radiance[index].rgb, distance);
-                pixels[pixel].normal = vec4<f32>(select(-normal, normal, emitting), 0.0);
-            }
             if (emitting) {
                 // What a light sample would have paid for this path: the face's own density times the
                 // share the alias table gave it, so the two strategies share one path exactly.
@@ -1413,10 +1442,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             // Nothing there: what the ray sees is the environment, which is the studio the workshop
             // does not build.
             radiance = radiance + throughput * camera.environment.xyz;
-            if (sample == 0u && bounce == 0u) {
-                pixels[pixel].albedo = vec4<f32>(camera.environment.xyz, FAR_AWAY);
-                pixels[pixel].normal = vec4<f32>(-ray.direction, 0.0);
-            }
             break;
         }
         // Beer and Lambert: the beam lost this much on the way to the surface it just met.
@@ -1430,12 +1455,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             break;
         }
         let bounce_seed = hash(pixel_seed ^ hash(bounce * 2u + 1u));
-        // The guide is written on the first sample only: the primary hit does not depend on where
-        // inside the pixel that sample landed, so a second write would only repeat it.
-        if (sample == 0u && bounce == 0u) {
-            pixels[pixel].albedo = vec4<f32>(material.albedo, hit.t);
-            pixels[pixel].normal = vec4<f32>(frame.normal, 0.0);
-        }
         let u = sample_pair(0u, sample, bounce_seed);
         let pick = sample_1d(2u, sample, bounce_seed);
         // The rectangle's two draws: which window, and where on its face. They are their own pair of
