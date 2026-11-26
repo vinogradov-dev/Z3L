@@ -45,6 +45,31 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
+- `[~]` **Y11** a camera's lens is saved with the camera, and a render reads it from there
+  Why: Owner's decision (2026-11-26): a camera's lens is the camera's own setting and must be
+   saved in the document, not chosen again per render. Y5 put the aperture and the focus on the
+   render's Settings (ADR 0248) because the studio had gone there; the owner names the other
+   home, and it is the right one: a photographic camera is its lens, a saved scene must render
+   the same picture from every door — the window, the command line and the assistant — and a
+   number a maker spends time on must survive the session.
+  Shape: CameraNode carries a CameraLens: an aperture radius and a focus distance in the
+   document's own units, validated (0 to 500 mm of radius, a focus of at least a millimetre,
+   and a pinhole needs no focus) with a pinhole default so a camera without one is the camera
+   this tree always had. The camera card gains the two fields, one new command camera.lens.set
+   writes them as one undo entry, and the schema moves to 35 with the golden regenerated (ADR
+   0096). authored_camera maps the lens into the frame's Camera, so the tracer reads it from
+   the camera it was handed, and the Render place renders through scene_camera so the
+   document's camera is what its button uses. Settings::with_lens, its two fields, the page's
+   two fields and --aperture/--focus go: one number, one home. ADR 0249 records the move and
+   0248 is marked superseded.
+  Done: Tests: a lens outside its range is refused on build and load and the document keeps the
+   one it had; the camera round-trips the new field and an older schema is a readable error;
+   the command writes one revision and one undo entry; the card reads the document and builds
+   one request; authored_camera carries the radius and the focus into the frame; a render of
+   the fixture through a document camera with an aperture is blurred and one with a zero
+   aperture is the pinhole the Y5 test measured; cargo xtask ci is green.
+  `files: crates/model/src/camera.rs,crates/model/src/project/camera_light_cmds.rs,crates/engine/src/scene_cmds.rs,crates/ui/src/camera_card.rs,app/src/scene_build.rs,app/src/main.rs,crates/final/src/job.rs,crates/ui/src/render_page.rs,app/src/cli.rs`
+
 - `[ ]` **O16** a catalogue record refers to a library material instead of describing it
   Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
    colour, a texture reference, roughness, metallic. The owner's model is the other way round:
