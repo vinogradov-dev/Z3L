@@ -1,6 +1,6 @@
 # Status
 
-STATE: milestone=M7 phase=T task=U129 state=doing base=aa41181 updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=ff99183 updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
@@ -42,14 +42,17 @@ measures the noise it spends and the render's materials are one portable library
 and the assistant reaches a real model over its own wire (J14, J11). A board's ends are cut in or
 let out by four signed trims the outline generator reads, so the size a saw takes, the ring a cutter
 follows, the mesh, the bounds, the card's own row and the order package are one derivation, a resize
-keeps the numbers, and a ring refuses the ones it cannot have (N31, ADR 0240). The plan's work order
+keeps the numbers, and a ring refuses the ones it cannot have (N31, ADR 0240). A node is given one
+of those records on its own card: a picker over the
+workshop's library beside the panel's catalogue material and above an object's numbers, one undo
+entry per assignment, an empty library and a lost number both said in words, and the row kept where
+the picture placement will sit (U129, ADR 0254). The plan's work order
 still opens with a catalogue record that refers to a library material instead of describing it
 (O16).
 
 ## Next
 
-U129 is next: U129 a person gives a node one of the workshop's materials, and the card lists the
-library
+Nothing is scheduled: 14 open tasks wait in `## Next`.
 
 ## Index
 

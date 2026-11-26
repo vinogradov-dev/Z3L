@@ -45,22 +45,6 @@ been reproduced. Taking it moves the line into `## Now` at its place in the work
 name it; fixing it moves it to `## Done` with the commit, like any task.
 
 ## Now
-- `[~]` **U129** U129 a person gives a node one of the workshop's materials, and the card lists the library
-  Why: Y7 made every surface of a panel or an object wear one record of the render's library,
-   and it reads that record from the document — but nothing writes the slot in the window. A
-   shop can only name a material in the scene file by hand, so the frame's ability is invisible
-   until the card and a command exist (ADR 0245).
-  Shape: Two ways in, one command: a `node.material.set` with its stable id, a README-style
-   inventory row, an icon, the card and the palette place, and one undo entry; a picker that
-   lists the session's library by name, says so when the library is empty and clears a slot;
-   the record a node names is resolved by the session, so a missing one is a readable
-   diagnostic naming the node and the id rather than a silent placeholder. The catalogue's own
-   link is O16's, not this entry's.
-  Done: Tests: a command assigns and clears a slot in one undo entry each; the picker lists the
-   library's names and refuses nothing when the library is empty; a node whose record is gone
-   is a finding the inspector prints; cargo xtask ci is green.
-  `files: crates/engine/src/node_cmds.rs,crates/engine/src/session.rs,crates/ui/src/material_slot.rs,crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src/inventory.rs,crates/ui/src/palette.rs,crates/text/src/messages.rs,assets/icons/actions/material.svg`
-
 - `[ ]` **O16** a catalogue record refers to a library material instead of describing it
   Why: docs/domain/nomenclature.md section 7 promises an Appearance block on the record:
    colour, a texture reference, roughness, metallic. The owner's model is the other way round:
@@ -284,6 +268,22 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src`
 
 ## Done
+
+- `[x]` **U129** U129 a person gives a node one of the workshop's materials, and the card lists the library
+  Why: Y7 made every surface of a panel or an object wear one record of the render's library,
+   and it reads that record from the document — but nothing writes the slot in the window. A
+   shop can only name a material in the scene file by hand, so the frame's ability is invisible
+   until the card and a command exist (ADR 0245).
+  Shape: Two ways in, one command: a `node.material.set` with its stable id, a README-style
+   inventory row, an icon, the card and the palette place, and one undo entry; a picker that
+   lists the session's library by name, says so when the library is empty and clears a slot;
+   the record a node names is resolved by the session, so a missing one is a readable
+   diagnostic naming the node and the id rather than a silent placeholder. The catalogue's own
+   link is O16's, not this entry's.
+  Done: Tests: a command assigns and clears a slot in one undo entry each; the picker lists the
+   library's names and refuses nothing when the library is empty; a node whose record is gone
+   is a finding the inspector prints; cargo xtask ci is green.
+  `files: crates/engine/src/node_cmds.rs,crates/engine/src/session.rs,crates/ui/src/material_slot.rs,crates/ui/src/panel_card.rs,crates/ui/src/object_card.rs,crates/ui/src/inventory.rs,crates/ui/src/palette.rs,crates/text/src/messages.rs,assets/icons/actions/material.svg` — `ff99183`
 
 - `[x]` **N31** a panel's end carries a trim, so a board can be shorter or longer than its nominal size
   Why: The owner: a standard panel will carry edge trims — a positive value shrinks the size at
