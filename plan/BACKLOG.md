@@ -346,8 +346,30 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    page's Render button is enabled with no destination and its Save button is not, until an
    image exists; cargo xtask ci is green.
   `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs`
-
 ## Done
+
+- `[x]` **Y13** the filter stops at a board's grain, and a render can be written without it
+  Why: Owner's report (2026-11-26): a render of a decor was mush. Measured on the H1346 board
+   at 128 samples: local contrast 5.69 unfiltered against 0.96 filtered, so 83 % of the
+   surface's own texture was gone. Two causes in one place: the filter's albedo stop was
+   `SIGMA_ALBEDO = 0.05`, a value chosen for two paints a workshop names apart while a
+   woodgrain's neighbouring texels differ by a few percent, and the guide the stop reads was
+   written from the jittered first sample, so it carried the sampler's noise and could not be
+   tightened. There was also no way to see what the filter costs: `z3l render` always wrote the
+   filtered picture.
+  Shape: The stop becomes a grain's step, `0.012`; that is only safe because the guide is exact
+   — `write_guide` traces one ray from the pixel's centre on the first sample and answers the
+   three things the filter reads (a light's face, a body, the studio), so an albedo step is the
+   surface's own. `Settings::without_denoise` and `z3l render --no-denoise` write the samples'
+   own average, which is both the knob a print bought with samples needs and the measurement
+   the filter's clause needed. The viewport and the page keep the filter: this is the file's
+   picture.
+  Done: A unit test in `denoise` fails on the old constant (the wave collapses to 12 % of its
+   amplitude) and passes on the new one; a device test asserts a filtered board is made of
+   exactly the two texels it wears; `--no-denoise` is parsed and reaches `Settings`; the
+   existing Y4 clauses — denoised beats raw against a reference, and 4096 samples move under a
+   code value — still pass; cargo xtask ci is green.
+  `files: crates/final/src/denoise.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,app/src/cli.rs` — `c5f1674`
 
 - `[x]` **Y9** a varnished board shows a dielectric sheen over its decal instead of a flat matte
   Why: `final::bsdf::probabilities` gives `diffuse = 1 - metallic` and `specular = metal * (1 -
