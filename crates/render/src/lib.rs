@@ -2482,19 +2482,22 @@ mod tests {
         frame.push(Drawable::new(id, Arc::clone(&mesh), centred(side), [1.0, 1.0, 1.0, 1.0]).with_decor(plain(covers)));
 
         let region = ViewRegion { x: 0, y: 0, width: 200, height: 200 };
+        let view = |grid: Option<DecorGrid>| ViewSpec {
+            camera,
+            region,
+            shading: ShadingStyle::Shaded,
+            shadows: ContactShadows { visible: false, ..ContactShadows::default() },
+            decor_grid: grid,
+        };
         let mut renderer = ViewportRenderer::new(&device, 200, 200);
         renderer.upload(&device, &queue, &frame).expect("the frame uploads");
-        let mut shown = |grid: Option<DecorGrid>| {
-            let view = ViewSpec {
-                camera,
-                region,
-                shading: ShadingStyle::Shaded,
-                shadows: ContactShadows { visible: false, ..ContactShadows::default() },
-                decor_grid: grid,
-            };
-            renderer.render_views(&device, &queue, &frame, &frame.lighting, &[view]);
+        // A frame per reading, so the switch and the ink never mutate the frame the last shot used.
+        let mut shot = |frame: &SceneFrame, grid: Option<DecorGrid>| {
+            renderer.upload(&device, &queue, frame).expect("the frame uploads");
+            renderer.render_views(&device, &queue, frame, &frame.lighting, &[view(grid)]);
             read_pixels(&renderer, &device, &queue)
         };
+        let mut shown = |grid| shot(&frame, grid);
 
         // The switch is the view's: with it off the board is plain, with it on the seams are inked.
         let plain = shown(None);
@@ -2515,6 +2518,17 @@ mod tests {
         }
         let none = line_columns(&plain, 200, 200, (right - left) as usize / 2);
         assert!(none.is_empty(), "a view that asked for no grid draws none: {none:?}");
+
+        // The guide's own ink over a real board, in both variants: the amber the frame carries at the
+        // opacity the theme gives it, which no assertion can judge and a person can.
+        let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+        for (name, colors) in [("dark", scene::SceneColors::DARK), ("light", scene::SceneColors::LIGHT)] {
+            let mut tinted = frame.clone();
+            tinted.apply_colors(colors);
+            let thumb = shot(&tinted, Some(DecorGrid::new(3.0, colors.helper)));
+            let path = directory.join(format!("decor-grid-{name}.png"));
+            testkit::write_png(&path, 200, 200, &thumb).expect("the shot is written");
+        }
     }
 
     #[test]
