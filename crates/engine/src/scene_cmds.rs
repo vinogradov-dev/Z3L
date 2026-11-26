@@ -8,7 +8,7 @@
 
 use catalog::Directory;
 use geom::Contact;
-use model::{CameraProjection, Id, LightKind, LightNode, LightSize, LightSpec, Placement, Project};
+use model::{CameraLens, CameraProjection, Id, LightKind, LightNode, LightSize, LightSpec, Placement, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -171,6 +171,61 @@ fn scene_active_camera_set_run(
     let params = parse::<SceneActiveCameraSet>(params, SCENE_ACTIVE_CAMERA_SET_ID)?;
     project.set_active_camera(params.camera)?;
     Ok(CommandOutcome::changed())
+}
+
+/// Stable id of the camera lens command.
+pub const CAMERA_LENS_SET_ID: &str = "camera.lens.set";
+
+/// User-facing label of the camera lens command.
+pub const CAMERA_LENS_SET_LABEL: Message = Message::CmdSetCameraLens;
+
+/// Parameters for `camera.lens.set`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CameraLensSet {
+    /// The camera whose lens changes.
+    pub camera: Id,
+    /// The aperture radius and the focus distance, validated on the way in.
+    pub lens: CameraLens,
+}
+
+/// The `camera.lens.set` command.
+pub(crate) const CAMERA_LENS_SET: CommandSpec = CommandSpec::new::<CameraLensSet>(
+    CAMERA_LENS_SET_ID,
+    CAMERA_LENS_SET_LABEL,
+    camera_lens_set_enabled,
+    camera_lens_set_run,
+);
+
+fn camera_lens_set_enabled(session: &Session, params: &Value) -> bool {
+    let Ok(params) = parse::<CameraLensSet>(params, CAMERA_LENS_SET_ID) else {
+        return false;
+    };
+    session.project().camera(params.camera).is_some() && lens_is_valid(params.lens)
+}
+
+fn camera_lens_set_run(
+    project: &mut Project,
+    _catalog: &Directory,
+    params: &Value,
+    _contact: &dyn Contact,
+) -> Result<CommandOutcome, CommandError> {
+    let params = parse::<CameraLensSet>(params, CAMERA_LENS_SET_ID)?;
+    if !lens_is_valid(params.lens) {
+        return Err(CommandError::InvalidParams {
+            command: CAMERA_LENS_SET_ID,
+            message: "an aperture of 0 to 500 mm of radius and a focus of 1 mm to 1 km".to_owned(),
+        });
+    }
+    project.set_camera_lens(params.camera, params.lens)?;
+    Ok(CommandOutcome::changed())
+}
+
+/// Whether a lens is inside both of its ranges, which the document checks again.
+fn lens_is_valid(lens: CameraLens) -> bool {
+    let aperture = lens.aperture().micrometres();
+    let focus = lens.focus().micrometres();
+    (0..=500_000).contains(&aperture) && (1_000..=1_000_000_000).contains(&focus)
 }
 
 /// Stable id of the camera projection command.
@@ -465,6 +520,39 @@ mod tests {
         assert!(session.dispatch(LIGHT_PARAMS_SET_ID, &refusal).is_err());
         let revision = session.project().revision();
         assert_eq!(revision, before.checked_next().and_then(|r| r.checked_next()).expect("revisions"));
+    }
+
+    #[test]
+    fn a_camera_s_lens_is_one_revision_and_its_own_command() {
+        // The lens is the camera's, not the render's (Y11, ADR 0249): one command writes both numbers
+        // as one undo entry, and a value outside the range is a sentence that writes nothing.
+        let mut session = Session::with_directory(sample_project(), sample_catalog());
+        let camera = session
+            .dispatch(CAMERA_CREATE_ID, &camera_params(&session, "Camera"))
+            .expect("create camera")
+            .created_id()
+            .expect("a camera id");
+        let lens = CameraLens::new(
+            units::Length::from_millimetres(45).expect("a radius"),
+            units::Length::from_millimetres(2_000).expect("a focus"),
+        )
+        .expect("a lens");
+        let before = session.project().revision();
+        let value = serde_json::to_value(CameraLensSet { camera, lens }).expect("params");
+        session.dispatch(CAMERA_LENS_SET_ID, &value).expect("a lens on a camera");
+        assert_eq!(session.project().revision(), before.checked_next().expect("revision"));
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), lens);
+        assert!(session.can_undo(), "a lens is an edit of the document");
+
+        // A hostile radius, a focus of no distance and an id that is not a camera are all refused.
+        let mut broken = serde_json::to_value(CameraLensSet { camera, lens }).expect("params");
+        broken["lens"]["aperture"] = serde_json::json!(600_000_000);
+        assert!(session.dispatch(CAMERA_LENS_SET_ID, &broken).is_err());
+        let root = session.project().root().id();
+        let wrong = serde_json::to_value(CameraLensSet { camera: root, lens }).expect("params");
+        assert!(session.dispatch(CAMERA_LENS_SET_ID, &wrong).is_err(), "a container has no lens");
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), lens, "a refusal writes nothing");
+        assert_eq!(session.project().revision(), before.checked_next().expect("one revision"));
     }
 
     #[test]

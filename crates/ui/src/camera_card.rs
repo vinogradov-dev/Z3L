@@ -1,18 +1,23 @@
 //! The selected camera card.
 //!
-//! A camera is a scene object ([ADR 0036]): the card renames it, edits its projection and can make
-//! it the camera the viewport renders from. The projection is two numeric fields — a field of view in
-//! degrees or an orthographic height in millimetres — and each one commits as a scrub: a drag writes
+//! A camera is a scene object ([ADR 0036]): the card renames it, edits its projection and its lens,
+//! and can make it the camera the viewport renders from. The projection is two numeric fields — a
+//! field of view in degrees or an orthographic height in millimetres — and the lens is two more, the
+//! aperture radius and the focus distance in millimetres; each one commits as a scrub: a drag writes
 //! the document while the hand moves and is one undo entry, typed text lands after a short debounce.
 //! The active-camera toggle is a single command of its own.
 //!
+//! The lens is saved with the camera ([ADR 0249]), so a scene renders the picture its author framed
+//! from the window, the command line and the assistant alike.
+//!
 //! [ADR 0036]: ../docs/decisions/0036-cameras-and-lights-are-scene-objects.md
+//! [ADR 0249]: ../docs/decisions/0249-a-cameras-lens-is-document-data.md
 
 use egui::{TextEdit, Ui};
 use engine::node_cmds::NODE_RENAME_ID;
-use engine::scene_cmds::{CAMERA_PROJECTION_SET_ID, SCENE_ACTIVE_CAMERA_SET_ID};
-use engine::{CameraProjectionSet, EditScope, NodeRename, SceneActiveCameraSet, Session};
-use model::{CameraProjection, Id};
+use engine::scene_cmds::{CAMERA_LENS_SET_ID, CAMERA_PROJECTION_SET_ID, SCENE_ACTIVE_CAMERA_SET_ID};
+use engine::{CameraLensSet, CameraProjectionSet, EditScope, NodeRename, SceneActiveCameraSet, Session};
+use model::{CameraLens, CameraProjection, Id};
 use text::{Lang, Message};
 use units::{Degrees, Length};
 
@@ -41,21 +46,32 @@ pub(crate) struct CameraCard {
 #[derive(Clone, Debug, PartialEq)]
 struct Draft {
     camera: Id,
-    base: CameraProjection,
+    base: (CameraProjection, CameraLens),
     name: String,
     perspective: bool,
     fov: f64,
     height: f64,
+    aperture_mm: f64,
+    focus_mm: f64,
 }
 
 impl Draft {
-    fn new(camera: Id, name: &str, projection: CameraProjection) -> Self {
+    fn new(camera: Id, name: &str, projection: CameraProjection, lens: CameraLens) -> Self {
         let (fov, height) = match projection {
             CameraProjection::Perspective { fov_y } => (fov_y.degrees_f64(), DEFAULT_HEIGHT_MILLIMETRES),
             CameraProjection::Orthographic { height } => (DEFAULT_FOV_DEGREES, height.millimetres_f64()),
         };
         let perspective = matches!(projection, CameraProjection::Perspective { .. });
-        Self { camera, base: projection, name: name.to_owned(), perspective, fov, height }
+        Self {
+            camera,
+            base: (projection, lens),
+            name: name.to_owned(),
+            perspective,
+            fov,
+            height,
+            aperture_mm: lens.aperture().millimetres_f64(),
+            focus_mm: lens.focus().millimetres_f64(),
+        }
     }
 }
 
@@ -70,14 +86,14 @@ impl CameraCard {
             return;
         };
         let name = camera.name().to_owned();
-        let projection = camera.projection();
+        let project = (camera.projection(), camera.lens());
         if self
             .draft
             .as_ref()
-            .is_none_or(|draft| draft.camera != camera_id || draft.base != projection || draft.name != name)
+            .is_none_or(|draft| draft.camera != camera_id || draft.base != project || draft.name != name)
         {
             self.error = None;
-            self.draft = Some(Draft::new(camera_id, &name, projection));
+            self.draft = Some(Draft::new(camera_id, &name, project.0, project.1));
         }
         let Some(draft) = self.draft.as_mut() else {
             return;
@@ -104,6 +120,9 @@ impl CameraCard {
 
         let mut switched = false;
         let mut commit = None;
+        // The lens takes its own token: the two commands write two fields of one camera, and a frame
+        // that edits only the focus must not rewrite the projection beside it (Y11).
+        let mut lens_commit = None;
         let mut cancelled = Vec::new();
         let mut refused = None;
         ui.separator();
@@ -156,8 +175,57 @@ impl CameraCard {
             }
         });
 
-        // Take a snapshot so the document borrow ends before a command runs.
+        // The lens: an aperture radius and a focus distance, both in millimetres, both saved with the
+        // camera (Y11, ADR 0249). A radius of zero is the pinhole the camera was born as.
+        ui.separator();
+        section(ui, "camera.lens", Message::SectionLens.text(lang), true, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(Message::LensAperture.text(lang));
+                let outcome = Scrub::new(&mut draft.aperture_mm)
+                    .speed(1.0)
+                    .range(0.0..=CameraLensBounds::MAX_APERTURE_MM)
+                    .decimals(1)
+                    .unit("mm")
+                    .policy(CommitPolicy::Live)
+                    .edit(fresh)
+                    .show(ui);
+                if outcome.commit {
+                    lens_commit = outcome.scope;
+                }
+                refused = refused.or(outcome.error);
+                cancelled.extend(outcome.cancelled);
+            });
+            ui.horizontal(|ui| {
+                ui.label(Message::LensFocus.text(lang));
+                let outcome = Scrub::new(&mut draft.focus_mm)
+                    .speed(20.0)
+                    .range(CameraLensBounds::MIN_FOCUS_MM..=CameraLensBounds::MAX_FOCUS_MM)
+                    .decimals(0)
+                    .unit("mm")
+                    .policy(CommitPolicy::Live)
+                    .edit(fresh)
+                    .show(ui);
+                if outcome.commit {
+                    lens_commit = outcome.scope;
+                }
+                refused = refused.or(outcome.error);
+                cancelled.extend(outcome.cancelled);
+            });
+            ui.label(Message::LensRange.with(
+                lang,
+                [
+                    CameraLensBounds::MIN_APERTURE_MM.to_string().as_str(),
+                    CameraLensBounds::MAX_APERTURE_MM.to_string().as_str(),
+                    CameraLensBounds::MIN_FOCUS_MM.to_string().as_str(),
+                    CameraLensBounds::MAX_FOCUS_MM.to_string().as_str(),
+                ],
+            ));
+        });
+
+        // Take a snapshot so the document borrow ends before a command runs: both readers run here,
+        // while the draft is still borrowed, and nothing below touches it again.
         let next = projection_from_draft(draft, lang);
+        let next_lens = lens_from_draft(draft, lang);
         if let Some(message) = refused {
             ui.colored_label(theme::danger(ui), message.text(lang));
         }
@@ -207,7 +275,21 @@ impl CameraCard {
                 }
             }
         }
-        if dispatched || refused.is_some() || refused_name {
+        // The lens is one command of its own, and it runs only when one of its two fields committed:
+        // a drag of the aperture is one entry, and a projection edit never rewrites it.
+        let lens_dispatched = if lens_commit.is_some() {
+            match next_lens {
+                Err(error) => self.error = Some(error),
+                Ok(lens) => match apply_lens(session, camera_id, lens, lens_commit) {
+                    Ok(()) => self.draft = None,
+                    Err(error) => self.error = Some(error),
+                },
+            }
+            true
+        } else {
+            false
+        };
+        if dispatched || lens_dispatched || refused.is_some() || refused_name {
             ui.ctx().request_repaint();
         }
 
@@ -232,6 +314,46 @@ impl CameraProjectionBounds {
     const MIN_FOV: Degrees = Degrees::from_millidegrees(1_000);
     const MAX_FOV: Degrees = Degrees::from_millidegrees(179_000);
     const MAX_HEIGHT: Length = Length::from_micrometres(1_000_000_000);
+}
+
+/// Ranges shown for the lens; they mirror the validation in the model.
+struct CameraLensBounds;
+
+impl CameraLensBounds {
+    const MIN_APERTURE_MM: f64 = 0.0;
+    const MAX_APERTURE_MM: f64 = 500.0;
+    const MIN_FOCUS_MM: f64 = 1.0;
+    const MAX_FOCUS_MM: f64 = 1_000_000.0;
+}
+
+/// Reads the draft into a lens, refusing a value that cannot be the camera's.
+fn lens_from_draft(draft: &Draft, lang: Lang) -> Result<CameraLens, String> {
+    let aperture = Length::from_millimetres_f64(draft.aperture_mm)
+        .ok_or_else(|| Message::FieldOfViewError.with(lang, [Message::LengthErrorOutOfRange.text(lang)]))?;
+    let focus = Length::from_millimetres_f64(draft.focus_mm)
+        .ok_or_else(|| Message::FieldOfViewError.with(lang, [Message::LengthErrorOutOfRange.text(lang)]))?;
+    CameraLens::new(aperture, focus).map_err(|_| {
+        Message::LensRange.with(
+            lang,
+            [
+                CameraLensBounds::MIN_APERTURE_MM.to_string().as_str(),
+                CameraLensBounds::MAX_APERTURE_MM.to_string().as_str(),
+                CameraLensBounds::MIN_FOCUS_MM.to_string().as_str(),
+                CameraLensBounds::MAX_FOCUS_MM.to_string().as_str(),
+            ],
+        )
+    })
+}
+
+/// Applies the lens; with a scope, the whole drag is one undo entry.
+fn apply_lens(session: &mut Session, camera: Id, lens: CameraLens, scope: Option<EditScope>) -> Result<(), String> {
+    let params = json(&CameraLensSet { camera, lens })?;
+    match scope {
+        Some(scope) => {
+            session.dispatch_in(scope, CAMERA_LENS_SET_ID, &params).map(|_| ()).map_err(|error| error.to_string())
+        }
+        None => dispatch(session, CAMERA_LENS_SET_ID, &params).map(|_| ()),
+    }
 }
 
 /// Reads the draft into a projection, refusing a value that cannot be the camera's.
@@ -310,7 +432,7 @@ mod tests {
     #[test]
     fn the_draft_shows_and_parses_the_current_projection() {
         let (_, camera) = camera_session();
-        let draft = Draft::new(camera, "Camera", CameraProjection::DEFAULT);
+        let draft = Draft::new(camera, "Camera", CameraProjection::DEFAULT, CameraLens::PINHOLE);
         assert!(draft.perspective);
         assert_eq!(draft.fov, 50.0);
         assert_eq!(projection_from_draft(&draft, Lang::En), Ok(CameraProjection::DEFAULT));
@@ -323,10 +445,41 @@ mod tests {
     }
 
     #[test]
+    fn the_lens_is_read_from_the_camera_and_written_back_as_one_command() {
+        // The lens is the camera's own setting (Y11, ADR 0249): the card reads it from the document,
+        // turns two millimetre fields into one command, and applies it as one undo entry.
+        let (mut session, camera) = camera_session();
+        let draft = Draft::new(camera, "Camera", CameraProjection::DEFAULT, CameraLens::PINHOLE);
+        assert_eq!(draft.aperture_mm, 0.0, "a camera is born a pinhole");
+        assert_eq!(draft.focus_mm, 1_200.0, "and carries the default focus");
+        assert_eq!(lens_from_draft(&draft, Lang::En), Ok(CameraLens::PINHOLE));
+
+        let lensed = Draft { aperture_mm: 45.0, focus_mm: 2_000.0, ..draft.clone() };
+        let lens = lens_from_draft(&lensed, Lang::En).expect("a lens");
+        assert_eq!(lens.aperture(), Length::from_millimetres(45).expect("a radius"));
+        assert_eq!(lens.focus(), Length::from_millimetres(2_000).expect("a focus"));
+
+        // One dispatch, one revision, and the document holds what the card read.
+        let before = session.project().revision();
+        apply_lens(&mut session, camera, lens, None).expect("apply the lens");
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), lens);
+        assert_eq!(session.project().revision(), before.checked_next().expect("one revision"));
+        session.undo().expect("undo");
+        assert_eq!(session.project().camera(camera).expect("camera").lens(), CameraLens::PINHOLE);
+
+        // A radius past the cap and a focus of no distance are sentences, not dispatches.
+        let too_wide = Draft { aperture_mm: 900.0, ..lensed.clone() };
+        let refusal = lens_from_draft(&too_wide, Lang::En).expect_err("900 mm is not a lens");
+        assert!(refusal.contains("500"), "the sentence names the cap: {refusal}");
+        let no_focus = Draft { focus_mm: 0.0, ..lensed };
+        assert!(lens_from_draft(&no_focus, Lang::En).is_err());
+    }
+
+    #[test]
     fn a_value_outside_the_range_is_reported_instead_of_dispatching() {
         let (session, camera) = camera_session();
         let before = session.project().revision();
-        let draft = Draft::new(camera, "Camera", CameraProjection::DEFAULT);
+        let draft = Draft::new(camera, "Camera", CameraProjection::DEFAULT, CameraLens::PINHOLE);
 
         let outside = Draft { fov: 0.0, ..draft.clone() };
         assert!(projection_from_draft(&outside, Lang::En).is_err());
@@ -341,7 +494,7 @@ mod tests {
         let before = session.project().camera(camera).expect("camera").projection();
         let scope = session.edit_scope();
         for fov in [55.0, 60.0, 65.0] {
-            let draft = Draft { fov, ..Draft::new(camera, "Camera", before) };
+            let draft = Draft { fov, ..Draft::new(camera, "Camera", before, CameraLens::PINHOLE) };
             let next = projection_from_draft(&draft, Lang::En).expect("a valid projection");
             apply_projection(&mut session, camera, next, Some(scope)).expect("set projection");
         }

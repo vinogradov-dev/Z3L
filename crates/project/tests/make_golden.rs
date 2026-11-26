@@ -16,9 +16,10 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use model::{
-    CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth, CutoutShape,
-    EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId, LightNode, LightSize,
-    LightSpec, MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement, Primitive, Project,
+    CameraLens, CameraNode, CameraProjection, ClassCode, Constructive, Container, CornerFeatureKind, CutoutDepth,
+    CutoutShape, EdgeBanding, EdgeBevel, EdgeId, EdgeRef, Envelope, FaceSide, Footprint, Geometry, Id, ItemId,
+    LightNode, LightSize, LightSpec, MaterialRef, Object, Panel, PanelNominalSize, PanelRect, Path, Placement,
+    Primitive, Project,
 };
 use project::SceneFile;
 use serde_json::Value;
@@ -96,8 +97,12 @@ fn scene() -> SceneFile {
                 Geometry::Primitive(Primitive::sphere(millimetres(50), 32, 16).expect("a sphere")),
             )
             .into(),
+            // A camera carries its lens, and a scene with a lensed camera renders that picture from
+            // every door (Y11, ADR 0249).
             CameraNode::new(id(6), "Presentation", Placement::IDENTITY, CameraProjection::DEFAULT)
                 .expect("a camera")
+                .with_lens(CameraLens::new(millimetres(45), millimetres(2_000)).expect("a lens"))
+                .expect("a lensed camera")
                 .into(),
             LightNode::new(id(7), "Key", Placement::IDENTITY, LightSpec::sun([1.0, 0.95, 0.9], 2.0))
                 .expect("a light")

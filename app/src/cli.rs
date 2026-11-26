@@ -56,7 +56,7 @@ usage: z3l                 open the editor
        z3l export <scene.z3l> --out <path> [--format bundle|single] [--no-timestamp]
                     [--price-max-age <days>]
        z3l render <scene.z3l> --out <path> [--size <w>x<h>] [--samples <n>] [--exposure <stops>]
-                    [--studio <percent>] [--aperture <mm>] [--focus <mm>] [--camera scene|fit]
+                    [--studio <percent>] [--camera scene|fit]
        z3l guide           print the domain guide a caller reads before it builds
        z3l commands [--json]
        z3l run <scene.z3l> --commands <recipe.jsonl> [--out <scene>] [--product <node>] [--dry-run]
@@ -83,10 +83,6 @@ render draws the final image of a saved scene and writes it as a PNG, with no wi
   --exposure <stops> the exposure applied before the filmic curve; one stop by default
   --studio <percent> the studio behind the scene, as a percentage of a white room; zero by default,
                      which is the black background a render has always had
-  --aperture <mm>    the lens radius in millimetres; zero by default, which is the pinhole a render
-                     has always had, and anything else blurs what is not at the focus
-  --focus <mm>       the distance the lens focuses at, in millimetres; 1200 by default, which is the
-                     distance the default camera orbits at
   --camera <scene|fit>
                      `scene` (the default) is the active authored camera, which is the view the
                      viewport shows; `fit` is the framing the viewport opens a scene with, which
@@ -276,10 +272,6 @@ pub struct RenderArgs {
     pub exposure: f32,
     /// The studio behind the scene, in percent of a white room.
     pub studio: f32,
-    /// The lens radius in millimetres; zero is a pinhole.
-    pub aperture: f32,
-    /// The distance the lens focuses at, in millimetres.
-    pub focus: f32,
     /// Which camera the image is drawn from.
     pub camera: CameraChoice,
 }
@@ -465,8 +457,6 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let mut samples = render::DEFAULT_SAMPLES;
     let mut exposure = 1.0f32;
     let mut studio = 0.0f32;
-    let mut aperture = 0.0f32;
-    let mut focus = render::DEFAULT_FOCUS_MM;
     let mut camera = CameraChoice::Scene;
     let mut words = args.iter();
     while let Some(word) = words.next() {
@@ -477,8 +467,6 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
             "--samples" => samples = count(value(&mut words, "--samples")?, "--samples")?,
             "--exposure" => exposure = stops(value(&mut words, "--exposure")?)?,
             "--studio" => studio = percent(value(&mut words, "--studio")?)?,
-            "--aperture" => aperture = lens(value(&mut words, "--aperture")?, "--aperture")?,
-            "--focus" => focus = focus_of(value(&mut words, "--focus")?)?,
             "--camera" => camera = CameraChoice::parse(value(&mut words, "--camera")?)?,
             other if other.starts_with('-') => {
                 return Err(CliError::Usage(format!("`{other}` is not a render option; run `z3l render --help`")));
@@ -492,7 +480,7 @@ fn render_args(args: &[String]) -> Result<Command, CliError> {
     let scene = scene
         .ok_or_else(|| CliError::Usage("render needs a scene: `z3l render <scene.z3l> --out <path>`".to_owned()))?;
     let out = out.ok_or_else(|| CliError::Usage("render needs `--out <path>` to know where to write".to_owned()))?;
-    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, aperture, focus, camera }))
+    Ok(Command::Render(RenderArgs { scene, out, width, height, samples, exposure, studio, camera }))
 }
 
 /// A whole number a flag carries, refusing one that is not a number.
@@ -503,27 +491,6 @@ fn count(text: &str, flag: &str) -> Result<u32, CliError> {
 /// An exposure a flag carries, refusing one that is not a number.
 fn stops(text: &str) -> Result<f32, CliError> {
     text.parse::<f32>().map_err(|_| CliError::Usage(format!("`{text}` is not an exposure in stops")))
-}
-
-/// A lens radius a flag carries, in millimetres: zero is a pinhole, which is the default.
-fn lens(text: &str, flag: &str) -> Result<f32, CliError> {
-    let value: f32 = text.parse().map_err(|_| CliError::Usage(format!("`{text}` is not `{flag}` in millimetres")))?;
-    if !value.is_finite() || !(0.0..=r#final::MAX_APERTURE_MM as f32).contains(&value) {
-        return Err(CliError::Usage(format!(
-            "`{text}` is not a lens radius between 0 and {} mm",
-            r#final::MAX_APERTURE_MM
-        )));
-    }
-    Ok(value)
-}
-
-/// The focus distance a flag carries, in millimetres: a lens with no distance focuses on nothing.
-fn focus_of(text: &str) -> Result<f32, CliError> {
-    let value: f32 = text.parse().map_err(|_| CliError::Usage(format!("`{text}` is not a focus in millimetres")))?;
-    if !value.is_finite() || value <= 0.0 {
-        return Err(CliError::Usage(format!("`{text}` is not a focus distance above zero millimetres")));
-    }
-    Ok(value)
 }
 
 /// A studio the flag carries, as a percentage of a white room.
@@ -1151,8 +1118,6 @@ mod tests {
                 samples: render::DEFAULT_SAMPLES,
                 exposure: 1.0,
                 studio: 0.0,
-                aperture: 0.0,
-                focus: render::DEFAULT_FOCUS_MM,
                 camera: CameraChoice::Scene,
             })
         );
@@ -1169,10 +1134,6 @@ mod tests {
             "1.5",
             "--studio",
             "40",
-            "--aperture",
-            "60",
-            "--focus",
-            "2200",
             "--camera",
             "fit",
         ]))
@@ -1187,8 +1148,6 @@ mod tests {
                 samples: 512,
                 exposure: 1.5,
                 studio: 40.0,
-                aperture: 60.0,
-                focus: 2_200.0,
                 camera: CameraChoice::Fit,
             })
         );

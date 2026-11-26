@@ -32,17 +32,6 @@ use crate::theme;
 /// elides instead of pushing the row wide.
 const COLUMN_WIDTH: f32 = 560.0;
 
-/// The nearest focus the page offers, in millimetres.
-pub const MIN_FOCUS_MM: f32 = 10.0;
-
-/// The farthest focus the page offers, in millimetres: ten metres covers a room, and a lens focused
-/// past it is a lens focused at infinity in every picture a workshop makes.
-pub const MAX_FOCUS_MM: f32 = 10_000.0;
-
-/// The focus the page opens with, in millimetres: the default camera's own distance, so a lens
-/// switched on over an untouched view focuses on the point the viewport orbits.
-pub const DEFAULT_FOCUS_MM: f32 = 1_200.0;
-
 /// The brightest studio the page offers, in percent of a white room (a radiance of one).
 ///
 /// A hundred percent is a room as bright as white paper, which is already brighter than any workshop
@@ -68,9 +57,6 @@ pub struct Bounds {
     pub max_samples: u32,
     /// The largest image, in pixels.
     pub max_pixels: u64,
-    /// The widest lens the page offers, in millimetres of radius: the render's own cap, so a proof
-    /// the page accepts is a lens the tracer can draw with (Y5).
-    pub max_aperture_mm: f32,
 }
 
 impl Bounds {
@@ -125,14 +111,6 @@ pub struct Settings {
     /// The studio behind the scene, in percent of a white room: what a ray sees where the frame has
     /// no geometry. Zero is no studio and the black background a render had before it could have one.
     pub studio: f32,
-    /// The lens radius in millimetres, which is what opens the aperture. Zero is the pinhole every
-    /// render was before there was a lens (Y5).
-    ///
-    /// It is a millimetre reading a person types, like the studio's percentage; the shell turns it
-    /// into the render's own twice-typed length when it starts the job.
-    pub aperture_mm: f32,
-    /// The distance the lens focuses at, in millimetres. Nothing reads it while the aperture is zero.
-    pub focus_mm: f32,
     /// Where the PNG goes; `None` until the person has chosen one.
     pub path: Option<std::path::PathBuf>,
 }
@@ -141,16 +119,7 @@ impl Settings {
     /// The settings a page opens with: a draft, one stop, and no destination yet.
     pub fn draft() -> Self {
         let (width, height, samples) = Preset::Draft.values();
-        Self {
-            width,
-            height,
-            samples,
-            exposure: 1.0,
-            studio: 0.0,
-            aperture_mm: 0.0,
-            focus_mm: DEFAULT_FOCUS_MM,
-            path: None,
-        }
+        Self { width, height, samples, exposure: 1.0, studio: 0.0, path: None }
     }
 
     /// Sets the numbers of `preset`, keeping the destination and the exposure.
@@ -181,14 +150,6 @@ impl Settings {
             self.studio = 0.0;
         }
         self.studio = self.studio.clamp(0.0, MAX_STUDIO_PERCENT);
-        if !self.aperture_mm.is_finite() {
-            self.aperture_mm = 0.0;
-        }
-        self.aperture_mm = self.aperture_mm.clamp(0.0, bounds.max_aperture_mm);
-        if !self.focus_mm.is_finite() || self.focus_mm <= 0.0 {
-            self.focus_mm = DEFAULT_FOCUS_MM;
-        }
-        self.focus_mm = self.focus_mm.clamp(MIN_FOCUS_MM, MAX_FOCUS_MM);
     }
 
     /// Why this render cannot start, if it cannot.
@@ -363,30 +324,6 @@ fn numbers_column(
                 .show(ui);
         });
         ui.end_row();
-        // The lens: a radius and the distance it focuses at, both in millimetres, both drawn with their
-        // unit outside the box like every unit in the interface.
-        ui.label(Message::RenderAperture.text(lang));
-        ui.horizontal(|ui| {
-            Scrub::new(&mut settings.aperture_mm)
-                .decimals(1)
-                .speed(1.0)
-                .range(0.0..=bounds.max_aperture_mm)
-                .unit("mm")
-                .policy(CommitPolicy::Live)
-                .show(ui);
-        });
-        ui.end_row();
-        ui.label(Message::RenderFocus.text(lang));
-        ui.horizontal(|ui| {
-            Scrub::new(&mut settings.focus_mm)
-                .decimals(0)
-                .speed(20.0)
-                .range(MIN_FOCUS_MM..=MAX_FOCUS_MM)
-                .unit("mm")
-                .policy(CommitPolicy::Live)
-                .show(ui);
-        });
-        ui.end_row();
         // The exposure is the one number with a unit: stops, drawn outside the box like every unit.
         ui.label(Message::RenderExposure.text(lang));
         ui.horizontal(|ui| {
@@ -480,14 +417,7 @@ mod tests {
     use super::*;
 
     fn bounds() -> Bounds {
-        Bounds {
-            min_side: 16,
-            max_side: 8192,
-            min_samples: 1,
-            max_samples: 4096,
-            max_pixels: 16_000_000,
-            max_aperture_mm: 500.0,
-        }
+        Bounds { min_side: 16, max_side: 8192, min_samples: 1, max_samples: 4096, max_pixels: 16_000_000 }
     }
 
     #[test]
@@ -503,16 +433,8 @@ mod tests {
 
     #[test]
     fn a_clamped_request_is_one_the_tracer_accepts() {
-        let mut settings = Settings {
-            width: 40_000,
-            height: 40_000,
-            samples: 100_000,
-            exposure: 0.0,
-            studio: f32::NAN,
-            aperture_mm: f32::NAN,
-            focus_mm: 0.0,
-            path: None,
-        };
+        let mut settings =
+            Settings { width: 40_000, height: 40_000, samples: 100_000, exposure: 0.0, studio: f32::NAN, path: None };
         settings.clamp(bounds());
         assert_eq!(settings.width, 8192);
         assert!(settings.height <= settings.width);
@@ -520,14 +442,6 @@ mod tests {
         assert_eq!(settings.samples, 4096);
         assert_eq!(settings.exposure, 1.0, "a broken exposure falls back to one stop");
         assert_eq!(settings.studio, 0.0, "a broken studio falls back to none");
-        assert_eq!(settings.aperture_mm, 0.0, "a broken lens falls back to the pinhole");
-        assert_eq!(settings.focus_mm, DEFAULT_FOCUS_MM, "and a focus of no distance to the default one");
-
-        // Both lens ends are the page's own, and a radius past the cap is the cap.
-        let mut wide = Settings { aperture_mm: 9_000.0, focus_mm: 1.0, ..Settings::draft() };
-        wide.clamp(bounds());
-        assert_eq!(wide.aperture_mm, bounds().max_aperture_mm, "the field cannot offer a lens the tracer refuses");
-        assert_eq!(wide.focus_mm, MIN_FOCUS_MM, "and a focus nearer than a centimetre is a centimetre");
 
         // A tall request that fits the side cap but not the pixel cap is brought inside it.
         let mut tall = Settings { width: 8192, height: 8192, samples: 1, ..Settings::draft() };

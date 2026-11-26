@@ -76,5 +76,7 @@ pub use preview::Preview;
 pub use product_cmds::{ProductCreate, ProductEnvelopeSet};
 pub use read::{Query, QueryError};
 pub use resolve::{SelectionCache, Stamp, anchor_of, choice_of, resolve_slot};
-pub use scene_cmds::{CameraCreate, CameraProjectionSet, LightCreate, LightParamsSet, SceneActiveCameraSet};
+pub use scene_cmds::{
+    CameraCreate, CameraLensSet, CameraProjectionSet, LightCreate, LightParamsSet, SceneActiveCameraSet,
+};
 pub use session::{AgentMode, EditScope, FillRowCreate, MAX_FILL_ROW, OpenProductError, Session};

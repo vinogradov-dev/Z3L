@@ -47,7 +47,7 @@ mod side;
 pub mod testing;
 mod tree;
 
-pub use camera::{CameraError, CameraNode, CameraProjection};
+pub use camera::{CameraError, CameraLens, CameraNode, CameraProjection};
 pub use class::{
     CLASS_MAX_CODE, ClassCode, ClassCodeError, ClassPrefix, ClassRow, Extent, Fill, Level, Measure, Mount, Nesting,
     Opening, Operation, OperationSet, Supply, TraitSet, registry,
