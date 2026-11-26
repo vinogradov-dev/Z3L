@@ -51,6 +51,17 @@ impl Library {
         self.records.values()
     }
 
+    /// The id a record this library has never held takes: the largest one plus one, or the first.
+    ///
+    /// Ids are never reused (a catalogue record points at one, and a scene stores the number a part
+    /// was given), so a record made in the editor is filed under the next free number instead of a
+    /// counter kept in the file. `None` when the largest id is the last number an id can carry, which
+    /// no library a workshop fills reaches.
+    pub fn next_id(&self) -> Option<MaterialId> {
+        let last = self.records.keys().next_back().map_or(0, |id| id.get());
+        MaterialId::new(last.saturating_add(1))
+    }
+
     /// How many records the library holds.
     pub fn len(&self) -> usize {
         self.records.len()
@@ -85,6 +96,13 @@ mod tests {
         assert_eq!(library.get(id(1)).map(Material::name), Some("Oak"));
         assert_eq!(library.get(id(9)), None, "a missing record is never another material");
         assert_eq!(library.records().map(Material::id).collect::<Vec<_>>(), vec![id(1), id(2)], "by id");
+    }
+
+    #[test]
+    fn a_new_record_takes_the_first_free_id_and_never_a_used_one() {
+        assert_eq!(Library::default().next_id(), Some(id(1)), "the first material a shop makes is 1");
+        let library = Library::new([veneer(3, "Oak"), veneer(1, "Beech")]).expect("two records");
+        assert_eq!(library.next_id(), Some(id(4)), "past the largest, never into a gap a catalogue record may name");
     }
 
     #[test]

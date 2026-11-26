@@ -98,6 +98,35 @@ pub enum SaveError {
     },
 }
 
+/// Why a picture a person chose could not be moved into the library's folder.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ImportError {
+    /// The chosen file is not a PNG this build reads, so no record could name it.
+    #[error(transparent)]
+    Picture(#[from] PictureError),
+    /// The file could not be copied into the textures folder.
+    #[error(transparent)]
+    Write(#[from] SaveError),
+    /// The chosen file's own name is not a text path the library's file could carry.
+    #[error("the picture {path} has a name this build cannot write into the library")]
+    Name {
+        /// The file the person chose.
+        path: PathBuf,
+    },
+    /// The folder holds a picture of every number this one name can take.
+    #[error("the textures folder already holds {MAX_PICTURE_COPIES} pictures named `{name}`")]
+    Full {
+        /// The name the copies were made under.
+        name: String,
+    },
+}
+
+/// How many copies of one picture's name a single import is willing to make before it gives up.
+///
+/// Picking the same scan twice makes `oak.png` and `oak-2.png`, which is what a person expects; a
+/// folder with ninety-nine of them is a folder to tidy, not a loop to keep opening files in.
+pub const MAX_PICTURE_COPIES: u32 = 99;
+
 /// A stamp of the library's folder: the file and every picture its records name.
 ///
 /// Two reads of one untouched folder answer the same number, and replacing one scan answers another,
@@ -243,6 +272,70 @@ impl Store {
             reason: error.to_string(),
         })
     }
+
+    /// Copies a picture a person chose into the textures folder, and answers the path a record names.
+    ///
+    /// The chosen file is decoded first, so a file that is not a PNG this build reads is refused
+    /// before anything is written: a record can only name a picture the frame is able to draw. The
+    /// name is the file's own, and a name the folder already holds becomes `oak-2.png` rather than
+    /// replacing another record's scan (ADR 0244: a decor is a path, and a picture is replaced by a
+    /// person who means it). A file that already sits in the folder is named in place and not copied
+    /// onto itself.
+    pub fn import_picture(&self, from: &Path) -> Result<String, ImportError> {
+        Picture::read(from)?;
+        let textures = self.textures();
+        fs::create_dir_all(&textures).map_err(|error| ImportError::Write(refused(&textures, &error)))?;
+        let name = picture_name(from)?;
+        if inside(&textures, from) {
+            return Ok(format!("{TEXTURES_DIR}/{name}"));
+        }
+        let free = free_picture_name(&textures, &name)?;
+        let target = textures.join(&free);
+        fs::copy(from, &target).map_err(|error| ImportError::Write(refused(&target, &error)))?;
+        Ok(format!("{TEXTURES_DIR}/{free}"))
+    }
+}
+
+/// The file name a chosen picture is filed under, as the library's file can write it.
+///
+/// The extension is the one this crate reads whatever the person typed: the filter offered `png`,
+/// the decoder has already accepted the bytes, and a record's path should read as the picture it is.
+fn picture_name(from: &Path) -> Result<String, ImportError> {
+    let Some(name) = from.file_name().and_then(|name| name.to_str()) else {
+        return Err(ImportError::Name { path: from.to_path_buf() });
+    };
+    let name = Path::new(name);
+    let png = name.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    let named = if png { name.to_path_buf() } else { name.with_extension("png") };
+    match named.to_str() {
+        Some(named) if !named.is_empty() => Ok(named.to_owned()),
+        _ => Err(ImportError::Name { path: from.to_path_buf() }),
+    }
+}
+
+/// Whether `file` already sits in `folder`, so importing it names it instead of copying it.
+///
+/// Copying a file onto itself opens it for writing and empties it, which is the one trap this
+/// function exists to close.
+fn inside(folder: &Path, file: &Path) -> bool {
+    match (fs::canonicalize(folder), fs::canonicalize(file)) {
+        (Ok(folder), Ok(file)) => file.parent() == Some(folder.as_path()),
+        _ => false,
+    }
+}
+
+/// The first name of `name`'s family the folder does not hold: `oak.png`, `oak-2.png`, `oak-3.png`.
+fn free_picture_name(folder: &Path, name: &str) -> Result<String, ImportError> {
+    let path = Path::new(name);
+    let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("picture");
+    let extension = path.extension().and_then(|extension| extension.to_str()).unwrap_or("png");
+    for copy in 1..=MAX_PICTURE_COPIES {
+        let candidate = if copy == 1 { name.to_owned() } else { format!("{stem}-{copy}.{extension}") };
+        if !folder.join(&candidate).exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(ImportError::Full { name: name.to_owned() })
 }
 
 /// The modification time and size of `path`, or zeroes when it is not there.
@@ -437,6 +530,63 @@ mod tests {
         assert_ne!(store.revision().map(Revision::get), Ok(stamp.get()), "a replaced picture moves the stamp");
         let after = store.picture(material).expect("a readable picture").expect("a decor");
         assert_eq!(after.texel(0, 0), Some([0, 0, 255, 255]), "the frame reads the picture the shop replaced");
+    }
+
+    #[test]
+    fn a_chosen_picture_is_copied_under_the_textures_folder_and_named_relatively() {
+        let store = scratch("import");
+        let picked = store.root().join("scan.png");
+        write_png(&picked, &[[12, 34, 56, 255]]);
+
+        let named = store.import_picture(&picked).expect("a picture this build reads");
+        assert_eq!(named, "textures/scan.png", "the record names a path inside the folder, never a disk");
+        assert!(store.textures().join("scan.png").exists(), "the scan lands beside the library");
+        let decor = Decor::new(named, millimetres(600), Turns::ALONG).expect("a decor names the copy");
+        let base = Base::new([0.6, 0.4, 0.2], Some(decor), 1.0, 0.0, 1.5, 0.0, [0.0; 3]).expect("a board");
+        let board = Material::of_base(id(1), "Oak", base).expect("a record");
+        assert_eq!(store.picture(&board).expect("readable").expect("a decor").texel(0, 0), Some([12, 34, 56, 255]));
+    }
+
+    #[test]
+    fn a_second_picture_of_one_name_does_not_replace_the_first() {
+        let store = scratch("import-twice");
+        let first = store.root().join("oak.png");
+        write_png(&first, &[[1, 2, 3, 255]]);
+        assert_eq!(store.import_picture(&first).expect("the first copy"), "textures/oak.png");
+
+        let elsewhere = store.root().join("scans");
+        fs::create_dir_all(&elsewhere).expect("a folder of its own");
+        let second = elsewhere.join("oak.png");
+        write_png(&second, &[[4, 5, 6, 255]]);
+        assert_eq!(store.import_picture(&second).expect("the second copy"), "textures/oak-2.png");
+        assert_eq!(
+            Picture::read(&store.textures().join("oak.png")).expect("the first").texel(0, 0),
+            Some([1, 2, 3, 255])
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_picture_is_refused_and_nothing_is_written() {
+        let store = scratch("import-refused");
+        let text = store.root().join("notes.png");
+        fs::create_dir_all(store.root()).expect("the folder");
+        fs::write(&text, b"a recipe, not a scan").expect("a file");
+        let error = store.import_picture(&text).expect_err("a PNG is the one picture format");
+        assert!(matches!(error, ImportError::Picture(_)), "the decoder's sentence is the one a person reads: {error}");
+        assert!(!store.textures().exists(), "the file is refused before the folder a copy would land in is even made");
+    }
+
+    #[test]
+    fn a_picture_that_already_lives_in_the_folder_is_named_and_not_copied_onto_itself() {
+        let store = scratch("import-in-place");
+        let in_place = store.textures().join("oak.png");
+        write_png(&in_place, &[[7, 8, 9, 255]]);
+        assert_eq!(store.import_picture(&in_place).expect("the file is already there"), "textures/oak.png");
+        assert_eq!(
+            Picture::read(&in_place).expect("the file is whole").texel(0, 0),
+            Some([7, 8, 9, 255]),
+            "a copy onto itself would have emptied it"
+        );
     }
 
     #[test]
