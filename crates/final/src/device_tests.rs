@@ -21,7 +21,7 @@ use units::Length;
 
 use crate::job::{Input, Settings, run};
 use crate::view::aspect;
-use crate::{FinalError, Progress, RENDER_FINAL_ID, Request, Tracer, faces_of};
+use crate::{FinalError, Progress, RENDER_FINAL_ID, Request, Snapshots, Tracer, Watch, faces_of};
 
 /// A device and a queue with no surface behind them, or `None` when the machine has neither.
 fn gpu_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -122,6 +122,77 @@ fn the_integrator_parses_as_wgsl_before_any_device_sees_it() {
 }
 
 #[test]
+fn a_checkpoint_shows_the_whole_frame_and_the_last_picture_is_the_written_file() {
+    // Y6's contract, as a test: the picture arrives while the render runs, each one is of the whole
+    // frame and counts more samples than the one before, and the last of them is the file.
+    let (frame, camera) = fixture();
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to watch a checkpoint of");
+        return;
+    };
+    let path = scratch_png("checkpoints");
+    let request = Request::new(128, 128, 16).expect("a small render");
+    let settings = Settings::default_for(request, &path).expect("a render setting");
+    let snapshots = Arc::new(Snapshots::new());
+    // The run publishes faster than anything can read, so a reader takes pictures the way the window
+    // does: from its own thread, between samples, keeping only the latest. A run of sixteen samples
+    // publishes at every second sample, so the reader would have to be starved for half the render
+    // to see fewer than three of them.
+    let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen: Vec<crate::Snapshot> = std::thread::scope(|scope| {
+        let mailbox = Arc::clone(&snapshots);
+        let stop = Arc::clone(&finished);
+        let reader = scope.spawn(move || {
+            let mut seen: Vec<crate::Snapshot> = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(snapshot) = mailbox.take() {
+                    seen.push(snapshot);
+                }
+                std::thread::yield_now();
+            }
+            if let Some(snapshot) = mailbox.take() {
+                seen.push(snapshot);
+            }
+            seen
+        });
+        let mut tracer = Tracer::new(&device).expect("the integrator compiles");
+        let progress = Progress::new(request.samples());
+        run(
+            &mut tracer,
+            &device,
+            &queue,
+            Input { frame: &frame, camera, revision: 9 },
+            &settings,
+            &progress,
+            &snapshots,
+        )
+        .expect("the fixture renders");
+        finished.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut seen = reader.join().expect("the reader finishes");
+        if let Some(last) = snapshots.take() {
+            seen.push(last);
+        }
+        seen
+    });
+    assert!(seen.len() >= 3, "a run of sixteen samples published {} pictures", seen.len());
+    for pair in seen.windows(2) {
+        assert!(pair[0].samples() < pair[1].samples(), "the sample count went back");
+    }
+    for snapshot in &seen {
+        assert_eq!((snapshot.width(), snapshot.height()), (128, 128), "a snapshot is not the frame");
+    }
+    // The last picture is the finished image, to the code value: the file is a lossless RGBA8 copy
+    // of the same tone map the shell applies to the snapshot it keeps.
+    let last = seen.last().expect("a picture was published");
+    assert_eq!(last.samples(), request.samples(), "the last picture is the finished one");
+    let (width, height, pixels) = read_png(&path);
+    assert_eq!((width, height), (last.width(), last.height()));
+    let expected = last.image().to_rgba8(settings.exposure());
+    let written: Vec<u8> = pixels.iter().flatten().copied().collect();
+    assert_eq!(expected, written, "the last picture is not the image the file holds");
+}
+
+#[test]
 fn a_render_twice_at_one_revision_builds_one_tree() {
     let (frame, _camera) = fixture();
     let Some((device, _queue)) = gpu_device() else {
@@ -149,8 +220,16 @@ fn a_pixel_is_lit_where_the_viewport_projects_the_panel_it_sees() {
     let settings = Settings::default_for(request, &path).expect("a render setting");
     let mut tracer = Tracer::new(&device).expect("the integrator compiles");
     let progress = Progress::new(request.samples());
-    run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 3 }, &settings, &progress)
-        .expect("the fixture renders");
+    run(
+        &mut tracer,
+        &device,
+        &queue,
+        Input { frame: &frame, camera, revision: 3 },
+        &settings,
+        &progress,
+        &Snapshots::new(),
+    )
+    .expect("the fixture renders");
 
     let (width, height, pixels) = read_png(&path);
     assert_eq!((width, height), (64, 48), "the file is the size that was asked for");
@@ -183,13 +262,28 @@ fn the_entry_point_writes_one_png_and_reports_what_it_wrote() {
     // A render of a tracer that was never prepared is a sentence, not an empty picture.
     let unprepared = Progress::new(request.samples());
     let refusal = tracer
-        .render(&device, &queue, camera, &frame.lighting, request, &unprepared)
+        .render(
+            &device,
+            &queue,
+            camera,
+            &frame.lighting,
+            request,
+            Watch { progress: &unprepared, snapshots: &Snapshots::new() },
+        )
         .expect_err("nothing was uploaded");
     assert!(matches!(refusal, FinalError::Device { .. }), "{refusal}");
 
     let progress = Progress::new(request.samples());
-    let report = run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 1 }, &settings, &progress)
-        .expect("the fixture renders");
+    let report = run(
+        &mut tracer,
+        &device,
+        &queue,
+        Input { frame: &frame, camera, revision: 1 },
+        &settings,
+        &progress,
+        &Snapshots::new(),
+    )
+    .expect("the fixture renders");
     assert_eq!(report.path, path);
     assert_eq!((report.width, report.height), (48, 32));
     assert_eq!(report.samples, 4);
@@ -201,8 +295,16 @@ fn the_entry_point_writes_one_png_and_reports_what_it_wrote() {
 
     // The same frame and camera at the same revision reuse the tree.
     let second = Progress::new(request.samples());
-    run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 1 }, &settings, &second)
-        .expect("a second render of the same revision");
+    run(
+        &mut tracer,
+        &device,
+        &queue,
+        Input { frame: &frame, camera, revision: 1 },
+        &settings,
+        &second,
+        &Snapshots::new(),
+    )
+    .expect("a second render of the same revision");
     assert_eq!(tracer.build_count(), 1, "the second render rebuilt no tree");
 }
 
@@ -223,8 +325,16 @@ fn a_cancelled_render_writes_nothing_and_leaves_the_old_file() {
     let mut tracer = Tracer::new(&device).expect("the integrator compiles");
     let progress = Progress::new(request.samples());
     progress.cancel();
-    let error = run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 2 }, &settings, &progress)
-        .expect_err("a cancelled render does not finish");
+    let error = run(
+        &mut tracer,
+        &device,
+        &queue,
+        Input { frame: &frame, camera, revision: 2 },
+        &settings,
+        &progress,
+        &Snapshots::new(),
+    )
+    .expect_err("a cancelled render does not finish");
     assert!(matches!(error, FinalError::Cancelled { samples: 0, total: 8 }), "{error}");
     assert!(error.is_cancelled());
     assert_eq!(std::fs::read(&path).expect("the old picture is still there"), previous, "the file is untouched");
@@ -232,8 +342,16 @@ fn a_cancelled_render_writes_nothing_and_leaves_the_old_file() {
 
     // The session starts again: the cancel is a value, not a broken tracer.
     let fresh = Progress::new(request.samples());
-    run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 2 }, &settings, &fresh)
-        .expect("a second attempt after a cancel renders");
+    run(
+        &mut tracer,
+        &device,
+        &queue,
+        Input { frame: &frame, camera, revision: 2 },
+        &settings,
+        &fresh,
+        &Snapshots::new(),
+    )
+    .expect("a second attempt after a cancel renders");
     assert_ne!(std::fs::read(&path).expect("the new picture"), previous, "the new image replaced it");
     assert_eq!(fresh.done(), request.samples());
 }
@@ -314,7 +432,10 @@ fn trace_linear(
     let mut tracer = Tracer::new(device).expect("the integrator compiles");
     tracer.prepare(device, frame, 91).expect("the frame uploads");
     let progress = Progress::new(request.samples());
-    tracer.render(device, queue, camera, &frame.lighting, request, &progress).expect("the frame renders")
+    let snapshots = Snapshots::new();
+    tracer
+        .render(device, queue, camera, &frame.lighting, request, Watch { progress: &progress, snapshots: &snapshots })
+        .expect("the frame renders")
 }
 
 #[test]
@@ -716,8 +837,16 @@ fn the_studio_is_the_render_settings_and_not_the_frames() {
             .with_environment(studio)
             .expect("a studio");
         let progress = Progress::new(request.samples());
-        run(&mut tracer, &device, &queue, Input { frame: &frame, camera, revision: 5 }, &settings, &progress)
-            .expect("the frame renders");
+        run(
+            &mut tracer,
+            &device,
+            &queue,
+            Input { frame: &frame, camera, revision: 5 },
+            &settings,
+            &progress,
+            &Snapshots::new(),
+        )
+        .expect("the frame renders");
         let (width, _height, pixels) = read_png(&path);
         pixels.get((8 * width + 8) as usize).copied().expect("the centre pixel")
     };

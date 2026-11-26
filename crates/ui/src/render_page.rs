@@ -3,24 +3,29 @@
 //! This is a place, not a question: a render runs for minutes and the person may go back to the tree
 //! while it does, so it gets a surface of its own — the `Render` tab beside the File menu — instead
 //! of a modal that holds the window. The page owns the numbers (size, samples, exposure and the file
-//! to write) and nothing else: the frame, the device, the worker thread and the file manager belong
-//! to the shell, which hands this module a [`Page`] and performs the one [`Action`] it returns.
+//! to write) and nothing else: the frame, the device, the worker thread, the picture it publishes and
+//! the file manager belong to the shell, which hands this module a [`Page`] and performs the one
+//! [`Action`] it returns (Y6, ADR 0250).
 //!
-//! The brief: a furniture maker wants the plate of the cabinet in front, at a size a workshop prints,
-//! without leaving the editor. **Render** is the one primary action; the presets exist because a
-//! draft to check the view and a plate for print are the two things a person actually chooses, and
-//! the numbers stay editable beside them so a plate that is not either preset is still one field
-//! away. Cancel replaces Render while a run is in flight, and nothing else on the page can be
-//! pressed into a second run.
+//! The brief: **the image is the surface, the numbers are a rail, the row under the picture says how
+//! far the render is.** A furniture maker opens this place to look at the plate of the cabinet in
+//! front, at a size a workshop prints, without leaving the editor — so the picture takes the room,
+//! letterboxed against the panel ink rather than stretched or cropped, and the numbers stand in one
+//! measured rail beside it. Under the picture sits the only line that is about the run: the
+//! resolution, the samples it took and owes, the time it took and the time it needs, and the file it
+//! is written to. **Render** is the one primary action; Cancel replaces it while a run is in flight
+//! and nothing else on the page can be pressed into a second run.
 //!
 //! Refuses: a size, a sample count or a pixel count outside the bounds the shell hands in (they are
 //! the final render's own caps, so the field cannot offer what the tracer would refuse), and a render
 //! with no destination. A refused number is clamped by the field itself and the button says why it
 //! cannot run, rather than a run that fails after a minute.
 //!
-//! Changes when: what a render needs to be asked, or what it reports while it runs, changes.
+//! Changes when: what a render needs to be asked, what it reports while it runs, or how the picture
+//! takes the room, changes.
 
 use core::time::Duration;
+use std::path::PathBuf;
 
 use egui::{RichText, Ui};
 use text::Message;
@@ -28,9 +33,25 @@ use text::Message;
 use crate::scrub::{CommitPolicy, Scrub};
 use crate::theme;
 
-/// The width of the form's one column, in points: a field and its unit on one line, and a path that
-/// elides instead of pushing the row wide.
-const COLUMN_WIDTH: f32 = 560.0;
+/// The rail's own width, in points: a name, a field and its unit on one line.
+///
+/// Measured from the widest row the rail draws — a size field with its `px` and the two preset
+/// buttons above it — with the air a grid needs around it. The picture takes whatever is left, which
+/// at the smallest window the shell allows is still the larger part of the place.
+const RAIL_WIDTH: f32 = 320.0;
+
+/// The gap between the picture, its rail and the edge of the place, in points.
+const GAP: f32 = theme::STEP * 4.0;
+
+/// The height of the status row under the picture: the window's own status row's height.
+const STATUS_HEIGHT: f32 = theme::STATUS_HEIGHT;
+
+/// The thickness of the progress bar above the status row.
+const BAR_HEIGHT: f32 = theme::STEP * 1.5;
+
+/// What separates two readings of the status row. Punctuation, not a sentence: the readings are
+/// messages of their own.
+const SEPARATOR: &str = "  ·  ";
 
 /// The brightest studio the page offers, in percent of a white room (a radiance of one).
 ///
@@ -112,7 +133,7 @@ pub struct Settings {
     /// no geometry. Zero is no studio and the black background a render had before it could have one.
     pub studio: f32,
     /// Where the PNG goes; `None` until the person has chosen one.
-    pub path: Option<std::path::PathBuf>,
+    pub path: Option<PathBuf>,
 }
 
 impl Settings {
@@ -162,31 +183,67 @@ impl Settings {
     }
 }
 
+/// The picture the place draws: the texture the shell put the last snapshot in, and its own size.
+///
+/// The page never touches a device: it is handed a [`egui::TextureId`] and the picture's size, which
+/// is the aspect it keeps, and paints that texture into the room it was given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Picture {
+    /// The texture the shell registered for the picture.
+    pub texture: egui::TextureId,
+    /// The picture's width in pixels.
+    pub width: u32,
+    /// The picture's height in pixels.
+    pub height: u32,
+}
+
+/// What one run of the place has taken and where it got to: the numbers the status row prints.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Run {
+    /// The image width the run was asked for.
+    pub width: u32,
+    /// The image height the run was asked for.
+    pub height: u32,
+    /// The samples it has taken.
+    pub done: u32,
+    /// The samples it owes.
+    pub total: u32,
+    /// How long it has taken.
+    pub elapsed: Duration,
+    /// How much longer it needs, from the samples it has taken; `None` before the first one.
+    pub estimate: Option<Duration>,
+    /// The file it writes, as it was chosen at the press.
+    pub path: Option<PathBuf>,
+}
+
+impl Run {
+    /// How far the run is, as `0.0..=1.0`, which a progress bar draws.
+    pub fn fraction(&self) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        self.done.min(self.total) as f32 / self.total as f32
+    }
+
+    /// Whether the picture this run published is of the numbers the page offers now: a size or a
+    /// sample count that moved needs another run, while the exposure only re-tones the picture.
+    fn is_current(&self, settings: &Settings) -> bool {
+        (self.width, self.height, self.total) == (settings.width, settings.height, settings.samples)
+    }
+}
+
 /// Where the run is, as the page draws it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stage {
-    /// Nothing is running: the page offers its numbers and its Render button.
+    /// Nothing is running and nothing has been drawn yet: the page offers its numbers and its Render
+    /// button.
     Idle,
-    /// A run is in flight; the page draws its progress and a Cancel.
-    Running {
-        /// How many samples are traced.
-        done: u32,
-        /// How many the request asks for.
-        total: u32,
-    },
-    /// The image was written.
-    Done {
-        /// The file that was written.
-        path: std::path::PathBuf,
-        /// The image width in pixels.
-        width: u32,
-        /// The image height in pixels.
-        height: u32,
-        /// The samples each pixel took.
-        samples: u32,
-    },
-    /// The person stopped the run, and nothing was written.
-    Cancelled,
+    /// A run is in flight; the picture it has already published is on the screen beside these numbers.
+    Running(Run),
+    /// The image was written, and the picture of it is the file.
+    Done(Run),
+    /// The person stopped the run: nothing was written and the last picture stays.
+    Cancelled(Run),
     /// The run refused, with the sentence that says why.
     Failed(String),
 }
@@ -194,11 +251,19 @@ pub enum Stage {
 impl Stage {
     /// Whether a run is in flight, which is what a surface polls before it starts another.
     pub fn is_running(&self) -> bool {
-        matches!(self, Self::Running { .. })
+        matches!(self, Self::Running(_))
+    }
+
+    /// The numbers of the run this stage is about, in every stage that has one.
+    pub fn run(&self) -> Option<&Run> {
+        match self {
+            Self::Idle | Self::Failed(_) => None,
+            Self::Running(run) | Self::Done(run) | Self::Cancelled(run) => Some(run),
+        }
     }
 }
 
-/// One page: the scene it is about, the settings it edits and where the last run got to.
+/// One page: the scene it is about, the settings it edits, where the last run got to and its picture.
 pub struct Page<'a> {
     /// The scene the image will be of, by the name the tab shows.
     pub scene: &'a str,
@@ -208,6 +273,8 @@ pub struct Page<'a> {
     pub bounds: Bounds,
     /// Where the last run got to.
     pub stage: &'a Stage,
+    /// The last picture the shell published, if a run has drawn one.
+    pub picture: Option<Picture>,
 }
 
 /// What the page asked the shell to do.
@@ -227,36 +294,22 @@ pub enum Action {
 ///
 /// The page draws no host of its own: the shell hands it the workspace's area, exactly as it hands
 /// the ribbon its band, so the frame keeps one owner per rectangle (ADR 0080, `cargo xtask ui-rules`).
-/// The area is filled — the place replaces the scene rather than floating over it — and the form
-/// keeps one measured column so a field never stretches across a wide window.
+/// The area is filled — the place replaces the scene rather than floating over it — and the picture
+/// takes everything the rail does not (ADR 0250).
 pub fn show(ui: &mut Ui, page: Page<'_>) -> Option<Action> {
     let lang = crate::language(ui.ctx());
     let mut action = None;
-    let Page { scene, settings, bounds, stage } = page;
+    let Page { scene, settings, bounds, stage, picture } = page;
     settings.clamp(bounds);
     let area = ui.available_rect_before_wrap().intersect(ui.clip_rect());
     egui::Frame::new().fill(theme::panel(ui)).show(ui, |ui| {
         ui.set_min_size(area.size());
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(theme::STEP * 4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(theme::STEP * 4.0);
-                ui.vertical(|ui| {
-                    ui.set_max_width(COLUMN_WIDTH);
-                    ui.heading(Message::RenderTitle.text(lang));
-                    ui.label(RichText::new(Message::RenderOf.with(lang, [scene])).color(theme::text_dim(ui)));
-                    ui.add_space(theme::STEP * 2.0);
-                    if let Some(chosen) = numbers_column(ui, settings, bounds, stage, lang) {
-                        action = Some(chosen);
-                    }
-                    ui.add_space(theme::STEP * 3.0);
-                    destination(ui, settings, &mut action, lang);
-                    ui.add_space(theme::STEP * 3.0);
-                    run_row(ui, settings, stage, &mut action, lang);
-                    ui.add_space(theme::STEP * 2.0);
-                    report(ui, stage, lang);
-                });
-            });
+        let room = picture_room(area);
+        let rail = egui::Rect::from_min_max(egui::pos2(room.right() + GAP, area.top()), area.max);
+        paint_picture(ui, room, picture, lang);
+        status_row(ui, status_rect(area), stage, settings, lang);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rail.shrink2(egui::vec2(GAP, GAP))), |ui| {
+            rail_content(ui, scene, settings, bounds, stage, &mut action, lang);
         });
     });
     if ui.ctx().input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -268,6 +321,152 @@ pub fn show(ui: &mut Ui, page: Page<'_>) -> Option<Action> {
         ui.ctx().request_repaint_after(Duration::from_millis(120));
     }
     action
+}
+
+/// The picture's room in the page's own area: everything left of the rail, above the status row and
+/// inside the place's own air.
+///
+/// Nothing about the picture's aspect: [`fitted`] letterboxes the image inside this rectangle, so a
+/// portrait plate in a landscape window leaves bars of panel ink beside it.
+pub(crate) fn picture_room(area: egui::Rect) -> egui::Rect {
+    let rail = RAIL_WIDTH.min((area.width() * 0.45).max(0.0));
+    egui::Rect::from_min_max(
+        area.min,
+        egui::pos2((area.right() - rail - GAP).max(area.left()), status_rect(area).top()),
+    )
+}
+
+/// The status row's own rectangle: one line under the picture, with the progress bar above it.
+pub(crate) fn status_rect(area: egui::Rect) -> egui::Rect {
+    let height = STATUS_HEIGHT + BAR_HEIGHT + GAP;
+    egui::Rect::from_min_max(
+        egui::pos2(area.left(), (area.bottom() - height).max(area.top())),
+        egui::pos2(area.right() - GAP, area.bottom()),
+    )
+}
+
+/// The picture, fitted to its own aspect and centred in `room`, as a rectangle.
+///
+/// Letterboxed, never stretched and never cropped: a plate is judged by its proportions, and an image
+/// that fills the room by distortion is a picture of a cabinet that does not exist.
+pub(crate) fn fitted(room: egui::Rect, width: u32, height: u32) -> egui::Rect {
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let room_aspect = (room.width() / room.height().max(1.0)).max(f32::EPSILON);
+    let aspect = width / height;
+    let size = if aspect > room_aspect {
+        egui::vec2(room.width(), room.width() / aspect)
+    } else {
+        egui::vec2(room.height() * aspect, room.height())
+    };
+    egui::Rect::from_center_size(room.center(), size)
+}
+
+/// Paints the picture in its room, or the word that says there is none yet.
+fn paint_picture(ui: &Ui, room: egui::Rect, picture: Option<Picture>, lang: text::Lang) {
+    let Some(picture) = picture else {
+        ui.painter().text(
+            room.center(),
+            egui::Align2::CENTER_CENTER,
+            Message::RenderNoPicture.text(lang),
+            egui::FontId::proportional(14.0),
+            theme::text_dim(ui),
+        );
+        return;
+    };
+    let rect = fitted(room, picture.width, picture.height);
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().image(picture.texture, rect, uv, theme::picture(ui));
+}
+
+/// The row under the picture: the bar while a run is in flight, and the numbers the run is.
+///
+/// One line, dim, in the place's own reading order: the resolution, the samples it took and owes, the
+/// time it took, the time it needs and the file it is written to. A stage that has no file says so in
+/// its own sentence instead of leaving the field out.
+fn status_row(ui: &mut Ui, rect: egui::Rect, stage: &Stage, settings: &Settings, lang: text::Lang) {
+    if matches!(stage, Stage::Idle) {
+        return;
+    }
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.spacing_mut().item_spacing.y = theme::STEP;
+        if let Stage::Running(run) = stage {
+            ui.add_sized(
+                egui::vec2(rect.width(), BAR_HEIGHT),
+                egui::ProgressBar::new(run.fraction()).corner_radius(theme::RADIUS),
+            );
+        } else {
+            ui.add_space(BAR_HEIGHT);
+        }
+        let text = match stage {
+            Stage::Idle => String::new(),
+            Stage::Running(run) | Stage::Cancelled(run) => readings(run, lang),
+            Stage::Done(run) => readings(run, lang),
+            Stage::Failed(reason) => Message::RenderFailed.with(lang, [reason.clone()]),
+        };
+        let colour = match stage {
+            Stage::Failed(_) => theme::danger(ui),
+            _ => theme::text_dim(ui),
+        };
+        ui.add(egui::Label::new(RichText::new(text).color(colour)).truncate());
+        // A size or a sample count that moved after the run is a picture of other numbers: say so
+        // rather than letting a person read the plate as the settings above it (Y6).
+        if let Some(run) = stage.run()
+            && !run.is_current(settings)
+        {
+            let note = Message::RenderPictureOlder
+                .with(lang, [run.width.to_string(), run.height.to_string(), run.total.to_string()]);
+            ui.add(egui::Label::new(RichText::new(note).color(theme::warn(ui))).truncate());
+        }
+    });
+}
+
+/// One run's readings, joined in a sentence a person reads once: size, samples, time, file.
+fn readings(run: &Run, lang: text::Lang) -> String {
+    let mut parts = vec![format!("{} × {}", run.width, run.height)];
+    parts.push(Message::RenderSamplesDone.with(lang, [run.done.to_string(), run.total.to_string()]));
+    parts.push(Message::RenderElapsed.with(lang, [clock(run.elapsed)]));
+    if let Some(left) = run.estimate {
+        parts.push(Message::RenderEstimate.with(lang, [clock(left)]));
+    }
+    match &run.path {
+        Some(path) => parts.push(Message::RenderWrittenTo.with(lang, [path.display().to_string()])),
+        None => parts.push(Message::RenderNeedsPath.text(lang).to_owned()),
+    }
+    parts.join(SEPARATOR)
+}
+
+/// A duration as a clock a person reads while waiting: `m:ss`, and `h:mm:ss` when it runs that long.
+fn clock(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let (hours, minutes, seconds) = (seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+    if hours > 0 { format!("{hours}:{minutes:02}:{seconds:02}") } else { format!("{minutes}:{seconds:02}") }
+}
+
+/// The rail beside the picture: what the render is of, the numbers it takes and the one button.
+fn rail_content(
+    ui: &mut Ui,
+    scene: &str,
+    settings: &mut Settings,
+    bounds: Bounds,
+    stage: &Stage,
+    action: &mut Option<Action>,
+    lang: text::Lang,
+) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = theme::STEP * 2.0;
+        ui.set_max_width(RAIL_WIDTH);
+        ui.heading(Message::RenderTitle.text(lang));
+        ui.label(RichText::new(Message::RenderOf.with(lang, [scene])).color(theme::text_dim(ui)));
+        ui.add_space(theme::STEP * 2.0);
+        if let Some(chosen) = numbers_column(ui, settings, bounds, stage, lang) {
+            *action = Some(chosen);
+        }
+        ui.add_space(theme::STEP * 3.0);
+        destination(ui, settings, action, lang);
+        ui.add_space(theme::STEP * 3.0);
+        run_row(ui, settings, stage, action, lang);
+    });
 }
 
 /// The presets and the four numbers. Returns a preset the person pressed, if any.
@@ -348,10 +547,10 @@ fn destination(ui: &mut Ui, settings: &Settings, action: &mut Option<Action>, la
             Some(path) => path.display().to_string(),
             None => Message::RenderNoPath.text(lang).to_owned(),
         };
-        // A path is long and the row is one line wide: it elides, and the full path stays in the
+        // A path is long and the rail is one column wide: it elides, and the full path stays in the
         // hint a person reads before pressing Render.
         ui.scope(|ui| {
-            ui.set_max_width(COLUMN_WIDTH - 96.0);
+            ui.set_max_width((RAIL_WIDTH - 96.0).max(48.0));
             ui.add(egui::Label::new(RichText::new(shown.clone()).color(theme::text_dim(ui))).truncate())
                 .on_hover_text(shown);
         });
@@ -383,33 +582,6 @@ fn run_row(ui: &mut Ui, settings: &Settings, stage: &Stage, action: &mut Option<
     });
 }
 
-/// What the last run did, and how far the current one is.
-fn report(ui: &mut Ui, stage: &Stage, lang: text::Lang) {
-    match stage {
-        Stage::Idle => {}
-        Stage::Running { done, total } => {
-            let fraction = if *total == 0 { 0.0 } else { *done as f32 / *total as f32 };
-            ui.add(egui::ProgressBar::new(fraction).show_percentage());
-            ui.label(
-                RichText::new(Message::RenderSamplesDone.with(lang, [done.to_string(), total.to_string()]))
-                    .color(theme::text_dim(ui)),
-            );
-        }
-        Stage::Done { path, width, height, samples } => {
-            ui.label(
-                Message::RenderDone
-                    .with(lang, [path.display().to_string(), format!("{width} × {height}"), samples.to_string()]),
-            );
-        }
-        Stage::Cancelled => {
-            ui.label(Message::RenderCancelled.text(lang));
-        }
-        Stage::Failed(reason) => {
-            ui.label(RichText::new(Message::RenderFailed.with(lang, [reason.clone()])).color(theme::danger(ui)));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -418,6 +590,42 @@ mod tests {
 
     fn bounds() -> Bounds {
         Bounds { min_side: 16, max_side: 8192, min_samples: 1, max_samples: 4096, max_pixels: 16_000_000 }
+    }
+
+    fn picture(width: u32, height: u32) -> Picture {
+        Picture { texture: egui::TextureId::Managed(7), width, height }
+    }
+
+    fn run(done: u32, total: u32) -> Run {
+        Run {
+            width: 1920,
+            height: 1080,
+            done,
+            total,
+            elapsed: Duration::from_secs(8),
+            estimate: Some(Duration::from_secs(16)),
+            path: Some("plate.png".into()),
+        }
+    }
+
+    /// The meshes a frame painted with `texture`, which is how a picture reaches the screen.
+    fn painted_with(output: &egui::FullOutput, texture: egui::TextureId) -> Vec<egui::Rect> {
+        fn walk(shape: &egui::Shape, texture: egui::TextureId, out: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == texture => out.push(mesh.calc_bounds()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, texture, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, texture, &mut out);
+        }
+        out
     }
 
     #[test]
@@ -476,22 +684,106 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_is_letterboxed_in_its_room_and_never_stretched() {
+        // A landscape picture in a square room uses the whole width and leaves bars above and below.
+        let room = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(400.0, 400.0));
+        let wide = fitted(room, 1600, 800);
+        assert_eq!(wide.size(), egui::vec2(400.0, 200.0), "the whole room's width, the picture's aspect");
+        assert_eq!(wide.center(), room.center(), "fitted and centred, not pushed to a corner");
+        // A portrait plate turns it the other way round.
+        let tall = fitted(room, 800, 1600);
+        assert_eq!(tall.size(), egui::vec2(200.0, 400.0));
+        assert!(room.contains_rect(tall) && room.contains_rect(wide), "a picture never leaves its room");
+        // The same picture in a bigger room is a bigger picture, which is the point of a room.
+        let bigger = fitted(room.expand(200.0), 1600, 800);
+        assert!(bigger.width() > wide.width(), "{} is not wider than {}", bigger.width(), wide.width());
+    }
+
+    #[test]
+    fn the_status_row_reads_the_run_out_of_the_stage() {
+        // The row is the page's own: it prints the size, the samples, the time and the file, and it
+        // says when the picture no longer matches the numbers in the rail.
+        let running = readings(&run(12, 64), text::Lang::En);
+        for wanted in ["1920 × 1080", "12 of 64 samples", "0:08 elapsed", "about 0:16 left", "plate.png"] {
+            assert!(running.contains(wanted), "the row does not say {wanted}: {running}");
+        }
+        let done = readings(&run(64, 64), text::Lang::En);
+        assert!(done.contains("64 of 64 samples"), "{done}");
+        assert!(done.contains("written to plate.png"), "{done}");
+        // A picture of another size is not the numbers above it.
+        let mut matching = Settings::draft();
+        matching.path = Some("plate.png".into());
+        let mut same = run(4, 4);
+        same.width = matching.width;
+        same.height = matching.height;
+        assert!(same.is_current(&matching));
+        same.total = 256;
+        assert!(!same.is_current(&matching), "a plate's samples are not a draft's");
+    }
+
+    #[test]
+    fn the_page_paints_the_picture_letterboxed_in_its_room_at_two_window_sizes() {
+        // The page takes the room the shell gives it: the picture fills it in the picture's own
+        // aspect beside the rail, and a narrower window is a smaller picture, never a cropped one.
+        let texture = egui::TextureId::Managed(11);
+        let mut widths = Vec::new();
+        for screen in [egui::vec2(1400.0, 900.0), egui::vec2(900.0, 640.0)] {
+            let ctx = egui::Context::default();
+            let mut settings = Settings::draft();
+            settings.path = Some("plate.png".into());
+            let stage = Stage::Done(run(4, 4));
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, screen);
+            let input = egui::RawInput { screen_rect: Some(area), ..Default::default() };
+            let output = ctx.run_ui(input, |ui| {
+                show(
+                    ui,
+                    Page {
+                        scene: "Cabinet",
+                        settings: &mut settings,
+                        bounds: bounds(),
+                        stage: &stage,
+                        picture: Some(Picture { texture, width: 1600, height: 800 }),
+                    },
+                );
+            });
+            // A test owns the frame's textures: the delta is taken and dropped here, not by a renderer.
+            let mut output = output;
+            std::mem::take(&mut output.textures_delta).clear();
+            let painted = painted_with(&output, texture);
+            assert_eq!(painted.len(), 1, "one picture is painted at {screen:?}");
+            let rect = painted[0];
+            let room = picture_room(area);
+            let expected = fitted(room, 1600, 800);
+            assert_eq!(rect.size(), expected.size(), "the picture is fitted at {screen:?}");
+            assert_eq!(rect.center(), expected.center(), "and centred at {screen:?}");
+            assert!(room.contains_rect(rect), "the picture is inside its room at {screen:?}");
+            assert!((rect.width() / rect.height() - 2.0).abs() < 1e-3, "the picture's aspect is kept");
+            widths.push(rect.width());
+        }
+        assert!(widths[1] < widths[0], "a narrower window is a smaller picture: {widths:?}");
+    }
+
+    #[test]
     fn the_page_draws_in_every_stage_without_a_window() {
         let stages = [
             Stage::Idle,
-            Stage::Running { done: 3, total: 8 },
-            Stage::Done { path: "plate.png".into(), width: 2480, height: 3508, samples: 256 },
-            Stage::Cancelled,
+            Stage::Running(run(3, 8)),
+            Stage::Done(run(8, 8)),
+            Stage::Cancelled(run(3, 8)),
             Stage::Failed("no device".to_owned()),
         ];
         for stage in stages {
-            let mut settings = Settings::draft();
-            settings.path = Some("plate.png".into());
-            egui::__run_test_ui(|ui| {
-                let action =
-                    show(ui, Page { scene: "Cabinet", settings: &mut settings, bounds: bounds(), stage: &stage });
-                assert!(action.is_none(), "nothing was pressed in {stage:?}");
-            });
+            for picture in [None, Some(picture(1920, 1080))] {
+                let mut settings = Settings::draft();
+                settings.path = Some("plate.png".into());
+                egui::__run_test_ui(|ui| {
+                    let action = show(
+                        ui,
+                        Page { scene: "Cabinet", settings: &mut settings, bounds: bounds(), stage: &stage, picture },
+                    );
+                    assert!(action.is_none(), "nothing was pressed in {stage:?}");
+                });
+            }
         }
     }
 }

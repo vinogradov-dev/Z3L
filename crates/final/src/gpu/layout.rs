@@ -237,6 +237,21 @@ pub(crate) struct Uniform {
     pub(crate) lens: [f32; 4],
 }
 
+/// What one checkpoint's average pass is told: the band it reads and the picture it fills.
+///
+/// The band's rows are whole blocks of the snapshot, so a snapshot pixel is never the sum of a part
+/// of two bands: `band.x` is the band's source width, `band.y` its row count, `band.z` the block one
+/// snapshot pixel averages and `band.w` the image row the band starts at. `picture` is the snapshot's
+/// own size, which every band of the run shares (`crate::gpu::SNAPSHOT_LONG_SIDE`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct ReduceUniform {
+    /// The band: `x` its source width, `y` its rows, `z` the block size, `w` its first image row.
+    pub(crate) band: [u32; 4],
+    /// The picture: `x` its width, `y` its height, the rest unused.
+    pub(crate) picture: [u32; 4],
+}
+
 /// The frame's faces as the shader reads them, in the tree's order.
 pub(crate) fn faces(bvh: &Bvh) -> Result<Vec<GpuFace>, FinalError> {
     if bvh.face_count() > MAX_TRIANGLES {

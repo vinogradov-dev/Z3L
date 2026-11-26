@@ -54,7 +54,7 @@ pub mod view;
 
 pub use bvh::Bvh;
 pub use denoise::{Frame, Guide, Sample};
-pub use gpu::{Accumulation, Progress, Tracer};
+pub use gpu::{Accumulation, Progress, Snapshot, Snapshots, Tracer, Watch};
 pub use image::{Image, encode_rgba8};
 pub use job::{Input, RENDER_FINAL_ID, Report, Settings, run};
 pub use ray::{Hit, Ray, Triangle};
