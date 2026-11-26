@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use geom::DVec3;
 use scene::{Camera, SceneFrame};
+use units::Length;
 
 use crate::gpu::{Progress, Tracer};
 use crate::image::{encode_png, write_atomic};
@@ -34,16 +35,21 @@ use crate::{FinalError, Request};
 /// registry does not carry it and no undo entry answers for it (`AGENTS.md` §4.1).
 pub const RENDER_FINAL_ID: &str = "render.final";
 
-/// What one render was asked for: the image, the exposure, the studio and where the file goes.
+/// What one render was asked for: the image, the exposure, the studio, the lens and where the file
+/// goes.
 ///
 /// The environment is the render's, not the document's: a final image is made by a person who chose a
 /// studio for it, and the scene's own lights are the workshops'. It stays a setting of this command
-/// until a document object claims it (`plan/notes/Y2.md`, ADR 0213).
+/// until a document object claims it (`plan/notes/Y2.md`, ADR 0213). The lens is the same kind of
+/// number for the same reason: a catalogue image wants a pinhole and an atmosphere shot wants an
+/// aperture, and the scene is neither (Y5, ADR 0248).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     request: Request,
     exposure: f32,
     environment: f32,
+    aperture: Length,
+    focus: Length,
     path: PathBuf,
 }
 
@@ -58,7 +64,14 @@ impl Settings {
         if !exposure.is_finite() || exposure <= 0.0 {
             return Err(FinalError::Exposure { exposure });
         }
-        Ok(Self { request, exposure, environment: 0.0, path: path.into() })
+        Ok(Self {
+            request,
+            exposure,
+            environment: 0.0,
+            aperture: Length::ZERO,
+            focus: Length::from_micrometres(1_200_000),
+            path: path.into(),
+        })
     }
 
     /// A render at one stop and the given destination, which is what a surface starts with.
@@ -83,6 +96,35 @@ impl Settings {
     /// The radiance of the studio behind the scene, in linear RGB.
     pub fn environment(&self) -> [f32; 3] {
         [self.environment; 3]
+    }
+
+    /// The same render through a lens of `aperture` radius focusing at `focus`, both lengths in the
+    /// document's own units.
+    ///
+    /// Zero aperture is the pinhole every render had before this, so a caller that names nothing pays
+    /// nothing and gets the picture it always got. A radius past half a metre or a focus with no
+    /// distance in it is refused with the range rather than rendered as a smear.
+    pub fn with_lens(mut self, aperture: Length, focus: Length) -> Result<Self, FinalError> {
+        let (radius, distance) = (aperture.micrometres(), focus.micrometres());
+        if radius < 0 || radius > (scene::camera::MAX_APERTURE_MM * 1_000.0) as i64 {
+            return Err(FinalError::Lens { aperture: radius, focus: distance });
+        }
+        if distance <= 0 {
+            return Err(FinalError::Lens { aperture: radius, focus: distance });
+        }
+        self.aperture = aperture;
+        self.focus = focus;
+        Ok(self)
+    }
+
+    /// The lens radius in the document's own unit, zero for a pinhole.
+    pub const fn aperture(&self) -> Length {
+        self.aperture
+    }
+
+    /// The distance the lens focuses at, in the document's own unit.
+    pub const fn focus(&self) -> Length {
+        self.focus
     }
 
     /// The image size and sample count.
@@ -146,6 +188,11 @@ pub fn run(
         return Err(FinalError::Progress { total: progress.total(), samples: request.samples() });
     }
     let Input { frame, camera, revision } = input;
+    // The lens is this render's, so it is put on the copy of the view the tracer reads and never on
+    // the camera a viewport shares (Y5, ADR 0248).
+    let camera = camera
+        .with_lens(settings.aperture().millimetres_f64(), settings.focus().millimetres_f64())
+        .map_err(|error| FinalError::Device { reason: error.to_string() })?;
     tracer.prepare(device, frame, revision)?;
     // The frame's lights are the scene's; the studio is this render's, so it is written over the
     // frame's own value on the copy the tracer reads and never into the frame a viewport shares.
@@ -208,6 +255,33 @@ mod tests {
                 .expect_err("a broken studio is refused");
             assert!(matches!(error, FinalError::Environment { .. }), "{hostile} was accepted");
             assert!(error.to_string().contains("studio"), "the sentence names the field: {error}");
+        }
+    }
+
+    #[test]
+    fn a_lens_is_two_lengths_and_a_hostile_one_is_refused() {
+        let request = Request::new(64, 64, 1).expect("a small request");
+        let defaults = Settings::default_for(request, "out.png").expect("a setting");
+        assert_eq!(defaults.aperture(), Length::ZERO, "a render that names no lens is a pinhole");
+        assert_eq!(defaults.focus(), Length::from_micrometres(1_200_000), "and focuses where the view is");
+
+        let millimetres = |value: i64| Length::from_millimetres(value).expect("a length");
+        let lens = Settings::default_for(request, "out.png")
+            .expect("a setting")
+            .with_lens(millimetres(60), millimetres(2_000))
+            .expect("a lens");
+        assert_eq!(lens.aperture(), millimetres(60));
+        assert_eq!(lens.focus(), millimetres(2_000));
+        assert_eq!(lens.exposure(), 1.0, "the lens does not touch the exposure");
+
+        // A radius past half a metre, a focus of no distance and two hostile signs are sentences.
+        for (aperture, focus) in [(-1, 2_000), (501, 2_000), (60, 0), (60, -2_000)] {
+            let error = Settings::default_for(request, "out.png")
+                .expect("a setting")
+                .with_lens(millimetres(aperture), millimetres(focus))
+                .expect_err("a broken lens is refused");
+            assert!(matches!(error, FinalError::Lens { .. }), "{aperture} mm at {focus} mm was accepted");
+            assert!(error.to_string().contains("lens"), "the sentence names the field: {error}");
         }
     }
 

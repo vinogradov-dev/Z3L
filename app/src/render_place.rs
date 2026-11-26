@@ -24,6 +24,7 @@ use eframe::egui_wgpu;
 use r#final::{Input, Progress, Report, Settings as RenderSettings, Tracer};
 
 use ui::render_page::{Bounds, Settings, Stage};
+use units::Length;
 
 /// One run: the counter the page reads and the thread that fills it.
 #[derive(Debug)]
@@ -57,6 +58,8 @@ impl RenderPlace {
             min_samples: r#final::MIN_SAMPLES,
             max_samples: r#final::MAX_SAMPLES,
             max_pixels: r#final::MAX_PIXELS,
+            // The lens cap is the camera's own; `final` re-exports it so the page never reads `scene`.
+            max_aperture_mm: r#final::MAX_APERTURE_MM as f32,
         }
     }
 
@@ -148,6 +151,14 @@ impl RenderPlace {
         // place the two vocabularies meet is here.
         let settings = RenderSettings::new(request, self.settings.exposure, path)
             .and_then(|settings| settings.with_environment(self.settings.studio / 100.0))
+            // The page reads millimetres and the render speaks the document's own length: the one
+            // place the two vocabularies meet is here, beside the studio's percentage (Y5).
+            .and_then(|settings| {
+                settings.with_lens(
+                    Length::from_millimetres_f64(f64::from(self.settings.aperture_mm)).unwrap_or(Length::ZERO),
+                    Length::from_millimetres_f64(f64::from(self.settings.focus_mm)).unwrap_or(Length::ZERO),
+                )
+            })
             .map_err(|error| error.to_string())?;
         let progress = Arc::new(Progress::new(request.samples()));
         let device = render_state.device.clone();

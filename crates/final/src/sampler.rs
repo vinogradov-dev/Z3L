@@ -187,6 +187,27 @@ pub fn sample_2d(pair: usize, index: u32, seed: u32) -> [f32; 2] {
     [sample_1d(first, index, seed), sample_1d(first + 1, index, seed)]
 }
 
+/// The concentric map of Shirley and Chiu: a point of the unit square becomes a point of the unit
+/// disc, uniformly by area.
+///
+/// A lens is a disc, and a lens sample that is uniform in the square has corners the lens does not
+/// have. The map folds the square's four quadrants onto the disc around the four axes, so no point is
+/// nearer the centre than the area it speaks for and no seam runs out of the middle of the blur
+/// (Y5). The device transcribes this function; the two are one map, checked by the test below.
+pub fn concentric_disc(u: [f32; 2]) -> [f32; 2] {
+    let x = 2.0 * u[0] - 1.0;
+    let y = 2.0 * u[1] - 1.0;
+    if x == 0.0 && y == 0.0 {
+        return [0.0, 0.0];
+    }
+    let (radius, angle) = if x.abs() > y.abs() {
+        (x, std::f32::consts::FRAC_PI_4 * (y / x))
+    } else {
+        (y, std::f32::consts::FRAC_PI_2 - std::f32::consts::FRAC_PI_4 * (x / y))
+    };
+    [radius * angle.cos(), radius * angle.sin()]
+}
+
 /// A 32-bit word read as a fraction below the binary point, in `[0, 1)`.
 ///
 /// The low eight bits are dropped rather than rounded: an `f32` has 24 bits of mantissa, and dividing
@@ -298,6 +319,43 @@ mod tests {
             assert!(seen.iter().all(|count| *count == 1), "seed {seed:#x}: {seen:?}");
         }
         assert!(moved > 200, "the scramble moved only {moved} of the points");
+    }
+
+    #[test]
+    fn a_square_becomes_a_disc_by_area_and_not_by_a_radius() {
+        // Every point is inside the disc, the four corners of the square are its four cardinal
+        // points, and each ring of half the radius holds a quarter of the samples: a mapping that
+        // gathered points at the centre would blur a picture unevenly (Y5).
+        // The square's four edges land on the disc's four cardinal points and its corners on the
+        // diagonals between them, which is what makes the map continuous all the way round.
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+        for (corner, expected) in [
+            ([0.5f32, 1.0f32], [0.0f32, 1.0]),
+            ([1.0, 0.5], [1.0, 0.0]),
+            ([0.5, 0.0], [0.0, -1.0]),
+            ([0.0, 0.5], [-1.0, 0.0]),
+            ([1.0, 1.0], [diagonal, diagonal]),
+            ([0.0, 0.0], [-diagonal, -diagonal]),
+        ] {
+            let point = concentric_disc(corner);
+            assert!((point[0] - expected[0]).abs() < 1.0e-6 && (point[1] - expected[1]).abs() < 1.0e-6, "{corner:?}");
+        }
+        assert_eq!(concentric_disc([0.5, 0.5]), [0.0, 0.0], "the middle of the square is the middle of the lens");
+
+        let (mut inner, mut outer) = (0u32, 0u32);
+        for index in 0..4096u32 {
+            let u = sample_2d(1, index, 0x51ed_2701);
+            let point = concentric_disc(u);
+            let radius = point[0].hypot(point[1]);
+            assert!(radius <= 1.0 + 1.0e-6, "{u:?} left the disc at {radius}");
+            if radius < 0.5 {
+                inner += 1;
+            } else {
+                outer += 1;
+            }
+        }
+        let share = f64::from(inner) / f64::from(inner + outer);
+        assert!((share - 0.25).abs() < 0.02, "the inner half of the disc holds {share} of the samples");
     }
 
     #[test]

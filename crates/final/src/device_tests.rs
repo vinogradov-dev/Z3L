@@ -1009,3 +1009,157 @@ fn a_window_lights_the_plate_under_it_by_the_irradiance_a_rectangle_gives() {
     let unlit = linear_of(&trace_linear(&device, &queue, &unlit, camera, Request::new(24, 24, 16).expect("small")));
     assert!(unlit.iter().flatten().all(|channel| *channel <= 0.0), "a window of no power lights nothing");
 }
+
+#[test]
+fn a_render_through_a_pinhole_is_the_render_it_always_was() {
+    // The clause about costing nothing: a lens of no radius is the pinhole, sample for sample, so a
+    // caller who names a focus and no aperture gets the identical picture (Y5).
+    let (frame, camera) = fixture();
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to compare two pinholes on");
+        return;
+    };
+    let request = Request::new(32, 24, 16).expect("a small render");
+    let flat = linear_of(&trace_linear(&device, &queue, &frame, camera, request));
+    let opened = camera.with_lens(0.0, 2_000.0).expect("a lens of no radius");
+    let again = linear_of(&trace_linear(&device, &queue, &frame, opened, request));
+    assert_eq!(flat, again, "a pinhole is the picture every render had");
+
+    // And the focus of a pinhole is a number nothing reads: two different ones are one picture.
+    let nearer = camera.with_lens(0.0, 300.0).expect("a focus of no aperture");
+    let closer = linear_of(&trace_linear(&device, &queue, &frame, nearer, request));
+    assert_eq!(flat, closer, "a pinhole does not focus anywhere");
+}
+
+/// A small bright square at `(x, y, z)` facing the camera, with nothing else in the frame.
+fn dot_at(x: f64, y: f64, z: f64, side: f64) -> (SceneFrame, Camera) {
+    let mut frame = SceneFrame::default();
+    let half = side * 0.5;
+    let positions = vec![
+        [(-half) as f32, (-half) as f32, 0.0],
+        [half as f32, (-half) as f32, 0.0],
+        [half as f32, half as f32, 0.0],
+        [(-half) as f32, half as f32, 0.0],
+    ];
+    let mesh = mesh(positions, vec![0, 1, 2, 0, 2, 3]);
+    let transform = DMat4::from_translation(DVec3::new(x, y, z));
+    // The square lies in the XY plane facing -Z, which is where the camera and the key light stand.
+    frame.push(Drawable::new(id(1), mesh, transform, [0.8, 0.8, 0.8, 1.0]));
+    // The quad lies in the XY plane, so the light comes from -Z, which is where the camera stands.
+    frame.lighting.key_direction = -DVec3::Z;
+    frame.lighting.key_color = [std::f64::consts::PI as f32; 3];
+    frame.lighting.environment = [0.0; 3];
+    // The camera stays on the view's axis, so the quad's own place is what the picture measures.
+    let eye = DVec3::new(0.0, 0.0, z - 1_000.0);
+    let camera = Camera::default().looked_from(eye, DVec3::X, DVec3::Y, DVec3::Z);
+    (frame, camera)
+}
+
+#[test]
+fn a_wide_aperture_blurs_a_point_by_the_thin_lens_circle() {
+    // The clause about the lens, measured on a picture: a board a metre in front of a camera focused at
+    // two metres, seen through a lens of a hundred millimetres, has an edge that ramps over exactly the
+    // circle of confusion the thin lens predicts.
+    //
+    // A disc kernel ramps from a tenth to nine tenths of the board's radiance across `0.695` of its
+    // diameter (`C(s) = 0.5 - (s sqrt(r^2-s^2) + r^2 asin(s/r)) / (pi r^2)`), which is one number and
+    // a row of pixels — a statistic of a *plane*, not of a dot, so a hundred samples of a point that
+    // is smaller than a pixel are not what this test is made of.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to blur an edge with");
+        return;
+    };
+    const HALF_WIDTH: f64 = 0.695;
+    let distance = 1_000.0;
+    // The board's left edge passes through the view's axis, which is where the thin lens is exact: a
+    // point off the axis is a different distance from the eye, and the circle of confusion is a
+    // statement about a plane's distance along the axis.
+    let (frame, camera) = dot_at(300.0, 0.0, distance, 600.0);
+    let focused = camera.with_lens(100.0, 2_000.0).expect("a lens");
+    let request = Request::new(129, 129, 512).expect("a small render");
+    let linear = linear_of(&trace_linear(&device, &queue, &frame, focused, request));
+
+    // The board's left edge stands at `x = -300` millimetres, upright, so every row between the board's
+    // top and bottom draws the same ramp: the profile is the mean of forty of them, which is what takes
+    // the noise of one row out of a crossing.
+    let profile = |linear: &[[f32; 3]]| -> Vec<f64> {
+        (0..request.width())
+            .map(|x| {
+                let mut total = 0.0;
+                for y in 44..84u32 {
+                    total += f64::from(linear[(y * request.width() + x) as usize][0]);
+                }
+                total / 40.0
+            })
+            .collect()
+    };
+    let values = profile(&linear);
+    let plateau = values[70..90].iter().sum::<f64>() / 20.0;
+    assert!(plateau > 0.5, "the board is lit: {plateau}");
+    // The crossing of a share of the plateau, interpolated between the two pixels that straddle it.
+    let crossing = |share: f64| -> f64 {
+        let level = plateau * share;
+        for (x, pair) in values.windows(2).enumerate() {
+            let (before, after) = (pair[0], pair[1]);
+            if before < level && after >= level {
+                let span = after - before;
+                let within = if span > 0.0 { (level - before) / span } else { 0.0 };
+                return x as f64 + within;
+            }
+        }
+        f64::NAN
+    };
+    let (ten, ninety) = (crossing(0.1), crossing(0.9));
+    assert!(ten.is_finite() && ninety.is_finite(), "the edge is inside the row: {ten} and {ninety}");
+    let measured = (ten - ninety).abs() / HALF_WIDTH;
+
+    let expected = crate::view::confusion_in_pixels(focused, distance, request.height());
+    let relative = (measured - expected).abs() / expected;
+    assert!(relative < 0.02, "the edge ramps over {measured} pixels, the thin lens says {expected} ({relative} off)");
+
+    // A pinhole has no ramp at all: the same row jumps from black to the board within a pixel.
+    let sharp = linear_of(&trace_linear(&device, &queue, &frame, camera, request));
+    let sharp_values = profile(&sharp);
+    let sharp_plateau = sharp_values[70..90].iter().sum::<f64>() / 20.0;
+    let sharp_ten = sharp_values.iter().position(|value| *value >= sharp_plateau * 0.1).unwrap_or(0) as f64;
+    let sharp_ninety = sharp_values.iter().position(|value| *value >= sharp_plateau * 0.9).unwrap_or(0) as f64;
+    assert!((sharp_ten - sharp_ninety).abs() <= 1.5, "a pinhole draws the edge in one pixel");
+}
+
+#[test]
+fn a_shallow_focus_reaches_the_reference_noise_level_at_its_own_sample_count() {
+    // The clause about noise: a lens spends the same samples the estimator always spent, so the count
+    // a person waits for must still land inside the two percent the pinhole image does (Y2). A wide
+    // aperture is the worst case — the picture mixes two strategies across a blur — so the count this
+    // test measures is the count `plan/notes/Y5.md` records.
+    let (frame, camera) = fixture();
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to converge a lens on");
+        return;
+    };
+    let lensed = camera.with_lens(90.0, 2_200.0).expect("a lens");
+    let size = Request::new(48, 36, 1).expect("a small image");
+    let request = |samples: u32| Request::new(size.width(), size.height(), samples).expect("a sample count");
+    let reference = linear_of(&trace_linear(&device, &queue, &frame, lensed, request(4096)));
+    let rough = linear_of(&trace_linear(&device, &queue, &frame, lensed, request(256)));
+    assert_eq!(reference.len(), rough.len());
+    let mut squared = 0.0f64;
+    let mut power = 0.0f64;
+    let mut counted = 0.0f64;
+    for (reference, rough) in reference.iter().zip(rough.iter()) {
+        for channel in 0..3 {
+            let (reference, rough) = (f64::from(reference[channel]), f64::from(rough[channel]));
+            squared += (reference - rough) * (reference - rough);
+            power += reference * reference;
+            counted += 1.0;
+        }
+    }
+    let rmse = (squared / counted).sqrt();
+    let rms = (power / counted).sqrt();
+    assert!(rms > 0.01, "the fixture is lit through the lens: rms {rms}");
+    let relative = rmse / rms;
+    assert!(
+        relative < 0.02,
+        "256 samples through a lens are within two percent of 4096: {relative} (rmse {rmse}, rms {rms})"
+    );
+}

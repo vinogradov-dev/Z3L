@@ -23,9 +23,13 @@ thiserror = { workspace = true }
 # The device the tracer borrows from the shell: the same major version `render` and `egui-wgpu` are
 # pinned to, so the renderer and the tracer cannot drift into two versions of one API (AGENTS.md §5).
 wgpu = { workspace = true }
+# A render's lens is two physical lengths in the document's own unit — an aperture radius and a focus
+# distance — so the setting is typed like the document and converted to millimetres at the tracer's
+# own boundary (AGENTS.md §4.3, Y5).
+units = { workspace = true }
 
 [dev-dependencies]
-# A decor's size is a physical length, and the tests build one; the crate itself only reads it.
+# The tests build a decor whose size is a physical length; the crate itself reads one through `Length`.
 units = { workspace = true }
 # The tests build a frame, and a drawable carries the document id it came from; already in the tree
 # through `scene`.
