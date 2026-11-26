@@ -245,33 +245,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    package's price rows, and the prompt no longer says the hardware is drawn simply (one
    scenario test over the recipe).
   `files: crates/catalog/src/starter.rs,docs/domain/classes.md,app/tests/recipes`
-- `[ ]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
-  Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
-   — so every pane is clear float glass. A sandblasted or etched front is a standard furniture
-   door and is not a different colour but a different surface: the transmitted light is
-   scattered by the roughness the reflection lobe already has. Today the only way to draw one
-   is a heavier Beer-Lambert tint, which darkens the pane instead of softening what stands
-   behind it, and the tint is a property of the glass and not of its finish.
-  Shape: Take the transmitted beam about the same microfacet normal the reflection lobe draws
-   (Walter et al. 2007, §4), weighted by the GGX distribution the roughness names, with the
-   refraction direction computed from that normal and the weight corrected by the Jacobian of
-   the refraction — the η² and the cosine ratio the smooth path already carries as `ratio²` —
-   and the exit interface sampled again. A roughness of zero stays exactly today's `refract`,
-   so a clear pane is not changed by this entry. Total internal reflection and the Fresnel
-   split stay where they are. A pane keeps its own `roughness` and is never a coat (ADR 0243):
-   it scatters what it transmits, where a coat reflects, so the two are different lobes and
-   neither stands in for the other. Caustics through a rough pane are found by chance and not
-   sampled: the noise the entry adds is written into `plan/notes/`, and the transmitted
-   radiance is checked against an analytic single-scattering estimate instead of a converged
-   reference.
-  Done: `final` tests: a rough pane's transmitted directions lie inside the lobe its roughness
-   names, and a zero roughness reproduces the smooth refraction of today; a pane's total
-   transmittance — reflected plus transmitted — stays within tolerance at roughness
-   0.1/0.5/1.0; a device test renders the same bar behind a pane at roughness 0 and 0.6 and
-   asserts the transmitted radiance spreads (its variance across the image rises) while the
-   clear pane is unchanged; the added variance and the sample count it needs are written into
-   `plan/notes/`; cargo xtask ci is green.
-  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/device_tests.rs,crates/scene/src/lib.rs`
 - `[ ]` **O18** a facade is assembled from a base material and a finish, so a veneer and a lacquer are two records and not a matrix of combinations
   Why: The owner's requirement, 2026-11-25: the materials a workshop names — a veneer, a
    lacquer, a patina — are each a material in its own right, and a facade is assembled from
@@ -347,6 +320,34 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    image exists; cargo xtask ci is green.
   `files: app/src/render_place.rs,crates/ui/src/render_page.rs,crates/final/src/job.rs,app/src/main.rs`
 ## Done
+
+- `[x]` **Y10** a pane can be frosted, so a glass front scatters what it transmits
+  Why: `final::bsdf::sample` refracts through a pane with `refract(wo, ratio)` — a smooth beam
+   — so every pane is clear float glass. A sandblasted or etched front is a standard furniture
+   door and is not a different colour but a different surface: the transmitted light is
+   scattered by the roughness the reflection lobe already has. Today the only way to draw one
+   is a heavier Beer-Lambert tint, which darkens the pane instead of softening what stands
+   behind it, and the tint is a property of the glass and not of its finish.
+  Shape: Take the transmitted beam about the same microfacet normal the reflection lobe draws
+   (Walter et al. 2007, §4), weighted by the GGX distribution the roughness names, with the
+   refraction direction computed from that normal and the weight corrected by the Jacobian of
+   the refraction — the η² and the cosine ratio the smooth path already carries as `ratio²` —
+   and the exit interface sampled again. A roughness of zero stays exactly today's `refract`,
+   so a clear pane is not changed by this entry. Total internal reflection and the Fresnel
+   split stay where they are. A pane keeps its own `roughness` and is never a coat (ADR 0243):
+   it scatters what it transmits, where a coat reflects, so the two are different lobes and
+   neither stands in for the other. Caustics through a rough pane are found by chance and not
+   sampled: the noise the entry adds is written into `plan/notes/`, and the transmitted
+   radiance is checked against an analytic single-scattering estimate instead of a converged
+   reference.
+  Done: `final` tests: a rough pane's transmitted directions lie inside the lobe its roughness
+   names, and a zero roughness reproduces the smooth refraction of today; a pane's total
+   transmittance — reflected plus transmitted — stays within tolerance at roughness
+   0.1/0.5/1.0; a device test renders the same bar behind a pane at roughness 0 and 0.6 and
+   asserts the transmitted radiance spreads (its variance across the image rises) while the
+   clear pane is unchanged; the added variance and the sample count it needs are written into
+   `plan/notes/`; cargo xtask ci is green.
+  `files: crates/final/src/bsdf.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/device_tests.rs,crates/scene/src/lib.rs` — `9ead440`
 
 - `[x]` **Y13** the filter stops at a board's grain, and a render can be written without it
   Why: Owner's report (2026-11-26): a render of a decor was mush. Measured on the H1346 board
