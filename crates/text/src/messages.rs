@@ -902,6 +902,14 @@ messages! {
     RenderDone = ["Written to {} — {}, {} samples", "Записано в {} — {}, {} сэмплов"],
     RenderCancelled = ["Cancelled; no image was written.", "Отменено; изображение не записано."],
     RenderFailed = ["The render stopped: {}", "Рендер остановлен: {}"],
+    RenderElapsed = ["{} elapsed", "{} прошло"],
+    RenderEstimate = ["about {} left", "осталось около {}"],
+    RenderWrittenTo = ["written to {}", "записано в {}"],
+    RenderNoPicture = ["Press Render to draw the scene.", "Нажмите «Рендерить», чтобы построить изображение."],
+    RenderPictureOlder = [
+        "The picture is {} × {} at {} samples; Render draws the numbers above.",
+        "Изображение {} × {} при {} сэмплах; «Рендерить» построит указанное выше."
+    ],
 
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],

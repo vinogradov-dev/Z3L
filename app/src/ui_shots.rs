@@ -458,7 +458,7 @@ fn the_render_place_is_painted_offscreen() {
     app.render_place.settings().height = 360;
     app.render_place.settings().samples = 4;
     app.start_render(&ctx);
-    app.render_place.wait();
+    app.render_place.wait(&ctx, Some(&render_state));
     assert!(image.is_file(), "the place wrote its image");
     let mut jobs = Vec::new();
     for _ in 0..SETTLE_FRAMES {

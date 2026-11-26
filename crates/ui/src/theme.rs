@@ -692,6 +692,15 @@ pub fn selection_band() -> (Color32, Color32) {
     (ink, Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), BAND_FILL_ALPHA))
 }
 
+/// The tint of a picture drawn as it is.
+///
+/// A picture — a render, a decor photograph — carries its own colours and its own values, so the ink
+/// it is drawn with is no ink at all: the page that shows one must not tint it, and `Color32::WHITE`
+/// is a colour literal that a feature module may not name (ADR 0063, `cargo xtask ui-rules`).
+pub fn picture(_ui: &egui::Ui) -> Color32 {
+    Color32::WHITE
+}
+
 /// The ink of a picked shape: the renderer's selection cyan, read as chrome ink.
 ///
 /// The renderer draws a picked chain and tints a picked body with it, so the chrome half of the

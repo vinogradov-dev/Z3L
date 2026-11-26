@@ -1532,6 +1532,7 @@ impl App {
         let lang = ui::language(ui.ctx());
         let scene = self.tabs.active().file_name(lang);
         let stage = self.render_place.stage();
+        let picture = self.render_place.picture();
         let action = ui::render_page::show(
             ui,
             ui::render_page::Page {
@@ -1539,6 +1540,7 @@ impl App {
                 settings: self.render_place.settings(),
                 bounds: render_place::RenderPlace::bounds(),
                 stage: &stage,
+                picture,
             },
         );
         match action {
@@ -1674,7 +1676,8 @@ impl App {
         // A finished render is taken at the same boundary, and a run in flight asks for the next
         // frame so its counter keeps moving even while the person is back in the document
         // (ADR 0211).
-        if self.render_place.take_finished() || self.render_place.is_running() {
+        let state = self.render_state.clone();
+        if self.render_place.poll(ui.ctx(), state.as_ref()) || self.render_place.is_running() {
             ui.ctx().request_repaint();
         }
         // The language is workspace settings, published once per frame so every surface draws the
