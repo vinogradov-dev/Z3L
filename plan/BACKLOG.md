@@ -62,58 +62,6 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
    naming a material that is not there is a diagnostic and still resolves; the golden file
    matches the current schema; a zero id is refused; cargo xtask ci is green.
   `files: crates/catalog/src,docs/domain/nomenclature.md,crates/catalog/src/wire.rs`
-- `[~]` **Y6** the Render place shows the image as it is traced, and keeps the last one
-  Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
-  step by step where that is possible, and the render grows step by step toward a product a
-  workshop can use. V-Ray and Blender are references a session looks at, never specifications
-  it copies (AGENTS §1.3, §4.6): this entry is one step of that road, not a parity programme.
-  Today the place reports a percentage and a path — `Stage::Done { path, width, height,
-  samples }` in `crates/ui/src/render_page.rs` — the PNG is written once at the end and a
-  person leaves the application to see it. ADR 0211 deferred exactly this: "a preview of the
-  last image ... needs a texture the shell registers, which is why it did not come with this
-  record", and `plan/debt.md` `[ui]` records the same gap: no preview, no status line of its
-  own. A plate that takes minutes shows no sign of life, cannot reveal a wrong exposure or a
-  wrong camera before it finishes, and leaves nothing to look at when it does.
-  Shape: The quality bar is decomposed into our own words, never copied: the image is the
-  surface, the numbers are a rail, the row under the picture says how far the render is, and
-  the picture is still there when the run ends. (1) The page becomes image-first: the picture
-  fills the room the shell gives the place, fitted to the image's aspect ratio and letterboxed
-  against the panel ink, with the numbers column kept as a rail beside it; the split and its
-  metric are chosen against `.pi/skills/ui-design/references/checklist.md` and recorded in an
-  ADR, and ADR 0211's decision that the render is a place and not a modal stands. (2) The
-  tracer moves from strip-major to sample-major — one sample over every strip, then the next,
-  with the device accumulators held for the whole run — so the first checkpoint shows the
-  whole frame at a low sample count and every later one refines it, where today a strip is
-  finished before the next one starts and only the end of the run has pixels. (3) A checkpoint
-  hands back a display-sized picture and not the accumulator: a small compute pass averages
-  the accumulation into a buffer capped at 1024 on its longer side, because a full 8192-side
-  accumulator would move 256 MB across the bus per checkpoint; the shell tone-maps it with the
-  curve the file already uses, `Image::from_accumulation` then `to_rgba8`, so dragging the
-  exposure re-tones the last snapshot instead of waiting for another run. (4) A bounded
-  mailbox and not a queue: the worker publishes at most one snapshot the shell has not taken,
-  on a checkpoint interval chosen so a 2480 × 3508 plate publishes about four times a second,
-  and a snapshot nobody read is replaced rather than kept. `ui` still sees no `wgpu`: `final`
-  hands a `Snapshot { width, height, samples, pixels: Vec<u8> }`, the shell registers and
-  updates an `egui` texture (`register_native_texture`, as `app/src/document.rs` already does
-  for the viewport) and the page draws it by `TextureId`. (5) The place owns its status row —
-  resolution, samples done and total, elapsed and estimated time, destination — which closes
-  the second half of the `plan/debt.md` `[ui]` entry. (6) The last snapshot survives the end
-  of a run, a cancel and a trip to another document; a change of exposure re-tones it, while a
-  change of size or samples needs a new run and the page says so. (7) A camera move or an edit
-  made while the plate is drawn changes nothing: the frame was cloned at the press (ADR 0211).
-  Done: Tests: a device test traces 128 × 128 at 16 samples and asserts at least three
-   snapshots arrive with strictly increasing sample counts, each at the requested size, and
-   that the last one is the finished image's pixels to the code value; a second test asserts
-   the mailbox holds at most one unread snapshot, so a slow reader loses pictures rather than
-   growing memory (a counter, not a wall clock); a cancel keeps the last snapshot on the page
-   and writes no file; a page test drives the place with `RawInput` at two window sizes and
-   asserts the picture is letterboxed inside the room, fitted and centred, and that the paint
-   names the texture the shell gave it; an exposure change re-tones the last snapshot with no
-   second run (a shell test on the tone map); the status row prints resolution, samples,
-   elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
-   is green.
-  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs`
-
 ## Bugs
 - `[ ]` **X137** the evenly fill's two end fields lose the keyboard: Enter locks one and Tab can no longer reach either, and Escape suspends the plates for the rest of the gesture
   Why: Observation (the owner, while the Panel cell laid a row of shelves with «Равномерно»
@@ -382,6 +330,58 @@ name it; fixing it moves it to `## Done` with the commit, like any task.
   `files: crates/ui/src,crates/engine/src,app/src`
 
 ## Done
+
+- `[x]` **Y6** the Render place shows the image as it is traced, and keeps the last one
+  Why: Owner's ask (2026-11-21): the render window must show the picture, it must hand it over
+  step by step where that is possible, and the render grows step by step toward a product a
+  workshop can use. V-Ray and Blender are references a session looks at, never specifications
+  it copies (AGENTS §1.3, §4.6): this entry is one step of that road, not a parity programme.
+  Today the place reports a percentage and a path — `Stage::Done { path, width, height,
+  samples }` in `crates/ui/src/render_page.rs` — the PNG is written once at the end and a
+  person leaves the application to see it. ADR 0211 deferred exactly this: "a preview of the
+  last image ... needs a texture the shell registers, which is why it did not come with this
+  record", and `plan/debt.md` `[ui]` records the same gap: no preview, no status line of its
+  own. A plate that takes minutes shows no sign of life, cannot reveal a wrong exposure or a
+  wrong camera before it finishes, and leaves nothing to look at when it does.
+  Shape: The quality bar is decomposed into our own words, never copied: the image is the
+  surface, the numbers are a rail, the row under the picture says how far the render is, and
+  the picture is still there when the run ends. (1) The page becomes image-first: the picture
+  fills the room the shell gives the place, fitted to the image's aspect ratio and letterboxed
+  against the panel ink, with the numbers column kept as a rail beside it; the split and its
+  metric are chosen against `.pi/skills/ui-design/references/checklist.md` and recorded in an
+  ADR, and ADR 0211's decision that the render is a place and not a modal stands. (2) The
+  tracer moves from strip-major to sample-major — one sample over every strip, then the next,
+  with the device accumulators held for the whole run — so the first checkpoint shows the
+  whole frame at a low sample count and every later one refines it, where today a strip is
+  finished before the next one starts and only the end of the run has pixels. (3) A checkpoint
+  hands back a display-sized picture and not the accumulator: a small compute pass averages
+  the accumulation into a buffer capped at 1024 on its longer side, because a full 8192-side
+  accumulator would move 256 MB across the bus per checkpoint; the shell tone-maps it with the
+  curve the file already uses, `Image::from_accumulation` then `to_rgba8`, so dragging the
+  exposure re-tones the last snapshot instead of waiting for another run. (4) A bounded
+  mailbox and not a queue: the worker publishes at most one snapshot the shell has not taken,
+  on a checkpoint interval chosen so a 2480 × 3508 plate publishes about four times a second,
+  and a snapshot nobody read is replaced rather than kept. `ui` still sees no `wgpu`: `final`
+  hands a `Snapshot { width, height, samples, pixels: Vec<u8> }`, the shell registers and
+  updates an `egui` texture (`register_native_texture`, as `app/src/document.rs` already does
+  for the viewport) and the page draws it by `TextureId`. (5) The place owns its status row —
+  resolution, samples done and total, elapsed and estimated time, destination — which closes
+  the second half of the `plan/debt.md` `[ui]` entry. (6) The last snapshot survives the end
+  of a run, a cancel and a trip to another document; a change of exposure re-tones it, while a
+  change of size or samples needs a new run and the page says so. (7) A camera move or an edit
+  made while the plate is drawn changes nothing: the frame was cloned at the press (ADR 0211).
+  Done: Tests: a device test traces 128 × 128 at 16 samples and asserts at least three
+   snapshots arrive with strictly increasing sample counts, each at the requested size, and
+   that the last one is the finished image's pixels to the code value; a second test asserts
+   the mailbox holds at most one unread snapshot, so a slow reader loses pictures rather than
+   growing memory (a counter, not a wall clock); a cancel keeps the last snapshot on the page
+   and writes no file; a page test drives the place with `RawInput` at two window sizes and
+   asserts the picture is letterboxed inside the room, fitted and centred, and that the paint
+   names the texture the shell gave it; an exposure change re-tones the last snapshot with no
+   second run (a shell test on the tone map); the status row prints resolution, samples,
+   elapsed time and destination out of `Stage`; the ADR is filed and listed; `cargo xtask ci`
+   is green.
+  `files: crates/final/src/gpu/mod.rs,crates/final/src/gpu/shader.wgsl,crates/final/src/job.rs,crates/final/src/image.rs,crates/final/src/device_tests.rs,app/src/render_place.rs,crates/ui/src/render_page.rs,crates/text/src/messages.rs,crates/ui/src/theme.rs` — `3bed423`
 
 - `[x]` **Y11** a camera's lens is saved with the camera, and a render reads it from there
   Why: Owner's decision (2026-11-26): a camera's lens is the camera's own setting and must be

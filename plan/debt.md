@@ -473,11 +473,6 @@ module size, layer arrows and duplicated knowledge, `[plan]` the plan tool and i
   shadow ray that knows what it crossed and an emitter that transmits, which is a decision of its own
   and not a field on the one L2 landed.
 
-- `[ui]` The render place has no preview of the last image and no status line of its own: the picture
-  is written and named, and the status bar still describes the node the selection points at while the
-  page is open. The preview needs a texture the shell registers for the page, and the status row needs
-  a zone the place owns; both are the place's next increment.
-
 - `[scene]` The authored camera of `crates/project/tests/golden/scene.z3l` sits at the origin looking
   along `-Z` while the model it is meant to see stands in `+Z`, so a render from the scene's own camera
   is black and `z3l render` needs `--camera fit`. The fixture's camera is the defect, not the render:
