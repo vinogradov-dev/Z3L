@@ -146,6 +146,13 @@ width.
 `GpuNode`s. Its costs are a `z3l render` timing, and there is no probe for the node layout yet — see
 §2.3.
 
+**The kept picture — 12 bytes a pixel of host memory between a run and its save.** A finished image
+stays on the host so that saving never traces again (Y12): linear `f32` RGB is 12 bytes a pixel, so an
+A4 plate at 300 dpi holds about 100 MB and a request at the crate's `MAX_PIXELS` cap about 192 MB,
+beside the display-sized snapshot the page draws (`SNAPSHOT_LONG_SIDE`, at most 1024 pixels on its
+long side, 16 MB read back). It is the price of writing the picture the person looked at; a second
+run to save would cost minutes, not megabytes.
+
 **The denoiser — the host, threaded, measured on one picture.** `denoise::Frame::filtered` runs three
 à-trous levels over the traced picture, one pass per level, its rows shared between threads. A
 1280 × 960 frame — 1.2 megapixels, every pixel's guide and mean — took **243 ms** on this machine's

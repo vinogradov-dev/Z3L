@@ -1,6 +1,7 @@
 # 0211. The final render is a place beside the File menu, not a dialog
 
-- Status: Accepted; the surface ADR 0210's entry point is reached from
+- Status: Accepted; the surface ADR 0210's entry point is reached from; the destination rule is
+  superseded by Y12 — a run draws a picture, and the save writes it
 - Date: 2026-11-21
 
 ## Context
@@ -40,8 +41,9 @@ file and changes nothing in the scene.
   its numbers, its destination and its last report while the person works in another document.
 - **The page edits numbers through the one field (§0092), a preset fills three of them, and the
   destination is chosen in the system file manager (§0182)**: a new `PickMode::Image` asks for a PNG
-  in the folder the scene lives in, offered under the scene's own name. A render with no destination
-  cannot start, and the button says why rather than failing a minute later.
+  in the folder the scene lives in, offered under the scene's own name. The run itself needs no
+  destination: it draws a picture, and the save writes that picture where the person says, so the
+  picker is asked by Save and not by Render (Y12).
 - **The caps are the tracer's own, handed in.** `ui` cannot depend on `final` (it would pull `wgpu`
   into the interface crate), so the shell passes `final`'s ranges as `render_page::Bounds` and the
   page clamps every number inside them.

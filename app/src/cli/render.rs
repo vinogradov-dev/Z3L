@@ -31,7 +31,7 @@ use eframe::wgpu;
 // The crate is named `final`, which Rust reserves, so every path into it is written raw. The package
 // keeps the bare name the layer map and the plan use (ADR 0135, ADR 0210).
 use engine::Session;
-use r#final::{FinalError, Input, Progress, Request, Settings, Snapshots, Tracer, run};
+use r#final::{FinalError, Input, Progress, Request, Settings, Snapshots, Tracer, run, save};
 use kernel_truck::TruckKernel;
 use materials::Store;
 use mesh::EvaluationCache;
@@ -86,7 +86,7 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
     };
     let revision = session.project().revision().get();
     let request = Request::new(args.width, args.height, args.samples).map_err(describe)?;
-    let settings = Settings::new(request, args.exposure, &args.out)
+    let settings = Settings::new(request, args.exposure)
         .and_then(|settings| settings.with_environment(args.studio / 100.0))
         .map(|settings| if args.no_denoise { settings.without_denoise() } else { settings })
         .map_err(describe)?;
@@ -111,7 +111,10 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
         stop.store(true, Ordering::Relaxed);
         result
     });
-    let report = progress_lines.map_err(describe)?;
+    let image = progress_lines.map_err(describe)?;
+    // The run draws the picture; writing it is this command's own act, because a headless render has
+    // nobody to ask where the file goes (Y12).
+    save(&image, args.exposure, &args.out).map_err(describe)?;
     let mut lines = Vec::new();
     if let Some(refusal) = refusal {
         // Not a refusal of the run: the scene is still one image, and every board in it wears the
@@ -128,13 +131,13 @@ pub fn perform(args: &RenderArgs) -> Result<Vec<String>, CliError> {
             lines.push(format!("  {}: {}", failure.id, failure.message));
         }
     }
-    let bytes = std::fs::metadata(&report.path).map(|metadata| metadata.len()).unwrap_or(0);
+    let bytes = std::fs::metadata(&args.out).map(|metadata| metadata.len()).unwrap_or(0);
     lines.push(format!(
         "{}: {} x {}, {} sample(s), {} bytes",
-        report.path.display(),
-        report.width,
-        report.height,
-        report.samples,
+        args.out.display(),
+        image.width(),
+        image.height(),
+        request.samples(),
         bytes
     ));
     Ok(lines)
