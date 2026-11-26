@@ -1,35 +1,27 @@
 # Status
 
-STATE: milestone=M7 phase=T task=- state=idle base=5827d1b updated=2026-11-26
+STATE: milestone=M7 phase=T task=- state=idle base=fe5b1ae updated=2026-11-26
 STREAMS: agent=J catalog=O prototypes=Q render=Y,L
 
 Read this file first; the two commands print the state and one task, `AGENTS.md` §1.1 orders a broken plan.
 
 ## Where we are
 
-The final render has a camera with a lens. `scene::Camera` carries an aperture radius and a focus
-distance (zero radius is the pinhole every render had), `render.final`'s `Settings::with_lens`
-writes
-them onto the copy of the camera the tracer reads, and the document, the schema and the viewport
-stay
-pinholes (Y5, ADR 0248). A sample spends the sampler's second pair on `concentric_disc` — a square
-to
-a disc, uniform by area — and `view::camera_ray_through` starts its ray there, aimed at the point of
-the focal plane the pinhole ray would have met: a point at `z` is spread over `2 a |z - F| / F`,
-which
-the unit tests and a rendered board's edge agree on within 2%. The Render place offers both numbers
-in
-millimetres and `z3l render` takes `--aperture`/`--focus`; the dimension budget did not grow, and a
-lensed picture needs 256 samples per pixel to sit inside the two percent the pinhole reaches at 200.
+The final render has a camera with a lens, and the lens is the document's. `model::CameraLens` is an
+aperture radius and a focus distance on the camera node, validated on the value, the file and the
+node, born a pinhole; `camera.lens.set` writes both as one undo entry and the camera card draws them
+in millimetres (Y11, ADR 0249, superseding 0248's home). `scene_build::authored_camera` carries the
+lens into the frame's camera, the tracer spends the sampler's second pair on a point of the aperture
+disc, and a point at `z` blurs by the thin lens' `2 a |z - F| / F`, which a rendered edge and the
+unit tests agree on within 2%. The Render place renders through `scene_camera`, so the document's
+camera is what its button uses, and the render no longer chooses a lens of its own.
 
 Before that, a light can be a window: `LightKind::Area` carries a face, the frame samples it by
-solid
-angle with next-event estimation and multiple importance sampling, and the viewport draws it as a
-source (L2, ADR 0247). The denoiser measures the noise it spends and the render's materials are one
-portable library (Y4, Y8, Y7), while the assistant reaches a real model over its own wire (J14,
-J11).
-(The plan's work order opens with a catalogue record that refers to a library material instead of
-describing it (O16).)
+solid angle with next-event estimation and multiple importance sampling, and the viewport draws it
+as a source (L2, ADR 0247). The denoiser measures the noise it spends and the render's materials are
+one portable library (Y4, Y8, Y7), while the assistant reaches a real model over its own wire (J14,
+J11). The plan's work order still opens with a catalogue record that refers to a library material
+instead of describing it (O16).
 
 ## Next
 
