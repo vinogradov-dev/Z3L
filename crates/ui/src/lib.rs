@@ -37,6 +37,7 @@ pub mod icons;
 pub mod inventory;
 mod light_card;
 mod machining;
+pub mod material_window;
 mod measure;
 mod mesh_edit;
 mod node_actions;

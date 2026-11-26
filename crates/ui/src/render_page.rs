@@ -295,6 +295,8 @@ pub enum Action {
     Cancel,
     /// Ask the system file manager where the kept image goes, and write it there.
     Save,
+    /// Open the material window: the records this render draws with (Y14).
+    Materials,
     /// Leave the place and go back to the document.
     Close,
 }
@@ -464,6 +466,20 @@ struct Rail<'a> {
     lang: text::Lang,
 }
 
+/// The materials row: the door to the window that authors what a board is drawn with (Y14).
+///
+/// The library is the workshop's and every scene draws with it, so the window is opened from the
+/// place a person is looking at when they say "this board is wrong" — and never from the workspace
+/// settings, where a workshop's look lives (ADR 0251).
+fn materials_row(ui: &mut Ui, action: &mut Option<Action>, lang: text::Lang) {
+    ui.label(RichText::new(Message::MaterialsTitle.text(lang)).strong());
+    let button = ui.add(egui::Button::new(Message::MaterialsOpen.text(lang)));
+    if button.on_hover_text(Message::MaterialsOpenHint.text(lang)).clicked() {
+        *action = Some(Action::Materials);
+    }
+    ui.label(RichText::new(Message::MaterialsOpenHint.text(lang)).small().color(theme::text_dim(ui)));
+}
+
 /// The rail beside the picture: what the render is of, the numbers it takes, the save and the button.
 fn rail_content(ui: &mut Ui, rail: &mut Rail<'_>) {
     let lang = rail.lang;
@@ -478,6 +494,8 @@ fn rail_content(ui: &mut Ui, rail: &mut Rail<'_>) {
         }
         ui.add_space(theme::STEP * 3.0);
         save_row(ui, rail.has_image, rail.saved, rail.action, lang);
+        ui.add_space(theme::STEP * 3.0);
+        materials_row(ui, rail.action, lang);
         ui.add_space(theme::STEP * 3.0);
         run_row(ui, rail.settings, rail.stage, rail.action, lang);
     });

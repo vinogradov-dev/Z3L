@@ -2164,3 +2164,70 @@ fn the_rubber_band_is_painted_offscreen_in_both_themes() {
         }
     }
 }
+
+/// The library's id `value`, as the records of a shot are filed.
+fn material(value: u32) -> materials::MaterialId {
+    materials::MaterialId::new(value).expect("a non-zero material")
+}
+
+/// Draws the material window over the render place: the records, the channels and the decor's swatch.
+///
+/// A rectangle test cannot answer whether the swatch shows the grain at its scale and its turn, or
+/// whether the fields read as one column beside the list; the picture is the answer, and the window's
+/// own acts are asserted headlessly in `frame_tests` (Y14, ADR 0251).
+#[test]
+#[ignore = "needs a GPU adapter; writes target/ui-shots/material-window.png"]
+fn the_material_window_is_painted_offscreen() {
+    let render_state = match render_state() {
+        Ok(render_state) => render_state,
+        Err(reason) => {
+            println!("{reason}");
+            return;
+        }
+    };
+    let directory = testkit::ui_shots_dir().expect("the shots directory is created");
+    let ctx = egui::Context::default();
+    let workspace = testkit::scratch_dir("ui-shots/material").join("workspace.json");
+    let store = materials::Store::at(workspace.parent().expect("a folder").to_path_buf());
+    // A scan of the sample board, four tones, so the swatch's tiles and their turn are visible.
+    let scan: Vec<u8> = [[176, 128, 78, 255], [150, 104, 62, 255], [196, 148, 96, 255], [128, 88, 52, 255]].concat();
+    std::fs::create_dir_all(store.textures()).expect("the textures folder");
+    testkit::write_png(&store.textures().join("oak.png"), 2, 2, &scan).expect("the scan is written");
+    let decor = materials::Decor::new(
+        "textures/oak.png",
+        units::Length::from_millimetres(150).expect("a length"),
+        materials::Turns::ALONG,
+    )
+    .expect("a decor");
+    let oak = materials::Base::new([0.62, 0.42, 0.22], Some(decor), 0.6, 0.0, 1.5, 0.0, [0.0; 3]).expect("a board");
+    let coat = materials::Coat::glossed(85.0).expect("a lacquer");
+    let records = [
+        materials::Material::of_base(material(1), "Oak, natural", oak).expect("a record"),
+        materials::Material::new(material(2), "Lacquer 85", None, Some(coat)).expect("a record"),
+    ];
+    let library = materials::Library::new(records).expect("two records");
+    store.write(&library).expect("the library file");
+    let mut project = testkit::sample_project();
+    let panel = model::Id::new(2).expect("the fixture's panel");
+    project
+        .set_node_material(panel, Some(model::MaterialRef::new(1).expect("a material")))
+        .expect("the panel wears the board");
+    let session = engine::Session::new(project).with_materials(library);
+    let mut app = App::test_app(&ctx, Some(render_state.clone()), workspace, Settings::default(), session)
+        .expect("the shell builds");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW);
+    let _ = settle(&mut app, &ctx, &render_state, screen);
+    app.render_open = true;
+    app.material_window.open();
+    let jobs = settle(&mut app, &ctx, &render_state, screen);
+    let pixels_per_point = ctx.pixels_per_point();
+    let size =
+        [(WINDOW.x * pixels_per_point).round().max(1.0) as u32, (WINDOW.y * pixels_per_point).round().max(1.0) as u32];
+    let rgba = paint(&render_state, &jobs, size, pixels_per_point).expect("the frame paints");
+    let path = directory.join("material-window.png");
+    testkit::write_png(&path, size[0], size[1], &rgba).expect("the picture is written");
+    app.tabs.active_mut().release_target();
+    let picture = Picture { width: size[0], height: size[1], rgba };
+    assert!(!picture.is_flat(), "{} draws less than one colour", path.display());
+    println!("the material window is in {}", path.display());
+}

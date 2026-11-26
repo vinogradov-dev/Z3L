@@ -54,5 +54,5 @@ pub use material::{
     Base, Coat, Decor, MAX_ABSORPTION, MAX_IOR, MAX_NAME_CHARS, MAX_PICTURE_CHARS, Material, MaterialError, Turns,
 };
 pub use picture::{MAX_PICTURE_SIDE, Picture, PictureError};
-pub use store::{LIBRARY_FILE, LoadError, Revision, SaveError, Store, TEXTURES_DIR};
+pub use store::{ImportError, LIBRARY_FILE, LoadError, MAX_PICTURE_COPIES, Revision, SaveError, Store, TEXTURES_DIR};
 pub use wire::LIBRARY_VERSION;

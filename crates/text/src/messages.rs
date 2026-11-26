@@ -911,6 +911,58 @@ messages! {
         "Изображение {} × {} при {} сэмплах; «Рендерить» построит указанное выше."
     ],
 
+    // ── The material window ────────────────────────────────────────────────
+    MaterialsTitle = ["Materials", "Материалы"],
+    MaterialsOpen = ["Materials…", "Материалы…"],
+    MaterialsOpenHint = [
+        "The records this render draws its boards, bands and handles with",
+        "Записи, которыми рендер рисует доски, кромку и фурнитуру"
+    ],
+    MaterialsEmpty = ["The library holds no material yet.", "В библиотеке пока нет ни одного материала."],
+    MaterialsNoFolder = [
+        "The workspace has no settings folder, so a library cannot be written.",
+        "У рабочей области нет папки настроек, поэтому библиотеку некуда записать."
+    ],
+    MaterialNew = ["New material", "Новый материал"],
+    MaterialDefaultName = ["Material {}", "Материал {}"],
+    MaterialNoFreeId = ["The library has no free number left.", "В библиотеке не осталось свободного номера."],
+    MaterialDelete = ["Delete", "Удалить"],
+    MaterialDeleteHint = [
+        "The objects keep the reference and are drawn with the default material",
+        "Объекты сохранят ссылку и будут нарисованы материалом по умолчанию"
+    ],
+    MaterialName = ["Name", "Название"],
+    MaterialId = ["material {}", "материал {}"],
+    MaterialBase = ["Base", "Основа"],
+    MaterialCoat = ["Coat", "Покрытие"],
+    MaterialColour = ["Colour", "Цвет"],
+    MaterialRoughness = ["Roughness", "Шероховатость"],
+    MaterialMetallic = ["Metallic", "Металличность"],
+    MaterialIor = ["IOR", "Показатель преломления"],
+    MaterialTransmission = ["Transmission", "Пропускание"],
+    MaterialAbsorption = ["Absorption, 1/mm", "Поглощение, 1/мм"],
+    MaterialDecor = ["Decor", "Декор"],
+    MaterialPicture = ["Picture…", "Картинка…"],
+    MaterialPictureNone = ["No picture: the colour alone", "Без картинки: только цвет"],
+    MaterialCovers = ["Covers", "Покрывает"],
+    MaterialTurns = ["Turn", "Поворот"],
+    MaterialTurn = ["{}°", "{}°"],
+    MaterialWeight = ["Weight", "Вес"],
+    MaterialGloss = ["Gloss", "Глянец"],
+    MaterialCoatIor = ["Coat IOR", "Показатель покрытия"],
+    MaterialNamedBy = ["Named by {}", "Называют: {}"],
+    MaterialMatching = ["{} · {}", "{} · {}"],
+    MaterialNamedByNone = ["No object names it", "Ни один объект не называет его"],
+    MaterialMissing = [
+        "Material {} is gone and objects still name it: they are drawn with the default material.",
+        "Материала {} нет, но объекты его называют: они нарисованы материалом по умолчанию."
+    ],
+    MaterialMissingCreate = [
+        "Make a record under that number",
+        "Создать запись с этим номером"
+    ],
+    ChoosePictureTitle = ["Choose a decor picture", "Выбрать картинку декора"],
+
     // ── Home ────────────────────────────────────────────────────────────────
     HomeClose = ["Close  (Esc)", "Закрыть  (Esc)"],
     HomeStartScene = ["Start a scene", "Начните сцену"],
