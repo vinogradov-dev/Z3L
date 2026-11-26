@@ -6,9 +6,10 @@ goal: a material is created and edited in the window, and the file it writes is 
 
 steps:
   [ ] starting the task
+  [ ] the window, the store's copy, the model's walk and the shell are green under cargo xtask ci
 
-now: starting the task
+now: read the offscreen shot and report to the owner
 blocked: nothing
-run: cargo xtask task Y14
-resume: read the first `files:` path and its callers
+run: cargo xtask ci; cargo test -p app --bin z3l the_material_window_is_painted_offscreen -- --ignored
+resume: the stream's merge into dev and the Y14 close
 ```
