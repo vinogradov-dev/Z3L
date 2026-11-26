@@ -49,8 +49,10 @@ pub(crate) const EDGE_BAND_COLOR: [f32; 4] = [0.18, 0.20, 0.24, 1.0];
 ///
 /// A record's base carries every channel the frame needs — the albedo the decor multiplies, the
 /// roughness and metallic the tracer shades by, the index, the transmission and the absorption
-/// (ADR 0243). A record with no base is a finish alone (a lacquer), which paints nothing until the
-/// coat is a surface of its own (Y9), so the frame keeps its placeholder tone.
+/// (ADR 0243) — and its coat, when it has one, is the clear layer over that base with its own gloss
+/// and index. A record with no base is a finish alone (a lacquer), which paints nothing: a lacquer
+/// over a veneer is one record the catalogue composes (O18), and a coat on its own has no base to be
+/// seen through.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Paint {
     /// Linear RGB colour and opacity.
@@ -86,8 +88,13 @@ impl<'a> FrameMaterials<'a> {
     /// The paint a node's material names, or `None` when the node names no material, the library
     /// does not hold it, or the record has no base to paint with.
     fn paint_of(&self, reference: Option<MaterialRef>) -> Option<Paint> {
-        let base = self.record(reference?)?.base()?;
+        let record = self.record(reference?)?;
+        let base = record.base()?;
         let [red, green, blue] = base.colour();
+        // The gloss a record stores becomes the width the tracer reads here, once (ADR 0243).
+        let coat = record
+            .coat()
+            .map_or(scene::Coat::NONE, |coat| scene::Coat::glossed(coat.weight(), coat.gloss(), coat.ior()));
         Some(Paint {
             color: [red, green, blue, 1.0],
             surface: Surface {
@@ -96,6 +103,7 @@ impl<'a> FrameMaterials<'a> {
                 ior: base.ior(),
                 transmission: base.transmission(),
                 absorption: base.absorption(),
+                coat,
             },
         })
     }
@@ -2412,6 +2420,28 @@ mod tests {
     }
 
     #[test]
+    fn a_records_gloss_becomes_the_width_the_tracer_reads() {
+        // ADR 0243: the catalogue stores the gloss a workshop says and the frame carries the width the
+        // tracer draws, and the mapping happens once, here. A lacquer on a board is one record and one
+        // surface, never a second drawable.
+        let board = materials::Base::new([0.6, 0.45, 0.25], None, 0.8, 0.0, 1.5, 0.0, [0.0; 3]).expect("a veneer");
+        let coat = materials::Coat::glossed(90.0).expect("a lacquer");
+        let record = Material::new(MaterialId::new(1).expect("id"), "Oak, lacquered", Some(board), Some(coat))
+            .expect("a record");
+        let store = Store::at(testkit::scratch_dir("scene-build-coat"));
+        let library = Library::new([record]).expect("distinct ids");
+        store.write(&library).expect("the library file");
+
+        let scene = paint(&shelf_session(Some(material(1)), library), &store);
+        let drawable = scene.frame.drawables.first().expect("the shelf draws");
+        let painted = drawable.surface.coat;
+        assert_eq!(painted.weight, 1.0, "a full coat covers the board");
+        assert_eq!(painted.ior, scene::Coat::IOR, "and is a clear lacquer");
+        assert!((painted.alpha - 0.01).abs() < 1.0e-6, "90 % gloss is a hundredth of an alpha: {}", painted.alpha);
+        assert_eq!(drawable.surface.roughness, 0.8, "the base keeps its own roughness under the layer");
+    }
+
+    #[test]
     fn a_metal_and_a_glass_record_reach_the_surface_of_an_object() {
         let metal = materials::Base::new([0.9, 0.9, 0.9], None, 0.25, 1.0, 2.5, 0.0, [0.0; 3]).expect("a conductor");
         let glass =
@@ -2438,7 +2468,8 @@ mod tests {
 
     #[test]
     fn a_record_with_no_base_and_a_picture_that_cannot_be_read_keep_the_flat_colour() {
-        // A finish alone (a lacquer) paints nothing until the coat is a surface of its own (Y9).
+        // A finish alone (a lacquer) paints nothing: a layer has no base to be seen through, and the
+        // catalogue's composition of the two is O18's, not this frame's.
         let coat = materials::Coat::glossed(90.0).expect("a lacquer");
         let lacquer = Material::new(MaterialId::new(1).expect("id"), "Lacquer", None, Some(coat)).expect("a record");
         let store = Store::at(testkit::scratch_dir("scene-build-finish"));

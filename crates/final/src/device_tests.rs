@@ -476,6 +476,140 @@ fn a_white_sphere_in_a_white_room_disappears() {
     }
 }
 
+/// Two white spheres side by side under one lamp and no room, one matte and one lacquered.
+///
+/// A rim light and a black room: the matte sphere's rim is dark because a Lambertian surface turns
+/// away from the lamp there, while the coat reflects it, so the only difference the picture can show
+/// is the layer the right-hand sphere wears (ADR 0243).
+fn lacquered_pair(coat: scene::Coat, lamp: DVec3) -> SceneFrame {
+    let mut frame = SceneFrame::default();
+    let matte =
+        Drawable::new(id(1), sphere(400.0, 32), DMat4::from_translation(DVec3::new(-1000.0, 0.0, 0.0)), [1.0; 4]);
+    let lacquered =
+        Drawable::new(id(2), sphere(400.0, 32), DMat4::from_translation(DVec3::new(1000.0, 0.0, 0.0)), [1.0; 4])
+            .with_surface(scene::Surface { coat, ..scene::Surface::MATTE });
+    frame.push(matte);
+    frame.push(lacquered);
+    frame.lighting.key_direction = lamp;
+    frame.lighting.key_color = [1.0, 1.0, 1.0];
+    frame.lighting.points.clear();
+    // A dim room fills the axis of both spheres, so the middle of the picture is a surface the two
+    // have in common and the lamp only draws the edge.
+    frame.lighting.environment = [0.25; 3];
+    frame
+}
+
+/// The lamp that puts a lacquered sphere's sheen in the grazing band the test measures.
+///
+/// The band is a ring of the disc, and a ring is a band of surface angles: `75` degrees off the view
+/// direction is where the layer's Fresnel is a quarter and falling to nothing directly behind the
+/// camera. The sheen lands where the view mirrors about the normal, so the lamp is that mirror, found
+/// by walking the point out along the normal it names until it settles.
+fn sheen_lamp(centre: DVec3, radius: f64, eye: DVec3) -> DVec3 {
+    const BAND: f64 = 75.0;
+    let angle = BAND.to_radians();
+    let mut normal = DVec3::Z;
+    for _ in 0..8 {
+        let point = centre + normal * radius;
+        let wo = (eye - point).try_normalize().unwrap_or(DVec3::Y);
+        let tangent = (DVec3::Z - wo * DVec3::Z.dot(wo)).try_normalize().unwrap_or(DVec3::X);
+        normal = (wo * angle.cos() + tangent * angle.sin()).try_normalize().unwrap_or(DVec3::Z);
+    }
+    let point = centre + normal * radius;
+    let wo = (eye - point).try_normalize().unwrap_or(DVec3::Y);
+    (normal * (2.0 * wo.dot(normal)) - wo).try_normalize().unwrap_or(DVec3::Y)
+}
+
+/// A camera in front of the two spheres, looking along `+Y`.
+fn pair_camera() -> Camera {
+    let eye = DVec3::new(0.0, -4000.0, 0.0);
+    let forward = DVec3::Y;
+    let right = DVec3::X;
+    let up = DVec3::Z;
+    Camera::default().looked_from(eye, right, up, forward)
+}
+
+/// The pixels of one sphere that lie between `inner` and `outer` of its projected radius: their mean
+/// luminance, their brightest, and the luminance of the pixel its centre lands on.
+///
+/// The sphere is a silhouette in the image and nothing else, so a band of the disc is a band of
+/// surface angles: the rim is where the view grazes the surface.
+fn sphere_band(
+    picture: &[[f32; 3]],
+    camera: Camera,
+    request: Request,
+    centre: DVec3,
+    radius: f64,
+    inner: f64,
+    outer: f64,
+) -> (f64, f64, f64) {
+    let luminance =
+        |pixel: &[f32; 3]| 0.2126 * f64::from(pixel[0]) + 0.7152 * f64::from(pixel[1]) + 0.0722 * f64::from(pixel[2]);
+    let Some((cx, cy)) = pixel_of(camera, centre, request) else { return (0.0, 0.0, 0.0) };
+    // The projected radius: the sphere's radius along `X`, which is the image's own across axis.
+    let Some((rx, _)) = pixel_of(camera, centre + DVec3::new(radius, 0.0, 0.0), request) else {
+        return (0.0, 0.0, 0.0);
+    };
+    let projected = f64::from(rx.abs_diff(cx)).max(1.0);
+    let middle = picture.get((cy * request.width() + cx) as usize).map_or(0.0, luminance);
+    let mut total = 0.0;
+    let mut brightest = 0.0f64;
+    let mut counted = 0.0;
+    for y in 0..request.height() {
+        for x in 0..request.width() {
+            let (dx, dy) = (f64::from(x) + 0.5 - f64::from(cx), f64::from(y) + 0.5 - f64::from(cy));
+            let distance = (dx * dx + dy * dy).sqrt() / projected;
+            if distance < inner || distance > outer {
+                continue;
+            }
+            if let Some(pixel) = picture.get((y * request.width() + x) as usize) {
+                let value = luminance(pixel);
+                total += value;
+                brightest = brightest.max(value);
+                counted += 1.0;
+            }
+        }
+    }
+    (if counted > 0.0 { total / counted } else { 0.0 }, brightest, middle)
+}
+
+#[test]
+fn a_lacquered_sphere_sheens_where_the_matte_one_turns_away() {
+    // The clause Y9 owes: the fourth surface a catalogue sells — a dielectric layer over a decal —
+    // is a picture and not a number (ADR 0243). Two spheres of the same white board stand under one
+    // lamp, and the right-hand one wears a full coat at 90 % gloss. On axis the layer reflects four
+    // percent of the beam and passes the rest, so the two spheres still agree there; in the grazing
+    // band the matte sphere has turned away from the lamp, where the layer's Fresnel is a quarter and
+    // rising, so the lacquered one carries a sheen and the matte one does not.
+    let Some((device, queue)) = gpu_device() else {
+        println!("this machine has no GPU adapter to sheen a lacquered sphere on");
+        return;
+    };
+    let camera = pair_camera();
+    let eye = DVec3::new(0.0, -4000.0, 0.0);
+    let left = DVec3::new(-1000.0, 0.0, 0.0);
+    let right = DVec3::new(1000.0, 0.0, 0.0);
+    let request = Request::new(320, 240, 256).expect("a small render");
+    let frame = lacquered_pair(scene::Coat::glossed(1.0, 90.0, scene::Coat::IOR), sheen_lamp(right, 400.0, eye));
+    let linear = linear_of(&trace_linear(&device, &queue, &frame, camera, request));
+    let (_, matte_peak, _) = sphere_band(&linear, camera, request, left, 400.0, 0.9, 1.0);
+    let (_, lacquered_peak, _) = sphere_band(&linear, camera, request, right, 400.0, 0.9, 1.0);
+    println!("the rim peaks at {matte_peak} matte and {lacquered_peak} lacquered");
+    assert!(matte_peak > 0.0 && lacquered_peak > 0.0, "both spheres are in the picture");
+    assert!(
+        lacquered_peak > matte_peak * 1.2,
+        "the lacquered rim peaks at {lacquered_peak} and the matte rim at {matte_peak}, so the layer is not in the picture"
+    );
+    let (_, _, matte_axis) = sphere_band(&linear, camera, request, left, 400.0, 0.0, 0.2);
+    let (_, _, lacquered_axis) = sphere_band(&linear, camera, request, right, 400.0, 0.0, 0.2);
+    println!("the axis reads {matte_axis} matte and {lacquered_axis} lacquered");
+    // A tenth of the value would pass a model that adds the layer's four percent instead of taking
+    // it out of the base; a room of uniform radiance and a near-mirror layer is a furnace, where the
+    // two spheres are the same number and not merely a close pair.
+    let apart = (lacquered_axis - matte_axis).abs() / matte_axis.max(1.0e-6);
+    assert!(apart < 0.02, "on axis the two spheres agree within two percent: {matte_axis} against {lacquered_axis}");
+}
+
 /// A decor whose picture is two blocks: its left half red and its right half blue.
 fn two_tone(covers: i64, turns: Turns) -> Decor {
     let texels = vec![[255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 255, 255], [0, 0, 255, 255]];
@@ -657,7 +791,14 @@ fn a_pane_displaces_the_floor_it_covers_by_the_angle_it_refracts() {
     for drawable in slab(
         100.0,
         400.0,
-        scene::Surface { roughness: 0.0, metallic: 0.0, ior: 1.5, transmission: 1.0, absorption: [0.0; 3] },
+        scene::Surface {
+            roughness: 0.0,
+            metallic: 0.0,
+            ior: 1.5,
+            transmission: 1.0,
+            absorption: [0.0; 3],
+            coat: scene::Coat::NONE,
+        },
     ) {
         glazed.push(drawable);
     }
@@ -737,8 +878,14 @@ fn a_pane_darkens_what_is_behind_it_by_the_tint_and_the_path_it_travels_inside()
         let mut frame = SceneFrame::default();
         frame.lighting.key_color = [0.0; 3];
         frame.lighting.environment = [1.0, 1.0, 1.0];
-        let surface =
-            scene::Surface { roughness: 0.0, metallic: 0.0, ior: ior as f32, transmission: 1.0, absorption: tint };
+        let surface = scene::Surface {
+            roughness: 0.0,
+            metallic: 0.0,
+            ior: ior as f32,
+            transmission: 1.0,
+            absorption: tint,
+            coat: scene::Coat::NONE,
+        };
         for drawable in slab(100.0, thickness as f32, surface) {
             frame.push(drawable);
         }
